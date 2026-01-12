@@ -18,7 +18,7 @@ Sistema de punto de venta rápido, robusto y completamente local. Diseñado para
 1. Abre este repositorio en Codespaces
 2. Instala dependencias:
 ```bash
-npm install
+
 ```
 
 3. Inicia el servidor:
