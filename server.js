@@ -295,6 +295,7 @@ app.get('/api/payment-methods', requireAuth, (req, res) => {
       affects_cash: m.affects_cash === 1 
     })));
   } catch (error) {
+    console.error('Error en payment-methods:', error);
     res.status(500).json({ error: 'Error al obtener formas de pago' });
   }
 });
@@ -313,7 +314,8 @@ app.post('/api/payment-methods/create', requireAuth, (req, res) => {
     
     res.json({ success: true });
   } catch (error) {
-    res.status(500).json({ error: 'Error al crear forma de pago' });
+    console.error('Error creando payment method:', error);
+    res.status(500).json({ error: 'Error al crear forma de pago: ' + error.message });
   }
 });
 
@@ -805,10 +807,151 @@ app.post('/api/sales/create', requireAuth, (req, res) => {
   }
 });
 
+// ==================== REPORTES ====================
+
+// Reporte resumen de ventas
+app.get('/api/reports/sales', requireAuth, (req, res) => {
+  try {
+    const { startDate, endDate, userId, paymentId } = req.query;
+    
+    if (!startDate || !endDate) {
+      return res.status(400).json({ error: 'Fechas requeridas' });
+    }
+    
+    let whereClause = 'WHERE DATE(s.created_at) BETWEEN ? AND ?';
+    let params = [startDate, endDate];
+    
+    if (userId) {
+      whereClause += ' AND s.user_id = ?';
+      params.push(userId);
+    }
+    
+    if (paymentId) {
+      whereClause += ' AND s.payment_method_id = ?';
+      params.push(paymentId);
+    }
+    
+    // Totales generales
+    const summary = db.prepare(`
+      SELECT 
+        COALESCE(SUM(s.total), 0) as total,
+        COUNT(s.id) as tickets,
+        COALESCE(SUM(CASE WHEN pm.affects_cash = 1 THEN s.total ELSE 0 END), 0) as cash
+      FROM sales s
+      LEFT JOIN payment_methods pm ON s.payment_method_id = pm.id
+      ${whereClause}
+    `).get(...params);
+    
+    // Por método de pago
+    const byPaymentMethod = db.prepare(`
+      SELECT 
+        pm.name,
+        COUNT(s.id) as tickets,
+        COALESCE(SUM(s.total), 0) as total
+      FROM sales s
+      INNER JOIN payment_methods pm ON s.payment_method_id = pm.id
+      ${whereClause}
+      GROUP BY pm.id, pm.name
+      ORDER BY total DESC
+    `).all(...params);
+    
+    res.json({
+      total: summary.total,
+      tickets: summary.tickets,
+      cash: summary.cash,
+      byPaymentMethod
+    });
+  } catch (error) {
+    console.error('Error en reporte de ventas:', error);
+    res.status(500).json({ error: 'Error al generar reporte' });
+  }
+});
+
+// Top productos vendidos
+app.get('/api/reports/top-products', requireAuth, (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    
+    if (!startDate || !endDate) {
+      return res.status(400).json({ error: 'Fechas requeridas' });
+    }
+    
+    const topProducts = db.prepare(`
+      SELECT 
+        p.name,
+        SUM(si.quantity) as quantity,
+        SUM(si.quantity * si.price) as total
+      FROM sale_items si
+      INNER JOIN products p ON si.product_id = p.id
+      INNER JOIN sales s ON si.sale_id = s.id
+      WHERE DATE(s.created_at) BETWEEN ? AND ?
+      GROUP BY p.id, p.name
+      ORDER BY total DESC
+      LIMIT 10
+    `).all(startDate, endDate);
+    
+    res.json(topProducts);
+  } catch (error) {
+    console.error('Error en top productos:', error);
+    res.status(500).json({ error: 'Error al generar reporte' });
+  }
+});
+
+// Ventas por cajero
+app.get('/api/reports/by-cashier', requireAuth, (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    
+    if (!startDate || !endDate) {
+      return res.status(400).json({ error: 'Fechas requeridas' });
+    }
+    
+    const byCashier = db.prepare(`
+      SELECT 
+        u.username,
+        COUNT(s.id) as tickets,
+        COALESCE(SUM(s.total), 0) as total
+      FROM users u
+      LEFT JOIN sales s ON s.user_id = u.id AND DATE(s.created_at) BETWEEN ? AND ?
+      WHERE u.active = 1
+      GROUP BY u.id, u.username
+      HAVING tickets > 0
+      ORDER BY total DESC
+    `).all(startDate, endDate);
+    
+    res.json(byCashier);
+  } catch (error) {
+    console.error('Error en reporte por cajero:', error);
+    res.status(500).json({ error: 'Error al generar reporte' });
+  }
+});
+
+// Inventario con stock bajo
+app.get('/api/reports/low-stock', requireAuth, (req, res) => {
+  try {
+    const lowStock = db.prepare(`
+      SELECT 
+        name,
+        barcode,
+        stock,
+        min_stock
+      FROM products
+      WHERE stock <= min_stock AND active = 1
+      ORDER BY (stock - min_stock) ASC
+    `).all();
+    
+    res.json(lowStock);
+  } catch (error) {
+    console.error('Error en reporte de stock bajo:', error);
+    res.status(500).json({ error: 'Error al generar reporte' });
+  }
+});
+
 // Iniciar servidor
 app.listen(PORT, () => {
   console.log(`✅ Servidor POS corriendo en http://localhost:${PORT}`);
   console.log(`🚀 Listo para usar en Codespaces`);
   console.log(`📦 Sistema de importación masiva habilitado`);
-  console.log(`🛒 Módulo de punto de venta (POS) activo`);
+  console.log(`🛍️ Módulo de punto de venta (POS) activo`);
+  console.log(`📊 Módulo de reportes y analíticas activo`);
 });
