@@ -1,16 +1,17 @@
 # 💰 Sistema POS (Punto de Venta)
 
-Sistema de punto de venta r\u00e1pido, robusto y completamente local. Dise\u00f1ado para funcionar en GitHub Codespaces y ser f\u00e1cil de actualizar.
+Sistema de punto de venta rápido, robusto y completamente local. Diseñado para funcionar en GitHub Codespaces y ser fácil de actualizar.
 
-## \u2728 Caracter\u00edsticas
+## ✨ Características
 
-- \u2705 **100% Local**: Base de datos SQLite, sin dependencias cloud
-- \ud83d\ude80 **R\u00e1pido**: Node.js + Express, sin frameworks pesados
-- \ud83d\udd12 **Seguro**: Autenticaci\u00f3n con bcrypt y sesiones
-- \ud83d\udcbb **Codespaces Ready**: Funciona perfectamente en GitHub Codespaces
-- \ud83d\udd04 **F\u00e1cil de actualizar**: Solo `git pull` y listo
+- ✅ **100% Local**: Base de datos SQLite, sin dependencias cloud
+- 🚀 **Rápido**: Node.js + Express, sin frameworks pesados
+- 🔒 **Seguro**: Autenticación con bcrypt y sesiones
+- 💻 **Codespaces Ready**: Funciona perfectamente en GitHub Codespaces
+- 🔄 **Fácil de actualizar**: Solo `git pull` y listo
+- 🎨 **Interfaz Moderna**: Dashboard responsive con navegación intuitiva
 
-## \ud83d\udee0\ufe0f Instalaci\u00f3n
+## 🛠️ Instalación
 
 ### En GitHub Codespaces
 
@@ -47,88 +48,193 @@ npm start
 
 4. Abre http://localhost:3000
 
-## \ud83d\udcda Estructura del Proyecto
+## 📚 Estructura del Proyecto
 
 ```
 pos-system/
-\u251c\u2500\u2500 database/
-\u2502   \u251c\u2500\u2500 init.js         # Inicializaci\u00f3n de SQLite
-\u2502   \u2514\u2500\u2500 pos.db          # Base de datos (auto-generada)
-\u251c\u2500\u2500 public/
-\u2502   \u251c\u2500\u2500 index.html      # Interfaz de login
-\u2502   \u251c\u2500\u2500 styles.css      # Estilos
-\u2502   \u2514\u2500\u2500 login.js        # L\u00f3gica del login
-\u251c\u2500\u2500 server.js           # Servidor Express
-\u251c\u2500\u2500 package.json
-\u2514\u2500\u2500 README.md
+├── database/
+│   ├── init.js         # Inicialización de SQLite
+│   └── pos.db          # Base de datos (auto-generada)
+├── public/
+│   ├── index.html      # Interfaz de login
+│   ├── dashboard.html  # Dashboard principal
+│   ├── dashboard.css   # Estilos del dashboard
+│   ├── dashboard.js    # Lógica del dashboard
+│   ├── styles.css      # Estilos del login
+│   └── login.js        # Lógica del login
+├── server.js           # Servidor Express + APIs REST
+├── package.json
+└── README.md
 ```
 
-## \ud83d\udcdd Uso
+## 📝 Uso
 
 ### Primera Vez
 
-1. Al abrir la aplicaci\u00f3n por primera vez, se te pedir\u00e1 crear un administrador
-2. Ingresa un usuario y contrase\u00f1a (m\u00ednimo 6 caracteres)
-3. El administrador quedar\u00e1 guardado en la base de datos local
+1. Al abrir la aplicación por primera vez, se te pedirá crear un administrador
+2. Ingresa un usuario y contraseña (mínimo 6 caracteres)
+3. El administrador quedará guardado en la base de datos local
 
-### Siguientes Usos
+### Dashboard
 
-1. Ingresa con tu usuario y contrase\u00f1a
-2. Accede al sistema
+Después de iniciar sesión, tendrás acceso a:
 
-## \ud83d\udd04 Actualizaci\u00f3n
+- **Dashboard**: Estadísticas en tiempo real y accesos rápidos
+- **Usuarios**: CRUD completo de usuarios con roles (Admin/Cajero)
+- **Formas de Pago**: Gestión de métodos de pago (Efectivo, Tarjeta, etc.)
+- **Líneas (Proveedores)**: Administración de proveedores con datos de contacto
+- **Departamentos**: Organización de productos por categorías
+- **Productos**: Próximamente
+- **Ventas (POS)**: Próximamente
 
-Para actualizar a la \u00faltima versi\u00f3n:
+## 🔄 Actualización
+
+Para actualizar a la última versión:
 
 ```bash
 git pull origin main
 npm install  # Solo si hay nuevas dependencias
 ```
 
-**Nota**: La base de datos est\u00e1 en `.gitignore`, por lo que tus datos NO se sobrescribir\u00e1n al actualizar.
+**Nota**: La base de datos está en `.gitignore`, por lo que tus datos NO se sobrescribirán al actualizar.
 
-## \ud83d\udce6 API Endpoints
+## 📦 API Endpoints
 
-### Autenticaci\u00f3n
-
+### Autenticación
 - `GET /api/check-admin` - Verifica si existe administrador
 - `POST /api/create-admin` - Crea el primer administrador
-- `POST /api/login` - Inicia sesi\u00f3n
-- `POST /api/logout` - Cierra sesi\u00f3n
-- `GET /api/session` - Verifica sesi\u00f3n actual
+- `POST /api/login` - Inicia sesión
+- `POST /api/logout` - Cierra sesión
+- `GET /api/session` - Verifica sesión actual
 
-## \ud83d\udc68\u200d\ud83d\udcbb Tecnolog\u00edas
+### Estadísticas
+
+- `GET /api/stats` - Obtiene estadísticas del dashboard
+
+### Usuarios
+
+- `GET /api/users` - Lista todos los usuarios
+- `POST /api/users/create` - Crea un nuevo usuario
+- `POST /api/users/update` - Actualiza un usuario existente
+- `POST /api/users/delete` - Elimina un usuario
+
+### Formas de Pago
+
+- `GET /api/payment-methods` - Lista formas de pago
+- `POST /api/payment-methods/create` - Crea nueva forma de pago
+- `POST /api/payment-methods/update` - Actualiza forma de pago
+- `POST /api/payment-methods/delete` - Elimina forma de pago
+
+### Proveedores
+
+- `GET /api/suppliers` - Lista proveedores
+- `POST /api/suppliers/create` - Crea nuevo proveedor
+- `POST /api/suppliers/update` - Actualiza proveedor
+- `POST /api/suppliers/delete` - Elimina proveedor
+
+### Departamentos
+
+- `GET /api/departments` - Lista departamentos
+- `POST /api/departments/create` - Crea nuevo departamento
+- `POST /api/departments/update` - Actualiza departamento
+- `POST /api/departments/delete` - Elimina departamento
+
+## 👨‍💻 Tecnologías
 
 - **Backend**: Node.js + Express
 - **Base de datos**: SQLite (better-sqlite3)
 - **Seguridad**: bcrypt + express-session
-- **Frontend**: HTML5 + CSS3 + JavaScript Vanilla
+- **Frontend**: HTML5 + CSS3 + JavaScript Vanilla (sin frameworks)
 
-## \ud83d\udd10 Seguridad
+## 🔐 Seguridad
 
-- Contrase\u00f1as hasheadas con bcrypt (10 rounds)
+- Contraseñas hasheadas con bcrypt (10 rounds)
 - Sesiones seguras con express-session
 - Validaciones en cliente y servidor
+- Control de acceso por roles
+- Usuarios inactivos no pueden iniciar sesión
 - Base de datos local protegida
 
-## \ud83d\udee3\ufe0f Roadmap
+## 📊 Base de Datos
 
-- [x] Sistema de autenticaci\u00f3n
-- [ ] Dashboard principal
-- [ ] Gesti\u00f3n de productos
-- [ ] M\u00f3dulo de ventas
-- [ ] Inventario
-- [ ] Reportes
-- [ ] Impresi\u00f3n de tickets
+### Tablas Principales
 
-## \ud83d\udc65 Autor
+- **users**: Usuarios del sistema (admin, cajero)
+- **payment_methods**: Métodos de pago disponibles
+- **suppliers**: Proveedores de productos
+- **departments**: Departamentos/categorías
+- **products**: Catálogo de productos
+- **sales**: Registro de ventas
+- **sale_items**: Detalle de cada venta
+
+## 🛣️ Checklist de Progreso
+
+### ✅ Fase 1 - Fundación (COMPLETADA)
+- [x] Repositorio creado
+- [x] Estructura base del proyecto
+- [x] Base de datos SQLite configurada
+- [x] Sistema de autenticación
+- [x] Interfaz de login responsive
+- [x] Detección de primer administrador
+- [x] API de autenticación
+- [x] Configuración para Codespaces
+
+### ✅ Fase 2 - Dashboard (COMPLETADA)
+- [x] Página principal del dashboard
+- [x] Navegación entre módulos
+- [x] Estadísticas básicas
+- [x] Gestión de usuarios (CRUD completo)
+- [x] Control de permisos por rol
+- [x] Gestión de formas de pago (CRUD)
+- [x] Líneas/Proveedores (CRUD)
+- [x] Departamentos (CRUD)
+- [x] Interfaz moderna y responsive
+- [x] Sistema de modales
+- [x] Notificaciones de éxito/error
+
+### 🔄 Fase 3 - Productos (PENDIENTE)
+- [ ] CRUD de productos
+- [ ] Búsqueda por código de barras
+- [ ] Asignación de departamento y proveedor
+- [ ] Control de stock
+- [ ] Alertas de stock mínimo
+- [ ] Importación/exportación de productos
+- [ ] Gestión de precios (costo/venta)
+
+### 📅 Fase 4 - Ventas (PENDIENTE)
+- [ ] Interfaz de punto de venta
+- [ ] Carrito de compra
+- [ ] Búsqueda rápida de productos
+- [ ] Selección de forma de pago
+- [ ] Cálculo automático de totales
+- [ ] Registro de ventas en BD
+- [ ] Actualización automática de inventario
+- [ ] Historial de ventas
+
+### 📊 Fase 5 - Reportes (PENDIENTE)
+- [ ] Ventas por día/semana/mes
+- [ ] Productos más vendidos
+- [ ] Reporte de inventario
+- [ ] Historial completo
+- [ ] Exportar reportes a CSV
+- [ ] Gráficas y visualizaciones
+
+### 🔧 Fase 6 - Mejoras (PENDIENTE)
+- [ ] Impresión de tickets
+- [ ] Respaldo de base de datos
+- [ ] Temas claro/oscuro
+- [ ] Atajos de teclado
+- [ ] Múltiples cajas/tiendas
+- [ ] App móvil (PWA)
+
+## 👥 Autor
 
 **Victor Rivera** - [KAizuto846](https://github.com/KAizuto846)
 
-## \ud83d\udcdd Licencia
+## 📝 Licencia
 
 MIT License - Puedes usar este proyecto libremente
 
 ---
 
-\ud83d\ude80 **Desarrollado con velocidad y robustez en mente**
+🚀 **Desarrollado con velocidad y robustez en mente**
