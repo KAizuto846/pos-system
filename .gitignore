@@ -1,0 +1,30 @@
+# Dependencias
+node_modules/
+
+# Base de datos local
+database/pos.db
+database/pos.db-shm
+database/pos.db-wal
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Variables de entorno
+.env
+.env.local
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temporal
+tmp/
+temp/
