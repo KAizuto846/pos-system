@@ -22,6 +22,14 @@ app.use(session({
   cookie: { secure: false }
 }));
 
+// Middleware de autenticación
+function requireAuth(req, res, next) {
+  if (!req.session.userId) {
+    return res.status(401).json({ error: 'No autorizado' });
+  }
+  next();
+}
+
 // ==================== AUTENTICACIÓN ====================
 
 // Verificar si existe administrador
@@ -132,10 +140,10 @@ app.get('/api/session', (req, res) => {
 
 // ==================== ESTADÍSTICAS ====================
 
-app.get('/api/stats', (req, res) => {
+app.get('/api/stats', requireAuth, (req, res) => {
   try {
     const users = db.prepare('SELECT COUNT(*) as count FROM users').get().count;
-    const products = db.prepare('SELECT COUNT(*) as count FROM products').get().count;
+    const products = db.prepare('SELECT COUNT(*) as count FROM products WHERE active = 1').get().count;
     
     const today = new Date().toISOString().split('T')[0];
     const sales = db.prepare(
@@ -146,16 +154,50 @@ app.get('/api/stats', (req, res) => {
       'SELECT COALESCE(SUM(total), 0) as sum FROM sales WHERE DATE(created_at) = ?'
     ).get(today).sum;
     
-    res.json({ users, products, sales, revenue });
+    // Total en caja (solo métodos que afectan caja)
+    const cashTotal = db.prepare(`
+      SELECT COALESCE(SUM(s.total), 0) as sum 
+      FROM sales s
+      INNER JOIN payment_methods pm ON s.payment_method_id = pm.id
+      WHERE DATE(s.created_at) = ? AND pm.affects_cash = 1
+    `).get(today).sum;
+    
+    // Ventas por cajero
+    const salesByCashier = db.prepare(`
+      SELECT 
+        u.username,
+        COUNT(s.id) as sales_count,
+        COALESCE(SUM(s.total), 0) as total
+      FROM users u
+      LEFT JOIN sales s ON s.user_id = u.id AND DATE(s.created_at) = ?
+      WHERE u.active = 1
+      GROUP BY u.id, u.username
+      ORDER BY total DESC
+    `).all(today);
+    
+    // Productos con stock bajo
+    const lowStock = db.prepare(
+      'SELECT COUNT(*) as count FROM products WHERE stock <= min_stock AND active = 1'
+    ).get().count;
+    
+    res.json({ 
+      users, 
+      products, 
+      sales, 
+      revenue,
+      cashTotal,
+      lowStock,
+      salesByCashier
+    });
   } catch (error) {
     console.error(error);
-    res.json({ users: 0, products: 0, sales: 0, revenue: 0 });
+    res.json({ users: 0, products: 0, sales: 0, revenue: 0, cashTotal: 0, lowStock: 0, salesByCashier: [] });
   }
 });
 
 // ==================== USUARIOS ====================
 
-app.get('/api/users', (req, res) => {
+app.get('/api/users', requireAuth, (req, res) => {
   try {
     const users = db.prepare(
       'SELECT id, username, role, active, created_at FROM users ORDER BY created_at DESC'
@@ -166,7 +208,7 @@ app.get('/api/users', (req, res) => {
   }
 });
 
-app.post('/api/users/create', async (req, res) => {
+app.post('/api/users/create', requireAuth, async (req, res) => {
   try {
     const { username, password, role, active } = req.body;
     
@@ -196,7 +238,7 @@ app.post('/api/users/create', async (req, res) => {
   }
 });
 
-app.post('/api/users/update', async (req, res) => {
+app.post('/api/users/update', requireAuth, async (req, res) => {
   try {
     const { id, password, role, active } = req.body;
     
@@ -207,7 +249,7 @@ app.post('/api/users/update', async (req, res) => {
     if (password && password.length > 0) {
       if (password.length < 6) {
         return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres' });
-      }
+    }
       const hashedPassword = await bcrypt.hash(password, 10);
       db.prepare(
         'UPDATE users SET password = ?, role = ?, active = ? WHERE id = ?'
@@ -225,7 +267,7 @@ app.post('/api/users/update', async (req, res) => {
   }
 });
 
-app.post('/api/users/delete', (req, res) => {
+app.post('/api/users/delete', requireAuth, (req, res) => {
   try {
     const { id } = req.body;
     
@@ -242,28 +284,32 @@ app.post('/api/users/delete', (req, res) => {
 
 // ==================== FORMAS DE PAGO ====================
 
-app.get('/api/payment-methods', (req, res) => {
+app.get('/api/payment-methods', requireAuth, (req, res) => {
   try {
     const methods = db.prepare(
       'SELECT * FROM payment_methods ORDER BY created_at DESC'
     ).all();
-    res.json(methods.map(m => ({ ...m, active: m.active === 1 })));
+    res.json(methods.map(m => ({ 
+      ...m, 
+      active: m.active === 1,
+      affects_cash: m.affects_cash === 1 
+    })));
   } catch (error) {
     res.status(500).json({ error: 'Error al obtener formas de pago' });
   }
 });
 
-app.post('/api/payment-methods/create', (req, res) => {
+app.post('/api/payment-methods/create', requireAuth, (req, res) => {
   try {
-    const { name, active } = req.body;
+    const { name, affects_cash, active } = req.body;
     
     if (!name) {
       return res.status(400).json({ error: 'El nombre es requerido' });
     }
     
     db.prepare(
-      'INSERT INTO payment_methods (name, active, created_at) VALUES (?, ?, ?)'
-    ).run(name, active ? 1 : 0, new Date().toISOString());
+      'INSERT INTO payment_methods (name, affects_cash, active, created_at) VALUES (?, ?, ?, ?)'
+    ).run(name, affects_cash ? 1 : 0, active ? 1 : 0, new Date().toISOString());
     
     res.json({ success: true });
   } catch (error) {
@@ -271,13 +317,13 @@ app.post('/api/payment-methods/create', (req, res) => {
   }
 });
 
-app.post('/api/payment-methods/update', (req, res) => {
+app.post('/api/payment-methods/update', requireAuth, (req, res) => {
   try {
-    const { id, name, active } = req.body;
+    const { id, name, affects_cash, active } = req.body;
     
     db.prepare(
-      'UPDATE payment_methods SET name = ?, active = ? WHERE id = ?'
-    ).run(name, active ? 1 : 0, id);
+      'UPDATE payment_methods SET name = ?, affects_cash = ?, active = ? WHERE id = ?'
+    ).run(name, affects_cash ? 1 : 0, active ? 1 : 0, id);
     
     res.json({ success: true });
   } catch (error) {
@@ -285,7 +331,7 @@ app.post('/api/payment-methods/update', (req, res) => {
   }
 });
 
-app.post('/api/payment-methods/delete', (req, res) => {
+app.post('/api/payment-methods/delete', requireAuth, (req, res) => {
   try {
     const { id } = req.body;
     db.prepare('DELETE FROM payment_methods WHERE id = ?').run(id);
@@ -297,7 +343,7 @@ app.post('/api/payment-methods/delete', (req, res) => {
 
 // ==================== PROVEEDORES ====================
 
-app.get('/api/suppliers', (req, res) => {
+app.get('/api/suppliers', requireAuth, (req, res) => {
   try {
     const suppliers = db.prepare(
       'SELECT * FROM suppliers ORDER BY created_at DESC'
@@ -308,7 +354,7 @@ app.get('/api/suppliers', (req, res) => {
   }
 });
 
-app.post('/api/suppliers/create', (req, res) => {
+app.post('/api/suppliers/create', requireAuth, (req, res) => {
   try {
     const { name, contact, phone, email, address, active } = req.body;
     
@@ -326,7 +372,7 @@ app.post('/api/suppliers/create', (req, res) => {
   }
 });
 
-app.post('/api/suppliers/update', (req, res) => {
+app.post('/api/suppliers/update', requireAuth, (req, res) => {
   try {
     const { id, name, contact, phone, email, address, active } = req.body;
     
@@ -340,7 +386,7 @@ app.post('/api/suppliers/update', (req, res) => {
   }
 });
 
-app.post('/api/suppliers/delete', (req, res) => {
+app.post('/api/suppliers/delete', requireAuth, (req, res) => {
   try {
     const { id } = req.body;
     db.prepare('DELETE FROM suppliers WHERE id = ?').run(id);
@@ -352,7 +398,7 @@ app.post('/api/suppliers/delete', (req, res) => {
 
 // ==================== DEPARTAMENTOS ====================
 
-app.get('/api/departments', (req, res) => {
+app.get('/api/departments', requireAuth, (req, res) => {
   try {
     const departments = db.prepare(
       'SELECT * FROM departments ORDER BY created_at DESC'
@@ -363,7 +409,7 @@ app.get('/api/departments', (req, res) => {
   }
 });
 
-app.post('/api/departments/create', (req, res) => {
+app.post('/api/departments/create', requireAuth, (req, res) => {
   try {
     const { name, description, active } = req.body;
     
@@ -381,7 +427,7 @@ app.post('/api/departments/create', (req, res) => {
   }
 });
 
-app.post('/api/departments/update', (req, res) => {
+app.post('/api/departments/update', requireAuth, (req, res) => {
   try {
     const { id, name, description, active } = req.body;
     
@@ -395,13 +441,186 @@ app.post('/api/departments/update', (req, res) => {
   }
 });
 
-app.post('/api/departments/delete', (req, res) => {
+app.post('/api/departments/delete', requireAuth, (req, res) => {
   try {
     const { id } = req.body;
     db.prepare('DELETE FROM departments WHERE id = ?').run(id);
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: 'Error al eliminar departamento' });
+  }
+});
+
+// ==================== PRODUCTOS ====================
+
+app.get('/api/products', requireAuth, (req, res) => {
+  try {
+    const products = db.prepare(`
+      SELECT 
+        p.*,
+        d.name as department_name,
+        s.name as supplier_name
+      FROM products p
+      LEFT JOIN departments d ON p.department_id = d.id
+      LEFT JOIN suppliers s ON p.supplier_id = s.id
+      ORDER BY p.created_at DESC
+    `).all();
+    
+    res.json(products.map(p => ({ 
+      ...p, 
+      active: p.active === 1,
+      lowStock: p.stock <= p.min_stock
+    })));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Error al obtener productos' });
+  }
+});
+
+app.get('/api/products/search', requireAuth, (req, res) => {
+  try {
+    const { q } = req.query;
+    
+    if (!q) {
+      return res.json([]);
+    }
+    
+    const products = db.prepare(`
+      SELECT 
+        p.*,
+        d.name as department_name,
+        s.name as supplier_name
+      FROM products p
+      LEFT JOIN departments d ON p.department_id = d.id
+      LEFT JOIN suppliers s ON p.supplier_id = s.id
+      WHERE (p.name LIKE ? OR p.barcode LIKE ?) AND p.active = 1
+      LIMIT 20
+    `).all(`%${q}%`, `%${q}%`);
+    
+    res.json(products.map(p => ({ ...p, active: p.active === 1 })));
+  } catch (error) {
+    res.status(500).json({ error: 'Error al buscar productos' });
+  }
+});
+
+app.post('/api/products/create', requireAuth, (req, res) => {
+  try {
+    const { name, barcode, price, cost, stock, min_stock, department_id, supplier_id, active } = req.body;
+    
+    if (!name || !price) {
+      return res.status(400).json({ error: 'Nombre y precio son requeridos' });
+    }
+    
+    if (barcode) {
+      const exists = db.prepare('SELECT id FROM products WHERE barcode = ?').get(barcode);
+      if (exists) {
+        return res.status(400).json({ error: 'Ya existe un producto con ese código de barras' });
+      }
+    }
+    
+    const now = new Date().toISOString();
+    db.prepare(`
+      INSERT INTO products 
+      (name, barcode, price, cost, stock, min_stock, department_id, supplier_id, active, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      name, 
+      barcode || null, 
+      price, 
+      cost || 0, 
+      stock || 0, 
+      min_stock || 5,
+      department_id || null,
+      supplier_id || null,
+      active ? 1 : 0,
+      now,
+      now
+    );
+    
+    res.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Error al crear producto' });
+  }
+});
+
+app.post('/api/products/update', requireAuth, (req, res) => {
+  try {
+    const { id, name, barcode, price, cost, stock, min_stock, department_id, supplier_id, active } = req.body;
+    
+    if (!id || !name || !price) {
+      return res.status(400).json({ error: 'Datos incompletos' });
+    }
+    
+    if (barcode) {
+      const exists = db.prepare('SELECT id FROM products WHERE barcode = ? AND id != ?').get(barcode, id);
+      if (exists) {
+        return res.status(400).json({ error: 'Ya existe otro producto con ese código de barras' });
+      }
+    }
+    
+    db.prepare(`
+      UPDATE products 
+      SET name = ?, barcode = ?, price = ?, cost = ?, stock = ?, min_stock = ?, 
+          department_id = ?, supplier_id = ?, active = ?, updated_at = ?
+      WHERE id = ?
+    `).run(
+      name,
+      barcode || null,
+      price,
+      cost || 0,
+      stock || 0,
+      min_stock || 5,
+      department_id || null,
+      supplier_id || null,
+      active ? 1 : 0,
+      new Date().toISOString(),
+      id
+    );
+    
+    res.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Error al actualizar producto' });
+  }
+});
+
+app.post('/api/products/delete', requireAuth, (req, res) => {
+  try {
+    const { id } = req.body;
+    db.prepare('DELETE FROM products WHERE id = ?').run(id);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Error al eliminar producto' });
+  }
+});
+
+app.post('/api/products/adjust-stock', requireAuth, (req, res) => {
+  try {
+    const { id, adjustment } = req.body;
+    
+    if (!id || adjustment === undefined) {
+      return res.status(400).json({ error: 'Datos incompletos' });
+    }
+    
+    const product = db.prepare('SELECT stock FROM products WHERE id = ?').get(id);
+    if (!product) {
+      return res.status(404).json({ error: 'Producto no encontrado' });
+    }
+    
+    const newStock = product.stock + adjustment;
+    
+    if (newStock < 0) {
+      return res.status(400).json({ error: 'El stock no puede ser negativo' });
+    }
+    
+    db.prepare('UPDATE products SET stock = ?, updated_at = ? WHERE id = ?')
+      .run(newStock, new Date().toISOString(), id);
+    
+    res.json({ success: true, newStock });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Error al ajustar stock' });
   }
 });
 

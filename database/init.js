@@ -22,6 +22,7 @@ function initDatabase() {
     CREATE TABLE IF NOT EXISTS payment_methods (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
+      affects_cash INTEGER DEFAULT 1,
       active INTEGER DEFAULT 1,
       created_at TEXT NOT NULL
     );
@@ -91,8 +92,10 @@ function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode);
     CREATE INDEX IF NOT EXISTS idx_products_department ON products(department_id);
     CREATE INDEX IF NOT EXISTS idx_products_supplier ON products(supplier_id);
+    CREATE INDEX IF NOT EXISTS idx_products_active ON products(active);
     CREATE INDEX IF NOT EXISTS idx_sales_date ON sales(created_at);
     CREATE INDEX IF NOT EXISTS idx_sales_user ON sales(user_id);
+    CREATE INDEX IF NOT EXISTS idx_sales_payment ON sales(payment_method_id);
   `);
   
   console.log('✅ Base de datos inicializada');
