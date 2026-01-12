@@ -897,13 +897,18 @@ async function renderProducts() {
         <h1>Gestión de Productos</h1>
         <p>Administra tu inventario de productos</p>
       </div>
-      <button class="btn btn-primary" onclick="openProductModal()">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <line x1="12" y1="5" x2="12" y2="19"/>
-          <line x1="5" y1="12" x2="19" y2="12"/>
-        </svg>
-        Nuevo Producto
-      </button>
+      <div style="display: flex; gap: 10px;">
+        <button class="btn" style="background: var(--success-color);" onclick="openImportModal()">
+          📎 Importar Excel
+        </button>
+        <button class="btn btn-primary" onclick="openProductModal()">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="12" y1="5" x2="12" y2="19"/>
+            <line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+          Nuevo Producto
+        </button>
+      </div>
     </div>
     
     <div class="table-container">
@@ -1164,6 +1169,101 @@ async function saveStockAdjustment(event, productId) {
     }
   } catch (error) {
     showNotification('Error al conectar con el servidor', 'error');
+  }
+}
+
+// ============ IMPORTACIÓN MASIVA ============
+function openImportModal() {
+  document.getElementById('modal-title').textContent = '📎 Importar Productos desde Excel';
+  document.getElementById('modal-body').innerHTML = `
+    <div style="padding: 20px;">
+      <div style="background: #f1f5f9; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+        <h3 style="margin-top: 0; color: var(--primary-color);">ℹ️ Instrucciones</h3>
+        <ul style="margin: 10px 0; padding-left: 20px; line-height: 1.8;">
+          <li>El archivo debe ser un Excel (.xlsx)</li>
+          <li>Debe contener las columnas: <strong>Clave, Descripción, Línea, Existencias, Precio público</strong></li>
+          <li>Stock mínimo se establecerá automáticamente en <strong>1</strong> para todos</li>
+          <li>Las líneas se mapearán a proveedores automáticamente</li>
+          <li>La importación es rápida gracias a transacciones en lote</li>
+        </ul>
+      </div>
+      
+      <form id="import-form" onsubmit="importExcel(event)">
+        <div class="form-group">
+          <label>Seleccionar archivo Excel *</label>
+          <input type="file" id="excel-file" accept=".xlsx, .xls" required style="padding: 10px; border: 2px dashed var(--border-color); border-radius: 8px; width: 100%; cursor: pointer;">
+        </div>
+        
+        <div id="import-progress" style="display: none; margin: 20px 0;">
+          <div style="background: var(--primary-color); height: 4px; border-radius: 2px; width: 0%; transition: width 0.3s;" id="progress-bar"></div>
+          <p id="progress-text" style="text-align: center; margin-top: 10px; color: var(--text-light);">Procesando...</p>
+        </div>
+        
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+          <button type="submit" class="btn btn-primary" id="import-btn">🚀 Importar</button>
+        </div>
+      </form>
+    </div>
+  `;
+  
+  openModal();
+}
+
+async function importExcel(event) {
+  event.preventDefault();
+  
+  const fileInput = document.getElementById('excel-file');
+  const file = fileInput.files[0];
+  
+  if (!file) {
+    showNotification('Selecciona un archivo', 'error');
+    return;
+  }
+  
+  const formData = new FormData();
+  formData.append('file', file);
+  
+  const importBtn = document.getElementById('import-btn');
+  const progressDiv = document.getElementById('import-progress');
+  const progressBar = document.getElementById('progress-bar');
+  const progressText = document.getElementById('progress-text');
+  
+  try {
+    importBtn.disabled = true;
+    importBtn.textContent = '⏳ Importando...';
+    progressDiv.style.display = 'block';
+    progressBar.style.width = '50%';
+    progressText.textContent = 'Procesando archivo Excel...';
+    
+    const response = await fetch('/api/products/import', {
+      method: 'POST',
+      body: formData
+    });
+    
+    const result = await response.json();
+    
+    progressBar.style.width = '100%';
+    
+    if (response.ok) {
+      progressText.textContent = `✅ Éxito: ${result.imported} productos importados en ${result.duration}`;
+      setTimeout(() => {
+        closeModal();
+        renderProducts();
+        showNotification(`${result.imported} productos importados exitosamente`, 'success');
+      }, 2000);
+    } else {
+      progressText.textContent = `❌ Error: ${result.error}`;
+      showNotification(result.error || 'Error al importar', 'error');
+      importBtn.disabled = false;
+      importBtn.textContent = '🚀 Importar';
+    }
+  } catch (error) {
+    console.error('Error:', error);
+    progressText.textContent = '❌ Error de conexión';
+    showNotification('Error al conectar con el servidor', 'error');
+    importBtn.disabled = false;
+    importBtn.textContent = '🚀 Importar';
   }
 }
 
