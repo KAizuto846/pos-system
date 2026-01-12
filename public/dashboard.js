@@ -9,7 +9,8 @@ const state = {
     suppliers: [],
     departments: [],
     products: []
-  }
+  },
+  reportData: [] // Para exportación
 };
 
 // Inicialización
@@ -94,9 +95,370 @@ async function loadModule(moduleName) {
     case 'sales':
       await renderPOS();
       break;
+    case 'reports':
+      await renderReports();
+      break;
     default:
       document.getElementById('content-wrapper').innerHTML = '<h1>Módulo no encontrado</h1>';
   }
+}
+
+// ============ REPORTES (FASE 5) ============
+async function renderReports() {
+  const wrapper = document.getElementById('content-wrapper');
+  
+  // Cargar datos necesarios para filtros
+  await loadSuppliers();
+  await loadUsers();
+  await loadPaymentMethods();
+
+  const today = new Date().toISOString().split('T')[0];
+
+  wrapper.innerHTML = `
+    <div class="section-header">
+      <div>
+        <h1>📊 Reportes y Analíticas</h1>
+        <p>Análisis detallado de ventas e inventario</p>
+      </div>
+    </div>
+    
+    <div class="report-tabs" style="display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 1px solid var(--border-color); padding-bottom: 10px;">
+      <button class="btn btn-secondary active" onclick="switchReportTab('sales', this)">Ventas Detalladas</button>
+      <button class="btn btn-secondary" onclick="switchReportTab('inventory', this)">Inventario Completo</button>
+      <button class="btn btn-secondary" onclick="switchReportTab('suppliers', this)">Por Proveedor</button>
+      <button class="btn btn-secondary" onclick="switchReportTab('history', this)">Historial Ventas</button>
+    </div>
+
+    <!-- Filtros Generales -->
+    <div class="report-filters" style="background: white; padding: 20px; border-radius: 12px; margin-bottom: 20px; box-shadow: var(--shadow);">
+      <h3 style="margin-bottom: 15px;">🔍 Filtros</h3>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
+        <div class="form-group">
+          <label>Fecha Inicio</label>
+          <input type="date" id="startDate" value="${today}">
+        </div>
+        <div class="form-group">
+          <label>Fecha Fin</label>
+          <input type="date" id="endDate" value="${today}">
+        </div>
+        <div class="form-group">
+          <label>Proveedor (Línea)</label>
+          <select id="filterSupplier">
+            <option value="">Todos</option>
+            ${state.data.suppliers.map(s => `<option value="${s.id}">${s.name}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Cajero</label>
+          <select id="filterUser">
+            <option value="">Todos</option>
+            ${state.data.users.map(u => `<option value="${u.id}">${u.username}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div class="form-actions" style="margin-top: 15px;">
+        <button class="btn btn-primary" onclick="generateReport()">Generar Reporte</button>
+        <button class="btn btn-success" onclick="exportReportCSV()">Exportar a CSV</button>
+      </div>
+    </div>
+
+    <!-- Contenedor de Reportes -->
+    <div id="report-content" class="table-container">
+      <div style="padding: 40px; text-align: center; color: var(--text-light);">
+        Selecciona filtros y haz clic en "Generar Reporte"
+      </div>
+    </div>
+  `;
+  
+  // Inicializar primer reporte
+  state.currentReportTab = 'sales';
+}
+
+function switchReportTab(tab, btn) {
+  state.currentReportTab = tab;
+  document.querySelectorAll('.report-tabs button').forEach(b => b.classList.remove('active', 'btn-primary'));
+  document.querySelectorAll('.report-tabs button').forEach(b => b.classList.add('btn-secondary'));
+  btn.classList.remove('btn-secondary');
+  btn.classList.add('btn-primary', 'active');
+  
+  // Limpiar vista
+  document.getElementById('report-content').innerHTML = `
+    <div style="padding: 40px; text-align: center; color: var(--text-light);">
+      Selecciona filtros y haz clic en "Generar Reporte" para ver: ${btn.textContent}
+    </div>
+  `;
+}
+
+async function generateReport() {
+  const type = state.currentReportTab;
+  const startDate = document.getElementById('startDate').value;
+  const endDate = document.getElementById('endDate').value;
+  const supplierId = document.getElementById('filterSupplier').value;
+  const userId = document.getElementById('filterUser').value;
+  
+  const container = document.getElementById('report-content');
+  container.innerHTML = '<div style="padding: 40px; text-align: center;">⏳ Cargando datos...</div>';
+  
+  try {
+    const params = new URLSearchParams({ startDate, endDate, supplierId, userId });
+    let data;
+    let html = '';
+    
+    switch(type) {
+      case 'sales':
+        const resSales = await fetch(`/api/reports/detailed-sales?${params}`);
+        data = await resSales.json();
+        state.reportData = data;
+        html = renderDetailedSales(data);
+        break;
+        
+      case 'inventory':
+        const resInv = await fetch(`/api/reports/inventory?${params}`);
+        data = await resInv.json();
+        state.reportData = data;
+        html = renderInventoryReport(data);
+        break;
+        
+      case 'suppliers':
+        const resSupp = await fetch(`/api/reports/supplier-sales?${params}`);
+        data = await resSupp.json();
+        state.reportData = data;
+        html = renderSupplierReport(data);
+        break;
+        
+      case 'history':
+        const resHist = await fetch(`/api/reports/history?${params}`);
+        data = await resHist.json();
+        state.reportData = data;
+        html = renderHistoryReport(data);
+        break;
+    }
+    
+    container.innerHTML = html;
+    
+  } catch (error) {
+    console.error(error);
+    container.innerHTML = `<div style="padding: 20px; color: red;">Error al generar reporte: ${error.message}</div>`;
+  }
+}
+
+function renderDetailedSales(data) {
+  if (!data || data.length === 0) return '<div style="padding: 40px; text-align: center;">No hay datos</div>';
+  
+  let totalCost = 0;
+  let totalPrice = 0;
+  let totalQty = 0;
+  
+  const rows = data.map(row => {
+    const totalRowCost = row.quantity * row.cost;
+    const totalRowPrice = row.quantity * row.price;
+    totalCost += totalRowCost;
+    totalPrice += totalRowPrice;
+    totalQty += row.quantity;
+    
+    return `
+      <tr>
+        <td>${row.created_at.split('T')[0]}</td>
+        <td>${row.product_name}</td>
+        <td>${row.barcode || '-'}</td>
+        <td>${row.supplier_name || '-'}</td>
+        <td style="text-align: center;">${row.quantity}</td>
+        <td style="text-align: right;">$${row.cost.toFixed(2)}</td>
+        <td style="text-align: right;">$${row.price.toFixed(2)}</td>
+        <td style="text-align: right;">$${totalRowCost.toFixed(2)}</td>
+        <td style="text-align: right;"><strong>$${totalRowPrice.toFixed(2)}</strong></td>
+      </tr>
+    `;
+  }).join('');
+  
+  return `
+    <div class="table-wrapper">
+      <table class="report-table">
+        <thead>
+          <tr>
+            <th>Fecha</th>
+            <th>Producto</th>
+            <th>Código</th>
+            <th>Proveedor</th>
+            <th>Cant.</th>
+            <th>P. Farmacia</th>
+            <th>P. Público</th>
+            <th>Total Farm.</th>
+            <th>Total Púb.</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows}
+        </tbody>
+        <tfoot>
+          <tr style="background: #f8fafc; font-weight: bold;">
+            <td colspan="4" style="text-align: right;">TOTALES:</td>
+            <td style="text-align: center;">${totalQty}</td>
+            <td></td>
+            <td></td>
+            <td style="text-align: right;">$${totalCost.toFixed(2)}</td>
+            <td style="text-align: right;">$${totalPrice.toFixed(2)}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  `;
+}
+
+function renderInventoryReport(data) {
+  let totalValorCosto = 0;
+  let totalValorVenta = 0;
+  
+  const rows = data.map(p => {
+    const valCosto = p.stock * p.cost;
+    const valVenta = p.stock * p.price;
+    totalValorCosto += valCosto;
+    totalValorVenta += valVenta;
+    
+    return `
+      <tr>
+        <td>${p.name}</td>
+        <td>${p.barcode || '-'}</td>
+        <td>${p.supplier_name || '-'}</td>
+        <td style="text-align: center;">${p.stock}</td>
+        <td style="text-align: right;">$${p.cost.toFixed(2)}</td>
+        <td style="text-align: right;">$${p.price.toFixed(2)}</td>
+        <td style="text-align: right;">$${valCosto.toFixed(2)}</td>
+        <td style="text-align: right;">$${valVenta.toFixed(2)}</td>
+      </tr>
+    `;
+  }).join('');
+  
+  return `
+    <div style="padding: 20px; background: #f0fdf4; margin-bottom: 20px; border-radius: 8px;">
+      <h3>📦 Valor del Inventario</h3>
+      <p>Costo Total: <strong>$${totalValorCosto.toLocaleString('es-MX')}</strong> | Venta Total: <strong>$${totalValorVenta.toLocaleString('es-MX')}</strong></p>
+    </div>
+    <div class="table-wrapper">
+      <table class="report-table">
+        <thead>
+          <tr>
+            <th>Producto</th>
+            <th>Código</th>
+            <th>Proveedor</th>
+            <th>Stock</th>
+            <th>Costo U.</th>
+            <th>Precio U.</th>
+            <th>Valor Costo</th>
+            <th>Valor Venta</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderSupplierReport(data) {
+  let grandTotal = 0;
+  
+  const rows = data.map(r => {
+    grandTotal += r.total;
+    return `
+      <tr>
+        <td>${r.supplier_name}</td>
+        <td>${r.product_count}</td>
+        <td style="text-align: center;">${r.items_sold}</td>
+        <td style="text-align: right;"><strong>$${r.total.toFixed(2)}</strong></td>
+      </tr>
+    `;
+  }).join('');
+  
+  return `
+    <div class="table-wrapper">
+      <table class="report-table">
+        <thead>
+          <tr>
+            <th>Proveedor</th>
+            <th>Productos Únicos Vendidos</th>
+            <th>Unidades Vendidas</th>
+            <th>Total Ventas</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows}
+        </tbody>
+        <tfoot>
+          <tr style="font-weight: bold; background: #f8fafc;">
+            <td colspan="3" style="text-align: right;">GRAN TOTAL:</td>
+            <td style="text-align: right;">$${grandTotal.toFixed(2)}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  `;
+}
+
+function renderHistoryReport(data) {
+  const rows = data.map(sale => `
+    <tr>
+      <td>${new Date(sale.created_at).toLocaleString()}</td>
+      <td>#${sale.id}</td>
+      <td>${sale.username}</td>
+      <td>${sale.payment_method}</td>
+      <td style="text-align: right;"><strong>$${sale.total.toFixed(2)}</strong></td>
+      <td>
+        <button class="btn btn-small btn-secondary" onclick="reprintTicket(${sale.id})">🖨️</button>
+      </td>
+    </tr>
+  `).join('');
+  
+  return `
+    <div class="table-wrapper">
+      <table class="report-table">
+        <thead>
+          <tr>
+            <th>Fecha</th>
+            <th>Folio</th>
+            <th>Cajero</th>
+            <th>Método Pago</th>
+            <th>Total</th>
+            <th>Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function exportReportCSV() {
+  if (!state.reportData || state.reportData.length === 0) {
+    showNotification('No hay datos para exportar', 'error');
+    return;
+  }
+  
+  let csvContent = "data:text/csv;charset=utf-8,";
+  const type = state.currentReportTab;
+  
+  if (type === 'sales') {
+    csvContent += "Fecha,Producto,Codigo,Proveedor,Cantidad,Costo U,Precio U,Total Costo,Total Venta\n";
+    state.reportData.forEach(row => {
+      csvContent += `${row.created_at.split('T')[0]},"${row.product_name}",${row.barcode || ''},"${row.supplier_name || ''}",${row.quantity},${row.cost},${row.price},${row.quantity * row.cost},${row.quantity * row.price}\n`;
+    });
+  } else if (type === 'inventory') {
+    csvContent += "Producto,Codigo,Proveedor,Stock,Costo,Precio,Valor Costo,Valor Venta\n";
+    state.reportData.forEach(row => {
+      csvContent += `"${row.name}",${row.barcode || ''},"${row.supplier_name || ''}",${row.stock},${row.cost},${row.price},${row.stock * row.cost},${row.stock * row.price}\n`;
+    });
+  }
+  
+  const encodedUri = encodeURI(csvContent);
+  const link = document.createElement("a");
+  link.setAttribute("href", encodedUri);
+  link.setAttribute("download", `reporte_${type}_${new Date().toISOString().split('T')[0]}.csv`);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
 }
 
 // ============ DASHBOARD ============
@@ -172,27 +534,29 @@ async function renderDashboard() {
       <div class="table-header">
         <h2>📊 Ventas por Cajero Hoy</h2>
       </div>
-      <table>
-        <thead>
-          <tr>
-            <th>Cajero</th>
-            <th>Número de Ventas</th>
-            <th>Total Vendido</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${stats.salesByCashier && stats.salesByCashier.length > 0 ? 
-            stats.salesByCashier.map(c => `
-              <tr>
-                <td><strong>${c.username}</strong></td>
-                <td>${c.sales_count}</td>
-                <td>$${parseFloat(c.total).toLocaleString('es-MX', {minimumFractionDigits: 2})}</td>
-              </tr>
-            `).join('') :
-            '<tr><td colspan="3" style="text-align: center; padding: 20px;">No hay ventas registradas hoy</td></tr>'
-          }
-        </tbody>
-      </table>
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Cajero</th>
+              <th>Número de Ventas</th>
+              <th>Total Vendido</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${stats.salesByCashier && stats.salesByCashier.length > 0 ? 
+              stats.salesByCashier.map(c => `
+                <tr>
+                  <td><strong>${c.username}</strong></td>
+                  <td>${c.sales_count}</td>
+                  <td>$${parseFloat(c.total).toLocaleString('es-MX', {minimumFractionDigits: 2})}</td>
+                </tr>
+              `).join('') :
+              '<tr><td colspan="3" style="text-align: center; padding: 20px;">No hay ventas registradas hoy</td></tr>'
+            }
+          </tbody>
+        </table>
+      </div>
     </div>
     
     <div class="table-container">
@@ -206,11 +570,8 @@ async function renderDashboard() {
         <button class="btn btn-primary" onclick="loadModule('products')" style="justify-content: center; padding: 20px;">
           📦 Productos
         </button>
-        <button class="btn btn-primary" onclick="loadModule('users')" style="justify-content: center; padding: 20px;">
-          👥 Usuarios
-        </button>
-        <button class="btn btn-primary" onclick="loadModule('payment-methods')" style="justify-content: center; padding: 20px;">
-          💳 Formas de Pago
+        <button class="btn btn-primary" onclick="loadModule('reports')" style="justify-content: center; padding: 20px;">
+          📊 Reportes
         </button>
       </div>
     </div>
@@ -275,7 +636,7 @@ async function renderPOS() {
           <div class="table-header">
             <h2>🛍️ Carrito de Compra</h2>
           </div>
-          <div id="cart-items">
+          <div id="cart-items" class="table-wrapper">
             <div style="padding: 40px; text-align: center; color: var(--text-light);">
               <p>🛒 El carrito está vacío</p>
               <p style="font-size: 14px; margin-top: 10px;">Busca productos arriba para agregar al carrito</p>
@@ -709,20 +1070,22 @@ async function renderUsers() {
         </div>
       </div>
       
-      <table id="users-table">
-        <thead>
-          <tr>
-            <th>Usuario</th>
-            <th>Rol</th>
-            <th>Estado</th>
-            <th>Fecha Creación</th>
-            <th>Acciones</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${renderUsersRows()}
-        </tbody>
-      </table>
+      <div class="table-wrapper">
+        <table id="users-table">
+          <thead>
+            <tr>
+              <th>Usuario</th>
+              <th>Rol</th>
+              <th>Estado</th>
+              <th>Fecha Creación</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${renderUsersRows()}
+          </tbody>
+        </table>
+      </div>
     </div>
   `;
 }
@@ -876,20 +1239,22 @@ async function renderPaymentMethods() {
     </div>
     
     <div class="table-container">
-      <table>
-        <thead>
-          <tr>
-            <th>Nombre</th>
-            <th>Afecta Caja</th>
-            <th>Estado</th>
-            <th>Fecha Creación</th>
-            <th>Acciones</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${renderPaymentMethodsRows()}
-        </tbody>
-      </table>
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Nombre</th>
+              <th>Afecta Caja</th>
+              <th>Estado</th>
+              <th>Fecha Creación</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${renderPaymentMethodsRows()}
+          </tbody>
+        </table>
+      </div>
     </div>
   `;
 }
@@ -1038,20 +1403,22 @@ async function renderSuppliers() {
     </div>
     
     <div class="table-container">
-      <table>
-        <thead>
-          <tr>
-            <th>Nombre</th>
-            <th>Contacto</th>
-            <th>Teléfono</th>
-            <th>Estado</th>
-            <th>Acciones</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${renderSuppliersRows()}
-        </tbody>
-      </table>
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Nombre</th>
+              <th>Contacto</th>
+              <th>Teléfono</th>
+              <th>Estado</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${renderSuppliersRows()}
+          </tbody>
+        </table>
+      </div>
     </div>
   `;
 }
@@ -1207,20 +1574,22 @@ async function renderDepartments() {
     </div>
     
     <div class="table-container">
-      <table>
-        <thead>
-          <tr>
-            <th>Nombre</th>
-            <th>Descripción</th>
-            <th>Estado</th>
-            <th>Fecha Creación</th>
-            <th>Acciones</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${renderDepartmentsRows()}
-        </tbody>
-      </table>
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Nombre</th>
+              <th>Descripción</th>
+              <th>Estado</th>
+              <th>Fecha Creación</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${renderDepartmentsRows()}
+          </tbody>
+        </table>
+      </div>
     </div>
   `;
 }
@@ -1375,23 +1744,25 @@ async function renderProducts() {
         </div>
       </div>
       
-      <table id="products-table">
-        <thead>
-          <tr>
-            <th>Nombre</th>
-            <th>Código</th>
-            <th>Precio</th>
-            <th>Stock</th>
-            <th>Departamento</th>
-            <th>Proveedor</th>
-            <th>Estado</th>
-            <th>Acciones</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${renderProductsRows()}
-        </tbody>
-      </table>
+      <div class="table-wrapper">
+        <table id="products-table">
+          <thead>
+            <tr>
+              <th>Nombre</th>
+              <th>Código</th>
+              <th>Precio</th>
+              <th>Stock</th>
+              <th>Departamento</th>
+              <th>Proveedor</th>
+              <th>Estado</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${renderProductsRows()}
+          </tbody>
+        </table>
+      </div>
     </div>
   `;
 }
