@@ -296,13 +296,23 @@ body {
   font-size: 14px;
 }
 
+/* Table wrapper with horizontal scroll */
+.table-wrapper {
+  overflow-x: auto;
+  overflow-y: visible;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
+  min-width: 800px; /* Asegurar ancho mínimo para tablas anchas */
 }
 
 thead {
   background: var(--bg-color);
+  position: sticky;
+  top: 0;
+  z-index: 10;
 }
 
 th {
@@ -312,6 +322,7 @@ th {
   font-size: 13px;
   color: var(--text-light);
   text-transform: uppercase;
+  white-space: nowrap; /* Evitar que los encabezados se rompan */
 }
 
 td {
@@ -329,6 +340,7 @@ tr:hover {
   border-radius: 12px;
   font-size: 12px;
   font-weight: 500;
+  white-space: nowrap;
 }
 
 .badge.active { background: #dcfce7; color: var(--success-color); }
