@@ -748,9 +748,67 @@ app.post('/api/products/import', requireAuth, upload.single('file'), async (req,
   }
 });
 
+// ==================== VENTAS ====================
+
+app.post('/api/sales/create', requireAuth, (req, res) => {
+  const createSale = db.transaction((saleData) => {
+    try {
+      const { items, payment_method_id, total } = saleData;
+      
+      if (!items || items.length === 0) {
+        throw new Error('No hay productos en la venta');
+      }
+      
+      // Crear venta
+      const saleResult = db.prepare(
+        'INSERT INTO sales (total, payment_method_id, user_id, created_at) VALUES (?, ?, ?, ?)'
+      ).run(total, payment_method_id, req.session.userId, new Date().toISOString());
+      
+      const saleId = saleResult.lastInsertRowid;
+      
+      // Insertar items y actualizar stock
+      const insertItem = db.prepare(
+        'INSERT INTO sale_items (sale_id, product_id, quantity, price) VALUES (?, ?, ?, ?)'
+      );
+      
+      const updateStock = db.prepare(
+        'UPDATE products SET stock = stock - ?, updated_at = ? WHERE id = ?'
+      );
+      
+      for (const item of items) {
+        // Verificar stock disponible
+        const product = db.prepare('SELECT stock FROM products WHERE id = ?').get(item.product_id);
+        
+        if (!product || product.stock < item.quantity) {
+          throw new Error(`Stock insuficiente para producto ID ${item.product_id}`);
+        }
+        
+        // Insertar item
+        insertItem.run(saleId, item.product_id, item.quantity, item.price);
+        
+        // Actualizar stock
+        updateStock.run(item.quantity, new Date().toISOString(), item.product_id);
+      }
+      
+      return saleId;
+    } catch (error) {
+      throw error;
+    }
+  });
+  
+  try {
+    const saleId = createSale(req.body);
+    res.json({ success: true, saleId });
+  } catch (error) {
+    console.error('Error creando venta:', error);
+    res.status(500).json({ error: error.message || 'Error al procesar la venta' });
+  }
+});
+
 // Iniciar servidor
 app.listen(PORT, () => {
   console.log(`✅ Servidor POS corriendo en http://localhost:${PORT}`);
   console.log(`🚀 Listo para usar en Codespaces`);
   console.log(`📦 Sistema de importación masiva habilitado`);
+  console.log(`🛒 Módulo de punto de venta (POS) activo`);
 });
