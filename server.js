@@ -2,18 +2,26 @@ const express = require('express');
 const session = require('express-session');
 const bcrypt = require('bcrypt');
 const path = require('path');
+const multer = require('multer');
+const XLSX = require('xlsx');
 const { initDatabase, getDB } = require('./database/init');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Configurar multer para subida de archivos
+const upload = multer({ 
+  dest: 'uploads/',
+  limits: { fileSize: 10 * 1024 * 1024 } // 10MB max
+});
 
 // Inicializar base de datos
 initDatabase();
 const db = getDB();
 
 // Middleware
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(express.static('public'));
 app.use(session({
   secret: 'pos-secret-key-change-in-production',
@@ -22,19 +30,16 @@ app.use(session({
   cookie: { secure: false }
 }));
 
-// ==================== MIDDLEWARE ====================
-
-// Middleware para verificar autenticación
+// Middleware de autenticación
 function requireAuth(req, res, next) {
   if (!req.session.userId) {
-    return res.status(401).json({ error: 'No autenticado' });
+    return res.status(401).json({ error: 'No autorizado' });
   }
   next();
 }
 
 // ==================== AUTENTICACIÓN ====================
 
-// Verificar si existe administrador
 app.get('/api/check-admin', (req, res) => {
   try {
     const admin = db.prepare('SELECT id FROM users WHERE role = ?').get('admin');
@@ -44,7 +49,6 @@ app.get('/api/check-admin', (req, res) => {
   }
 });
 
-// Crear primer administrador
 app.post('/api/create-admin', async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -80,7 +84,6 @@ app.post('/api/create-admin', async (req, res) => {
   }
 });
 
-// Login
 app.post('/api/login', async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -119,13 +122,11 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-// Logout
 app.post('/api/logout', (req, res) => {
   req.session.destroy();
   res.json({ success: true });
 });
 
-// Verificar sesión
 app.get('/api/session', (req, res) => {
   if (req.session.userId) {
     res.json({ 
@@ -156,7 +157,6 @@ app.get('/api/stats', requireAuth, (req, res) => {
       'SELECT COALESCE(SUM(total), 0) as sum FROM sales WHERE DATE(created_at) = ?'
     ).get(today).sum;
     
-    // Total en caja (solo métodos que afectan caja)
     const cashTotal = db.prepare(`
       SELECT COALESCE(SUM(s.total), 0) as sum 
       FROM sales s
@@ -164,7 +164,6 @@ app.get('/api/stats', requireAuth, (req, res) => {
       WHERE DATE(s.created_at) = ? AND pm.affects_cash = 1
     `).get(today).sum;
     
-    // Ventas por cajero
     const salesByCashier = db.prepare(`
       SELECT 
         u.username,
@@ -177,7 +176,6 @@ app.get('/api/stats', requireAuth, (req, res) => {
       ORDER BY total DESC
     `).all(today);
     
-    // Productos con stock bajo
     const lowStock = db.prepare(
       'SELECT COUNT(*) as count FROM products WHERE stock <= min_stock AND active = 1'
     ).get().count;
@@ -251,7 +249,7 @@ app.post('/api/users/update', requireAuth, async (req, res) => {
     if (password && password.length > 0) {
       if (password.length < 6) {
         return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres' });
-    }
+      }
       const hashedPassword = await bcrypt.hash(password, 10);
       db.prepare(
         'UPDATE users SET password = ?, role = ?, active = ? WHERE id = ?'
@@ -626,8 +624,133 @@ app.post('/api/products/adjust-stock', requireAuth, (req, res) => {
   }
 });
 
+// ==================== IMPORTACIÓN MASIVA DE EXCEL ====================
+
+app.post('/api/products/import', requireAuth, upload.single('file'), async (req, res) => {
+  console.log('\n🚀 Iniciando importación masiva...');
+  const startTime = Date.now();
+  
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No se recibió ningún archivo' });
+    }
+    
+    // Leer archivo Excel
+    console.log('📖 Leyendo archivo Excel...');
+    const workbook = XLSX.readFile(req.file.path);
+    const sheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[sheetName];
+    const data = XLSX.utils.sheet_to_json(sheet);
+    
+    console.log(`📊 Productos encontrados: ${data.length}`);
+    
+    if (data.length === 0) {
+      return res.status(400).json({ error: 'El archivo no contiene productos' });
+    }
+    
+    // Mapeo de líneas a supplier_id
+    const lineaMap = {};
+    const suppliers = db.prepare('SELECT id, name FROM suppliers WHERE active = 1').all();
+    
+    // Crear proveedores para líneas si no existen
+    const lineasUnicas = [...new Set(data.map(p => p['Línea'] || p['Linea']).filter(l => l))];
+    console.log(`🏢 Líneas únicas encontradas: ${lineasUnicas.length}`);
+    
+    lineasUnicas.forEach(linea => {
+      const lineaNum = parseInt(linea);
+      if (isNaN(lineaNum)) return;
+      
+      const existing = suppliers.find(s => s.name === `Línea ${lineaNum}`);
+      if (existing) {
+        lineaMap[lineaNum] = existing.id;
+      } else {
+        const result = db.prepare(
+          'INSERT INTO suppliers (name, active, created_at) VALUES (?, 1, ?)'
+        ).run(`Línea ${lineaNum}`, new Date().toISOString());
+        lineaMap[lineaNum] = result.lastInsertRowid;
+      }
+    });
+    
+    console.log('✅ Mapeo de líneas completado');
+    
+    // Preparar sentencia para inserción en lote
+    const insertStmt = db.prepare(`
+      INSERT OR REPLACE INTO products 
+      (name, barcode, price, cost, stock, min_stock, supplier_id, active, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+    `);
+    
+    // Usar transacción para velocidad
+    const insertMany = db.transaction((products) => {
+      for (const p of products) {
+        insertStmt.run(p);
+      }
+    });
+    
+    // Preparar datos
+    console.log('🔄 Procesando productos...');
+    const now = new Date().toISOString();
+    const productsToInsert = [];
+    let skipped = 0;
+    
+    for (const row of data) {
+      const name = (row['Descripción'] || row['Descripcion'] || '').trim();
+      const barcode = String(row['Clave'] || '').trim();
+      const precio = parseFloat(row['Precio público'] || row['Precio publico'] || 0);
+      const existencias = parseFloat(row['Existencias'] || 0);
+      const linea = parseInt(row['Línea'] || row['Linea'] || 0);
+      
+      if (!name || precio <= 0) {
+        skipped++;
+        continue;
+      }
+      
+      // Stock mínimo = 1 para todos como solicitaste
+      const minStock = 1;
+      const supplierId = lineaMap[linea] || null;
+      
+      productsToInsert.push([
+        name,
+        barcode || null,
+        precio,
+        0, // costo por defecto
+        existencias,
+        minStock,
+        supplierId,
+        now,
+        now
+      ]);
+    }
+    
+    console.log(`💾 Insertando ${productsToInsert.length} productos en lote...`);
+    insertMany(productsToInsert);
+    
+    const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+    console.log(`✅ Importación completada en ${duration}s`);
+    
+    res.json({ 
+      success: true, 
+      imported: productsToInsert.length,
+      skipped,
+      duration: `${duration}s`,
+      message: `${productsToInsert.length} productos importados exitosamente` 
+    });
+    
+  } catch (error) {
+    console.error('❌ Error en importación:', error);
+    res.status(500).json({ error: 'Error al importar productos: ' + error.message });
+  } finally {
+    // Limpiar archivo temporal
+    if (req.file) {
+      const fs = require('fs');
+      fs.unlink(req.file.path, () => {});
+    }
+  }
+});
+
 // Iniciar servidor
 app.listen(PORT, () => {
   console.log(`✅ Servidor POS corriendo en http://localhost:${PORT}`);
   console.log(`🚀 Listo para usar en Codespaces`);
+  console.log(`📦 Sistema de importación masiva habilitado`);
 });
