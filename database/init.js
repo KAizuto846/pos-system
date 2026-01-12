@@ -98,10 +98,52 @@ function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_sales_payment ON sales(payment_method_id);
   `);
   
+  // Ejecutar migraciones para bases de datos existentes
+  runMigrations();
+  
   console.log('✅ Base de datos inicializada');
   console.log('✅ Tablas creadas: users, payment_methods, suppliers, departments, products, sales, sale_items');
   
   return db;
+}
+
+function runMigrations() {
+  console.log('🔄 Verificando migraciones...');
+  
+  try {
+    // Migración 1: Verificar columna affects_cash en payment_methods
+    const paymentColumns = db.pragma('table_info(payment_methods)');
+    const hasAffectsCash = paymentColumns.some(col => col.name === 'affects_cash');
+    
+    if (!hasAffectsCash) {
+      console.log('⚙️  Agregando columna affects_cash a payment_methods...');
+      db.exec('ALTER TABLE payment_methods ADD COLUMN affects_cash INTEGER DEFAULT 1');
+      console.log('✅ Migración completada: affects_cash');
+    }
+    
+    // Migración 2: Verificar columna cost en products
+    const productColumns = db.pragma('table_info(products)');
+    const hasCost = productColumns.some(col => col.name === 'cost');
+    
+    if (!hasCost) {
+      console.log('⚙️  Agregando columna cost a products...');
+      db.exec('ALTER TABLE products ADD COLUMN cost REAL DEFAULT 0');
+      console.log('✅ Migración completada: cost');
+    }
+    
+    // Migración 3: Verificar columna min_stock en products
+    const hasMinStock = productColumns.some(col => col.name === 'min_stock');
+    
+    if (!hasMinStock) {
+      console.log('⚙️  Agregando columna min_stock a products...');
+      db.exec('ALTER TABLE products ADD COLUMN min_stock INTEGER DEFAULT 5');
+      console.log('✅ Migración completada: min_stock');
+    }
+    
+    console.log('✅ Todas las migraciones completadas');
+  } catch (error) {
+    console.error('❌ Error en migraciones:', error.message);
+  }
 }
 
 function getDB() {
