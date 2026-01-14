@@ -112,6 +112,7 @@ app.post('/api/login', async (req, res) => {
       success: true, 
       message: 'Login exitoso',
       user: {
+        id: user.id,
         username: user.username,
         role: user.role
       }
@@ -132,6 +133,7 @@ app.get('/api/session', (req, res) => {
     res.json({ 
       authenticated: true,
       user: {
+        id: req.session.userId,
         username: req.session.username,
         role: req.session.role
       }
@@ -943,6 +945,163 @@ app.get('/api/reports/low-stock', requireAuth, (req, res) => {
     res.json(lowStock);
   } catch (error) {
     console.error('Error en reporte de stock bajo:', error);
+    res.status(500).json({ error: 'Error al generar reporte' });
+  }
+});
+
+// -------------------- REPORTES DETALLADOS (NUEVOS) --------------------
+
+// Ventas detalladas (agrupado por producto)
+// Columnas esperadas en frontend:
+// CANTIDAD; PRODUCTO; CODIGO; COSTO UNITARIO FARMACIA; COSTO TOTAL FARMACIA; COSTO UNITARIO; COSTO TOTAL
+app.get('/api/reports/detailed-sales', requireAuth, (req, res) => {
+  try {
+    const { startDate, endDate, supplierId, userId, paymentMethodId } = req.query;
+
+    if (!startDate || !endDate) {
+      return res.status(400).json({ error: 'Fechas requeridas' });
+    }
+
+    let whereClause = 'WHERE DATE(s.created_at) BETWEEN ? AND ?';
+    const params = [startDate, endDate];
+
+    if (supplierId) {
+      whereClause += ' AND p.supplier_id = ?';
+      params.push(supplierId);
+    }
+
+    if (userId) {
+      whereClause += ' AND s.user_id = ?';
+      params.push(userId);
+    }
+
+    if (paymentMethodId) {
+      whereClause += ' AND s.payment_method_id = ?';
+      params.push(paymentMethodId);
+    }
+
+    const rows = db.prepare(`
+      SELECT
+        SUM(si.quantity) as quantity,
+        p.name as product_name,
+        p.barcode as barcode,
+        COALESCE(p.cost, 0) as cost_farmacia_unit,
+        SUM(si.quantity * COALESCE(p.cost, 0)) as cost_farmacia_total,
+        AVG(si.price) as sale_price_unit,
+        SUM(si.quantity * si.price) as sale_total
+      FROM sale_items si
+      INNER JOIN sales s ON si.sale_id = s.id
+      INNER JOIN products p ON si.product_id = p.id
+      ${whereClause}
+      GROUP BY p.id, p.name, p.barcode, p.cost
+      ORDER BY sale_total DESC
+    `).all(...params);
+
+    res.json(rows.map(r => ({
+      quantity: Number(r.quantity || 0),
+      product_name: r.product_name,
+      barcode: r.barcode,
+      cost_farmacia_unit: Number(r.cost_farmacia_unit || 0),
+      cost_farmacia_total: Number(r.cost_farmacia_total || 0),
+      sale_price_unit: Number(r.sale_price_unit || 0),
+      sale_total: Number(r.sale_total || 0)
+    })));
+  } catch (error) {
+    console.error('Error en /api/reports/detailed-sales:', error);
+    res.status(500).json({ error: 'Error al generar reporte' });
+  }
+});
+
+// Pedido por proveedor (agrupado por producto)
+// Columnas esperadas en frontend: CANTIDAD; PRODUCTO; CODIGO
+app.get('/api/reports/supplier-order', requireAuth, (req, res) => {
+  try {
+    const { startDate, endDate, supplierId } = req.query;
+
+    if (!startDate || !endDate) {
+      return res.status(400).json({ error: 'Fechas requeridas' });
+    }
+
+    if (!supplierId) {
+      return res.status(400).json({ error: 'supplierId es requerido para Pedido Proveedor' });
+    }
+
+    const rows = db.prepare(`
+      SELECT
+        SUM(si.quantity) as quantity,
+        p.name as product_name,
+        p.barcode as barcode
+      FROM sale_items si
+      INNER JOIN sales s ON si.sale_id = s.id
+      INNER JOIN products p ON si.product_id = p.id
+      WHERE DATE(s.created_at) BETWEEN ? AND ?
+        AND p.supplier_id = ?
+      GROUP BY p.id, p.name, p.barcode
+      ORDER BY quantity DESC
+    `).all(startDate, endDate, supplierId);
+
+    res.json(rows.map(r => ({
+      quantity: Number(r.quantity || 0),
+      product_name: r.product_name,
+      barcode: r.barcode
+    })));
+  } catch (error) {
+    console.error('Error en /api/reports/supplier-order:', error);
+    res.status(500).json({ error: 'Error al generar reporte' });
+  }
+});
+
+// Historial de ventas (por item; no agrupado)
+// Columnas esperadas en frontend: CANTIDAD; PRODUCTO; CODIGO; COSTO TOTAL FARMACIA; COSTO TOTAL
+app.get('/api/reports/sales-history', requireAuth, (req, res) => {
+  try {
+    const { startDate, endDate, supplierId, userId, paymentMethodId } = req.query;
+
+    if (!startDate || !endDate) {
+      return res.status(400).json({ error: 'Fechas requeridas' });
+    }
+
+    let whereClause = 'WHERE DATE(s.created_at) BETWEEN ? AND ?';
+    const params = [startDate, endDate];
+
+    if (supplierId) {
+      whereClause += ' AND p.supplier_id = ?';
+      params.push(supplierId);
+    }
+
+    if (userId) {
+      whereClause += ' AND s.user_id = ?';
+      params.push(userId);
+    }
+
+    if (paymentMethodId) {
+      whereClause += ' AND s.payment_method_id = ?';
+      params.push(paymentMethodId);
+    }
+
+    const rows = db.prepare(`
+      SELECT
+        si.quantity as quantity,
+        p.name as product_name,
+        p.barcode as barcode,
+        (si.quantity * COALESCE(p.cost, 0)) as cost_farmacia_total,
+        (si.quantity * si.price) as sale_total
+      FROM sale_items si
+      INNER JOIN sales s ON si.sale_id = s.id
+      INNER JOIN products p ON si.product_id = p.id
+      ${whereClause}
+      ORDER BY s.created_at DESC
+    `).all(...params);
+
+    res.json(rows.map(r => ({
+      quantity: Number(r.quantity || 0),
+      product_name: r.product_name,
+      barcode: r.barcode,
+      cost_farmacia_total: Number(r.cost_farmacia_total || 0),
+      sale_total: Number(r.sale_total || 0)
+    })));
+  } catch (error) {
+    console.error('Error en /api/reports/sales-history:', error);
     res.status(500).json({ error: 'Error al generar reporte' });
   }
 });
