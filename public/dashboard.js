@@ -10,7 +10,8 @@ const state = {
     departments: [],
     products: []
   },
-  reportData: [] // Para exportación
+  reportData: [], // Para exportación
+  supplierOrder: [] // Para pedido proveedor editable
 };
 
 // Inicialización
@@ -103,11 +104,10 @@ async function loadModule(moduleName) {
   }
 }
 
-// ============ REPORTES (FASE 5) ============
+// ============ REPORTES (FASE 5 - CORREGIDO) ============
 async function renderReports() {
   const wrapper = document.getElementById('content-wrapper');
   
-  // Cargar datos necesarios para filtros
   await loadSuppliers();
   await loadUsers();
   await loadPaymentMethods();
@@ -118,18 +118,17 @@ async function renderReports() {
     <div class="section-header">
       <div>
         <h1>📊 Reportes y Analíticas</h1>
-        <p>Análisis detallado de ventas e inventario</p>
+        <p>Análisis detallado de ventas</p>
       </div>
     </div>
     
     <div class="report-tabs" style="display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 1px solid var(--border-color); padding-bottom: 10px;">
       <button class="btn btn-secondary active" onclick="switchReportTab('sales', this)">Ventas Detalladas</button>
-      <button class="btn btn-secondary" onclick="switchReportTab('inventory', this)">Inventario Completo</button>
-      <button class="btn btn-secondary" onclick="switchReportTab('suppliers', this)">Por Proveedor</button>
+      <button class="btn btn-secondary" onclick="switchReportTab('supplier-order', this)">Pedido Proveedor</button>
       <button class="btn btn-secondary" onclick="switchReportTab('history', this)">Historial Ventas</button>
     </div>
 
-    <!-- Filtros Generales -->
+    <!-- Filtros -->
     <div class="report-filters" style="background: white; padding: 20px; border-radius: 12px; margin-bottom: 20px; box-shadow: var(--shadow);">
       <h3 style="margin-bottom: 15px;">🔍 Filtros</h3>
       <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
@@ -141,7 +140,7 @@ async function renderReports() {
           <label>Fecha Fin</label>
           <input type="date" id="endDate" value="${today}">
         </div>
-        <div class="form-group">
+        <div class="form-group" id="supplier-filter-container">
           <label>Proveedor (Línea)</label>
           <select id="filterSupplier">
             <option value="">Todos</option>
@@ -170,7 +169,6 @@ async function renderReports() {
     </div>
   `;
   
-  // Inicializar primer reporte
   state.currentReportTab = 'sales';
 }
 
@@ -181,10 +179,19 @@ function switchReportTab(tab, btn) {
   btn.classList.remove('btn-secondary');
   btn.classList.add('btn-primary', 'active');
   
-  // Limpiar vista
+  // Mostrar/ocultar filtro de proveedor según el tab
+  const supplierFilter = document.getElementById('supplier-filter-container');
+  if (tab === 'supplier-order') {
+    supplierFilter.style.display = 'block';
+    document.getElementById('filterSupplier').required = true;
+  } else {
+    supplierFilter.style.display = 'block';
+    document.getElementById('filterSupplier').required = false;
+  }
+  
   document.getElementById('report-content').innerHTML = `
     <div style="padding: 40px; text-align: center; color: var(--text-light);">
-      Selecciona filtros y haz clic en "Generar Reporte" para ver: ${btn.textContent}
+      Selecciona filtros y genera el reporte: ${btn.textContent}
     </div>
   `;
 }
@@ -196,13 +203,20 @@ async function generateReport() {
   const supplierId = document.getElementById('filterSupplier').value;
   const userId = document.getElementById('filterUser').value;
   
+  if (type === 'supplier-order' && !supplierId) {
+    showNotification('Selecciona un proveedor para generar el pedido', 'error');
+    return;
+  }
+  
   const container = document.getElementById('report-content');
   container.innerHTML = '<div style="padding: 40px; text-align: center;">⏳ Cargando datos...</div>';
   
   try {
-    const params = new URLSearchParams({ startDate, endDate, supplierId, userId });
-    let data;
-    let html = '';
+    const params = new URLSearchParams({ startDate, endDate });
+    if (supplierId) params.append('supplierId', supplierId);
+    if (userId) params.append('userId', userId);
+    
+    let data, html = '';
     
     switch(type) {
       case 'sales':
@@ -212,22 +226,16 @@ async function generateReport() {
         html = renderDetailedSales(data);
         break;
         
-      case 'inventory':
-        const resInv = await fetch(`/api/reports/inventory?${params}`);
-        data = await resInv.json();
+      case 'supplier-order':
+        const resOrder = await fetch(`/api/reports/supplier-order?${params}`);
+        data = await resOrder.json();
+        state.supplierOrder = JSON.parse(JSON.stringify(data)); // Copia profunda
         state.reportData = data;
-        html = renderInventoryReport(data);
-        break;
-        
-      case 'suppliers':
-        const resSupp = await fetch(`/api/reports/supplier-sales?${params}`);
-        data = await resSupp.json();
-        state.reportData = data;
-        html = renderSupplierReport(data);
+        html = renderSupplierOrder(data);
         break;
         
       case 'history':
-        const resHist = await fetch(`/api/reports/history?${params}`);
+        const resHist = await fetch(`/api/reports/sales-history?${params}`);
         data = await resHist.json();
         state.reportData = data;
         html = renderHistoryReport(data);
@@ -242,31 +250,29 @@ async function generateReport() {
   }
 }
 
+// Renderizar Ventas Detalladas
+// Columnas: CANTIDAD | PRODUCTO | CODIGO | COSTO UNITARIO FARMACIA | COSTO TOTAL FARMACIA | COSTO UNITARIO | COSTO TOTAL
 function renderDetailedSales(data) {
   if (!data || data.length === 0) return '<div style="padding: 40px; text-align: center;">No hay datos</div>';
   
-  let totalCost = 0;
-  let totalPrice = 0;
   let totalQty = 0;
+  let totalCostFarmacia = 0;
+  let totalVenta = 0;
   
   const rows = data.map(row => {
-    const totalRowCost = row.quantity * row.cost;
-    const totalRowPrice = row.quantity * row.price;
-    totalCost += totalRowCost;
-    totalPrice += totalRowPrice;
     totalQty += row.quantity;
+    totalCostFarmacia += row.cost_farmacia_total;
+    totalVenta += row.sale_total;
     
     return `
       <tr>
-        <td>${row.created_at.split('T')[0]}</td>
+        <td style="text-align: center;">${row.quantity}</td>
         <td>${row.product_name}</td>
         <td>${row.barcode || '-'}</td>
-        <td>${row.supplier_name || '-'}</td>
-        <td style="text-align: center;">${row.quantity}</td>
-        <td style="text-align: right;">$${row.cost.toFixed(2)}</td>
-        <td style="text-align: right;">$${row.price.toFixed(2)}</td>
-        <td style="text-align: right;">$${totalRowCost.toFixed(2)}</td>
-        <td style="text-align: right;"><strong>$${totalRowPrice.toFixed(2)}</strong></td>
+        <td style="text-align: right;">$${row.cost_farmacia_unit.toFixed(2)}</td>
+        <td style="text-align: right;">$${row.cost_farmacia_total.toFixed(2)}</td>
+        <td style="text-align: right;">$${row.sale_price_unit.toFixed(2)}</td>
+        <td style="text-align: right;"><strong>$${row.sale_total.toFixed(2)}</strong></td>
       </tr>
     `;
   }).join('');
@@ -276,15 +282,13 @@ function renderDetailedSales(data) {
       <table class="report-table">
         <thead>
           <tr>
-            <th>Fecha</th>
-            <th>Producto</th>
-            <th>Código</th>
-            <th>Proveedor</th>
-            <th>Cant.</th>
-            <th>P. Farmacia</th>
-            <th>P. Público</th>
-            <th>Total Farm.</th>
-            <th>Total Púb.</th>
+            <th>CANTIDAD</th>
+            <th>PRODUCTO</th>
+            <th>CÓDIGO</th>
+            <th>COSTO UNIT. FARMACIA</th>
+            <th>COSTO TOTAL FARMACIA</th>
+            <th>COSTO UNITARIO</th>
+            <th>COSTO TOTAL</th>
           </tr>
         </thead>
         <tbody>
@@ -292,12 +296,11 @@ function renderDetailedSales(data) {
         </tbody>
         <tfoot>
           <tr style="background: #f8fafc; font-weight: bold;">
-            <td colspan="4" style="text-align: right;">TOTALES:</td>
             <td style="text-align: center;">${totalQty}</td>
+            <td colspan="3" style="text-align: right;">TOTALES:</td>
+            <td style="text-align: right;">$${totalCostFarmacia.toFixed(2)}</td>
             <td></td>
-            <td></td>
-            <td style="text-align: right;">$${totalCost.toFixed(2)}</td>
-            <td style="text-align: right;">$${totalPrice.toFixed(2)}</td>
+            <td style="text-align: right;">$${totalVenta.toFixed(2)}</td>
           </tr>
         </tfoot>
       </table>
@@ -305,50 +308,39 @@ function renderDetailedSales(data) {
   `;
 }
 
-function renderInventoryReport(data) {
-  let totalValorCosto = 0;
-  let totalValorVenta = 0;
+// Renderizar Pedido Proveedor (editable tipo Excel)
+// Columnas: CANTIDAD | PRODUCTO | CÓDIGO
+function renderSupplierOrder(data) {
+  if (!data || data.length === 0) return '<div style="padding: 40px; text-align: center;">No hay productos vendidos para este proveedor</div>';
   
-  const rows = data.map(p => {
-    const valCosto = p.stock * p.cost;
-    const valVenta = p.stock * p.price;
-    totalValorCosto += valCosto;
-    totalValorVenta += valVenta;
-    
-    return `
-      <tr>
-        <td>${p.name}</td>
-        <td>${p.barcode || '-'}</td>
-        <td>${p.supplier_name || '-'}</td>
-        <td style="text-align: center;">${p.stock}</td>
-        <td style="text-align: right;">$${p.cost.toFixed(2)}</td>
-        <td style="text-align: right;">$${p.price.toFixed(2)}</td>
-        <td style="text-align: right;">$${valCosto.toFixed(2)}</td>
-        <td style="text-align: right;">$${valVenta.toFixed(2)}</td>
-      </tr>
-    `;
-  }).join('');
+  const rows = data.map((row, idx) => `
+    <tr>
+      <td contenteditable="true" class="editable-cell" data-idx="${idx}" data-field="quantity" style="text-align: center; cursor: text;">${row.quantity}</td>
+      <td contenteditable="true" class="editable-cell" data-idx="${idx}" data-field="product_name" style="cursor: text;">${row.product_name}</td>
+      <td contenteditable="true" class="editable-cell" data-idx="${idx}" data-field="barcode" style="cursor: text;">${row.barcode || '-'}</td>
+      <td style="text-align: center;">
+        <button class="btn btn-small btn-danger" onclick="deleteOrderRow(${idx})">🗑️</button>
+      </td>
+    </tr>
+  `).join('');
   
   return `
-    <div style="padding: 20px; background: #f0fdf4; margin-bottom: 20px; border-radius: 8px;">
-      <h3>📦 Valor del Inventario</h3>
-      <p>Costo Total: <strong>$${totalValorCosto.toLocaleString('es-MX')}</strong> | Venta Total: <strong>$${totalValorVenta.toLocaleString('es-MX')}</strong></p>
+    <div style="margin-bottom: 15px;">
+      <button class="btn btn-primary" onclick="addOrderRow()">➕ Agregar Producto</button>
+      <button class="btn btn-success" onclick="saveSupplierOrder()">💾 Guardar Pedido</button>
+      <p style="color: var(--text-light); margin-top: 8px; font-size: 14px;">💡 Haz clic en las celdas para editarlas como en Excel</p>
     </div>
     <div class="table-wrapper">
-      <table class="report-table">
+      <table class="report-table" id="order-table">
         <thead>
           <tr>
-            <th>Producto</th>
-            <th>Código</th>
-            <th>Proveedor</th>
-            <th>Stock</th>
-            <th>Costo U.</th>
-            <th>Precio U.</th>
-            <th>Valor Costo</th>
-            <th>Valor Venta</th>
+            <th>CANTIDAD</th>
+            <th>PRODUCTO</th>
+            <th>CÓDIGO</th>
+            <th>ACCIONES</th>
           </tr>
         </thead>
-        <tbody>
+        <tbody id="order-tbody">
           ${rows}
         </tbody>
       </table>
@@ -356,17 +348,110 @@ function renderInventoryReport(data) {
   `;
 }
 
-function renderSupplierReport(data) {
-  let grandTotal = 0;
+function addOrderRow() {
+  state.supplierOrder.push({
+    quantity: 1,
+    product_name: 'Nuevo Producto',
+    barcode: ''
+  });
   
-  const rows = data.map(r => {
-    grandTotal += r.total;
+  const tbody = document.getElementById('order-tbody');
+  const idx = state.supplierOrder.length - 1;
+  
+  const newRow = document.createElement('tr');
+  newRow.innerHTML = `
+    <td contenteditable="true" class="editable-cell" data-idx="${idx}" data-field="quantity" style="text-align: center; cursor: text;">1</td>
+    <td contenteditable="true" class="editable-cell" data-idx="${idx}" data-field="product_name" style="cursor: text;">Nuevo Producto</td>
+    <td contenteditable="true" class="editable-cell" data-idx="${idx}" data-field="barcode" style="cursor: text;">-</td>
+    <td style="text-align: center;">
+      <button class="btn btn-small btn-danger" onclick="deleteOrderRow(${idx})">🗑️</button>
+    </td>
+  `;
+  
+  tbody.appendChild(newRow);
+}
+
+function deleteOrderRow(idx) {
+  if (!confirm('¿Eliminar este producto del pedido?')) return;
+  
+  state.supplierOrder.splice(idx, 1);
+  
+  // Re-renderizar tabla
+  const tbody = document.getElementById('order-tbody');
+  tbody.innerHTML = state.supplierOrder.map((row, i) => `
+    <tr>
+      <td contenteditable="true" class="editable-cell" data-idx="${i}" data-field="quantity" style="text-align: center; cursor: text;">${row.quantity}</td>
+      <td contenteditable="true" class="editable-cell" data-idx="${i}" data-field="product_name" style="cursor: text;">${row.product_name}</td>
+      <td contenteditable="true" class="editable-cell" data-idx="${i}" data-field="barcode" style="cursor: text;">${row.barcode || '-'}</td>
+      <td style="text-align: center;">
+        <button class="btn btn-small btn-danger" onclick="deleteOrderRow(${i})">🗑️</button>
+      </td>
+    </tr>
+  `).join('');
+  
+  // Re-attachar listeners
+  attachEditableListeners();
+}
+
+function attachEditableListeners() {
+  document.querySelectorAll('.editable-cell').forEach(cell => {
+    cell.addEventListener('blur', function() {
+      const idx = parseInt(this.dataset.idx);
+      const field = this.dataset.field;
+      let value = this.textContent.trim();
+      
+      if (field === 'quantity') {
+        value = parseInt(value) || 1;
+      }
+      
+      if (state.supplierOrder[idx]) {
+        state.supplierOrder[idx][field] = value;
+      }
+    });
+  });
+}
+
+function saveSupplierOrder() {
+  // Actualizar valores desde las celdas editables
+  document.querySelectorAll('.editable-cell').forEach(cell => {
+    const idx = parseInt(cell.dataset.idx);
+    const field = cell.dataset.field;
+    let value = cell.textContent.trim();
+    
+    if (field === 'quantity') {
+      value = parseInt(value) || 1;
+    }
+    
+    if (state.supplierOrder[idx]) {
+      state.supplierOrder[idx][field] = value;
+    }
+  });
+  
+  showNotification(`Pedido guardado con ${state.supplierOrder.length} productos`, 'success');
+  console.log('Pedido guardado:', state.supplierOrder);
+}
+
+// Renderizar Historial Ventas
+// Columnas: CANTIDAD | PRODUCTO | CÓDIGO | COSTO TOTAL FARMACIA | COSTO TOTAL
+function renderHistoryReport(data) {
+  if (!data || data.length === 0) return '<div style="padding: 40px; text-align: center;">No hay datos</div>';
+  
+  let totalQty = 0;
+  let totalCostFarmacia = 0;
+  let totalVenta = 0;
+  
+  const rows = data.map(row => {
+    totalQty += row.quantity;
+    totalCostFarmacia += row.cost_farmacia_total;
+    totalVenta += row.sale_total;
+    
     return `
       <tr>
-        <td>${r.supplier_name}</td>
-        <td>${r.product_count}</td>
-        <td style="text-align: center;">${r.items_sold}</td>
-        <td style="text-align: right;"><strong>$${r.total.toFixed(2)}</strong></td>
+        <td style="text-align: center;">${row.quantity}</td>
+        <td>${row.product_name}</td>
+        <td>${row.barcode || '-'}</td>
+        <td style="text-align: right;">$${row.cost_farmacia_total.toFixed(2)}</td>
+        <td style="text-align: right;"><strong>$${row.sale_total.toFixed(2)}</strong></td>
       </tr>
     `;
   }).join('');
@@ -376,56 +461,24 @@ function renderSupplierReport(data) {
       <table class="report-table">
         <thead>
           <tr>
-            <th>Proveedor</th>
-            <th>Productos Únicos Vendidos</th>
-            <th>Unidades Vendidas</th>
-            <th>Total Ventas</th>
+            <th>CANTIDAD</th>
+            <th>PRODUCTO</th>
+            <th>CÓDIGO</th>
+            <th>COSTO TOTAL FARMACIA</th>
+            <th>COSTO TOTAL</th>
           </tr>
         </thead>
         <tbody>
           ${rows}
         </tbody>
         <tfoot>
-          <tr style="font-weight: bold; background: #f8fafc;">
-            <td colspan="3" style="text-align: right;">GRAN TOTAL:</td>
-            <td style="text-align: right;">$${grandTotal.toFixed(2)}</td>
+          <tr style="background: #f8fafc; font-weight: bold;">
+            <td style="text-align: center;">${totalQty}</td>
+            <td colspan="2" style="text-align: right;">TOTALES:</td>
+            <td style="text-align: right;">$${totalCostFarmacia.toFixed(2)}</td>
+            <td style="text-align: right;">$${totalVenta.toFixed(2)}</td>
           </tr>
         </tfoot>
-      </table>
-    </div>
-  `;
-}
-
-function renderHistoryReport(data) {
-  const rows = data.map(sale => `
-    <tr>
-      <td>${new Date(sale.created_at).toLocaleString()}</td>
-      <td>#${sale.id}</td>
-      <td>${sale.username}</td>
-      <td>${sale.payment_method}</td>
-      <td style="text-align: right;"><strong>$${sale.total.toFixed(2)}</strong></td>
-      <td>
-        <button class="btn btn-small btn-secondary" onclick="reprintTicket(${sale.id})">🖨️</button>
-      </td>
-    </tr>
-  `).join('');
-  
-  return `
-    <div class="table-wrapper">
-      <table class="report-table">
-        <thead>
-          <tr>
-            <th>Fecha</th>
-            <th>Folio</th>
-            <th>Cajero</th>
-            <th>Método Pago</th>
-            <th>Total</th>
-            <th>Acciones</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${rows}
-        </tbody>
       </table>
     </div>
   `;
@@ -441,14 +494,19 @@ function exportReportCSV() {
   const type = state.currentReportTab;
   
   if (type === 'sales') {
-    csvContent += "Fecha,Producto,Codigo,Proveedor,Cantidad,Costo U,Precio U,Total Costo,Total Venta\n";
+    csvContent += "CANTIDAD,PRODUCTO,CODIGO,COSTO UNIT FARMACIA,COSTO TOTAL FARMACIA,COSTO UNITARIO,COSTO TOTAL\n";
     state.reportData.forEach(row => {
-      csvContent += `${row.created_at.split('T')[0]},"${row.product_name}",${row.barcode || ''},"${row.supplier_name || ''}",${row.quantity},${row.cost},${row.price},${row.quantity * row.cost},${row.quantity * row.price}\n`;
+      csvContent += `${row.quantity},"${row.product_name}",${row.barcode || ''},${row.cost_farmacia_unit.toFixed(2)},${row.cost_farmacia_total.toFixed(2)},${row.sale_price_unit.toFixed(2)},${row.sale_total.toFixed(2)}\n`;
     });
-  } else if (type === 'inventory') {
-    csvContent += "Producto,Codigo,Proveedor,Stock,Costo,Precio,Valor Costo,Valor Venta\n";
+  } else if (type === 'supplier-order') {
+    csvContent += "CANTIDAD,PRODUCTO,CODIGO\n";
+    state.supplierOrder.forEach(row => {
+      csvContent += `${row.quantity},"${row.product_name}",${row.barcode || ''}\n`;
+    });
+  } else if (type === 'history') {
+    csvContent += "CANTIDAD,PRODUCTO,CODIGO,COSTO TOTAL FARMACIA,COSTO TOTAL\n";
     state.reportData.forEach(row => {
-      csvContent += `"${row.name}",${row.barcode || ''},"${row.supplier_name || ''}",${row.stock},${row.cost},${row.price},${row.stock * row.cost},${row.stock * row.price}\n`;
+      csvContent += `${row.quantity},"${row.product_name}",${row.barcode || ''},${row.cost_farmacia_total.toFixed(2)},${row.sale_total.toFixed(2)}\n`;
     });
   }
   
@@ -587,11 +645,17 @@ async function fetchStats() {
   }
 }
 
-// ============ PUNTO DE VENTA (POS) ============
+// ============ PUNTO DE VENTA (POS) - CON PAGO EFECTIVO PREDETERMINADO ============
 async function renderPOS() {
   const wrapper = document.getElementById('content-wrapper');
   state.cart = [];
   await loadPaymentMethods();
+  
+  // Buscar el ID del método de pago "Efectivo"
+  const efectivoMethod = state.data.paymentMethods.find(p => 
+    p.active && (p.name.toLowerCase().includes('efectivo') || p.name.toLowerCase().includes('cash'))
+  );
+  const defaultPaymentId = efectivoMethod ? efectivoMethod.id : (state.data.paymentMethods.find(p => p.active)?.id || '');
   
   wrapper.innerHTML = `
     <div class="section-header">
@@ -605,7 +669,6 @@ async function renderPOS() {
     </div>
     
     <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 20px;">
-      <!-- Panel izquierdo: Búsqueda y productos -->
       <div>
         <div class="table-container" style="margin-bottom: 20px;">
           <div style="padding: 20px;">
@@ -645,7 +708,6 @@ async function renderPOS() {
         </div>
       </div>
       
-      <!-- Panel derecho: Resumen y pago -->
       <div>
         <div class="table-container" style="margin-bottom: 20px;">
           <div class="table-header">
@@ -670,7 +732,7 @@ async function renderPOS() {
               <select id="payment-method" required>
                 <option value="">Seleccionar...</option>
                 ${state.data.paymentMethods.filter(p => p.active).map(p => `
-                  <option value="${p.id}">${p.name}</option>
+                  <option value="${p.id}" ${p.id === defaultPaymentId ? 'selected' : ''}>${p.name}</option>
                 `).join('')}
               </select>
             </div>
@@ -702,10 +764,7 @@ async function renderPOS() {
     </div>
   `;
   
-  // Configurar atajos de teclado
   document.addEventListener('keydown', handlePOSKeyboard);
-  
-  // Auto-focus en búsqueda
   setTimeout(() => document.getElementById('pos-search')?.focus(), 100);
 }
 
@@ -959,12 +1018,18 @@ async function completeSale() {
     if (response.ok) {
       showNotification(`✅ Venta completada: $${total.toFixed(2)}`, 'success');
       
-      // Mostrar ticket
       showTicket(result.saleId, state.cart, total, paymentMethodId);
       
-      // Limpiar carrito
       state.cart = [];
-      document.getElementById('payment-method').value = '';
+      
+      // Restablecer al método de pago predeterminado (Efectivo)
+      const efectivoMethod = state.data.paymentMethods.find(p => 
+        p.active && (p.name.toLowerCase().includes('efectivo') || p.name.toLowerCase().includes('cash'))
+      );
+      if (efectivoMethod) {
+        document.getElementById('payment-method').value = efectivoMethod.id;
+      }
+      
       updateCartDisplay();
       document.getElementById('pos-search').focus();
     } else {
@@ -1706,7 +1771,7 @@ async function deleteDepartment(id) {
   }
 }
 
-// ============ PRODUCTOS ============
+// ============ PRODUCTOS (CON FILTROS MEJORADOS) ============
 async function renderProducts() {
   const wrapper = document.getElementById('content-wrapper');
   await loadProducts();
@@ -1733,17 +1798,46 @@ async function renderProducts() {
       </div>
     </div>
     
-    <div class="table-container">
+    <!-- Filtros de Productos -->
+    <div class="table-container" style="margin-bottom: 20px;">
       <div class="table-header">
-        <div class="search-box">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="11" cy="11" r="8"/>
-            <path d="m21 21-4.35-4.35"/>
-          </svg>
-          <input type="text" placeholder="Buscar productos..." id="search-products" onkeyup="filterTable('products-table', 'search-products')">
-        </div>
+        <h3>🔍 Filtros</h3>
       </div>
-      
+      <div style="padding: 20px;">
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
+          <div class="form-group">
+            <label>Buscar</label>
+            <input type="text" id="filter-search" placeholder="Nombre o código" onkeyup="applyProductFilters()">
+          </div>
+          <div class="form-group">
+            <label>Proveedor</label>
+            <select id="filter-supplier" onchange="applyProductFilters()">
+              <option value="">Todos</option>
+              ${state.data.suppliers.map(s => `<option value="${s.id}">${s.name}</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Departamento</label>
+            <select id="filter-department" onchange="applyProductFilters()">
+              <option value="">Todos</option>
+              ${state.data.departments.map(d => `<option value="${d.id}">${d.name}</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Estado Stock</label>
+            <select id="filter-stock" onchange="applyProductFilters()">
+              <option value="">Todos</option>
+              <option value="low">Stock Bajo</option>
+              <option value="normal">Stock Normal</option>
+              <option value="zero">Sin Stock</option>
+            </select>
+          </div>
+        </div>
+        <button class="btn btn-secondary" onclick="clearProductFilters()" style="margin-top: 10px;">Limpiar Filtros</button>
+      </div>
+    </div>
+    
+    <div class="table-container">
       <div class="table-wrapper">
         <table id="products-table">
           <thead>
@@ -1758,7 +1852,7 @@ async function renderProducts() {
               <th>Acciones</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody id="products-tbody">
             ${renderProductsRows()}
           </tbody>
         </table>
@@ -1767,19 +1861,21 @@ async function renderProducts() {
   `;
 }
 
-function renderProductsRows() {
-  if (state.data.products.length === 0) {
-    return '<tr><td colspan="8" style="text-align: center; padding: 40px; color: #94a3b8;">No hay productos registrados</td></tr>';
+function renderProductsRows(filteredProducts = null) {
+  const products = filteredProducts || state.data.products;
+  
+  if (products.length === 0) {
+    return '<tr><td colspan="8" style="text-align: center; padding: 40px; color: #94a3b8;">No hay productos</td></tr>';
   }
   
-  return state.data.products.map(p => `
+  return products.map(p => `
     <tr ${p.lowStock ? 'style="background: #fef3c7;"' : ''}>
       <td><strong>${p.name}</strong></td>
       <td>${p.barcode || '-'}</td>
       <td>$${parseFloat(p.price).toLocaleString('es-MX', {minimumFractionDigits: 2})}</td>
       <td>
-        <span class="badge ${p.lowStock ? 'inactive' : 'active'}">
-          ${p.stock} ${p.lowStock ? '⚠️' : ''}
+        <span class="badge ${p.stock === 0 ? 'inactive' : p.lowStock ? 'inactive' : 'active'}">
+          ${p.stock} ${p.stock === 0 ? '❌' : p.lowStock ? '⚠️' : ''}
         </span>
       </td>
       <td>${p.department_name || '-'}</td>
@@ -1792,6 +1888,48 @@ function renderProductsRows() {
       </td>
     </tr>
   `).join('');
+}
+
+function applyProductFilters() {
+  const searchTerm = document.getElementById('filter-search').value.toLowerCase();
+  const supplierId = document.getElementById('filter-supplier').value;
+  const departmentId = document.getElementById('filter-department').value;
+  const stockFilter = document.getElementById('filter-stock').value;
+  
+  let filtered = state.data.products.filter(p => {
+    // Búsqueda
+    const matchesSearch = !searchTerm || 
+      p.name.toLowerCase().includes(searchTerm) || 
+      (p.barcode && p.barcode.toLowerCase().includes(searchTerm));
+    
+    // Proveedor
+    const matchesSupplier = !supplierId || p.supplier_id == supplierId;
+    
+    // Departamento
+    const matchesDepartment = !departmentId || p.department_id == departmentId;
+    
+    // Stock
+    let matchesStock = true;
+    if (stockFilter === 'low') {
+      matchesStock = p.lowStock && p.stock > 0;
+    } else if (stockFilter === 'normal') {
+      matchesStock = !p.lowStock && p.stock > 0;
+    } else if (stockFilter === 'zero') {
+      matchesStock = p.stock === 0;
+    }
+    
+    return matchesSearch && matchesSupplier && matchesDepartment && matchesStock;
+  });
+  
+  document.getElementById('products-tbody').innerHTML = renderProductsRows(filtered);
+}
+
+function clearProductFilters() {
+  document.getElementById('filter-search').value = '';
+  document.getElementById('filter-supplier').value = '';
+  document.getElementById('filter-department').value = '';
+  document.getElementById('filter-stock').value = '';
+  applyProductFilters();
 }
 
 async function loadProducts() {
