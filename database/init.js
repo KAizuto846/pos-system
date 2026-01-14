@@ -110,6 +110,18 @@ function initDatabase() {
       FOREIGN KEY (order_id) REFERENCES supplier_orders(id),
       FOREIGN KEY (product_id) REFERENCES products(id)
     );
+
+    -- Borradores de pedidos (Barra lateral / Memoria)
+    CREATE TABLE IF NOT EXISTS supplier_order_drafts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      product_id INTEGER NOT NULL,
+      supplier_id INTEGER,
+      quantity INTEGER DEFAULT 1,
+      notes TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (product_id) REFERENCES products(id),
+      FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
+    );
     
     -- Índices para mejor rendimiento
     CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode);
@@ -121,13 +133,13 @@ function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_sales_payment ON sales(payment_method_id);
     CREATE INDEX IF NOT EXISTS idx_supplier_orders_status ON supplier_orders(status);
     CREATE INDEX IF NOT EXISTS idx_supplier_order_items_order ON supplier_order_items(order_id);
+    CREATE INDEX IF NOT EXISTS idx_supplier_order_drafts_supplier ON supplier_order_drafts(supplier_id);
   `);
   
   // Ejecutar migraciones para bases de datos existentes
   runMigrations();
   
   console.log('✅ Base de datos inicializada');
-  console.log('✅ Tablas creadas: users, payment_methods, suppliers, departments, products, sales, sale_items, supplier_orders, supplier_order_items');
   
   return db;
 }
@@ -136,34 +148,33 @@ function runMigrations() {
   console.log('🔄 Verificando migraciones...');
   
   try {
-    // Migración 1: Verificar columna affects_cash en payment_methods
     const paymentColumns = db.pragma('table_info(payment_methods)');
-    const hasAffectsCash = paymentColumns.some(col => col.name === 'affects_cash');
-    
-    if (!hasAffectsCash) {
-      console.log('⚙️  Agregando columna affects_cash a payment_methods...');
+    if (!paymentColumns.some(col => col.name === 'affects_cash')) {
       db.exec('ALTER TABLE payment_methods ADD COLUMN affects_cash INTEGER DEFAULT 1');
-      console.log('✅ Migración completada: affects_cash');
     }
     
-    // Migración 2: Verificar columna cost en products
     const productColumns = db.pragma('table_info(products)');
-    const hasCost = productColumns.some(col => col.name === 'cost');
-    
-    if (!hasCost) {
-      console.log('⚙️  Agregando columna cost a products...');
+    if (!productColumns.some(col => col.name === 'cost')) {
       db.exec('ALTER TABLE products ADD COLUMN cost REAL DEFAULT 0');
-      console.log('✅ Migración completada: cost');
     }
     
-    // Migración 3: Verificar columna min_stock en products
-    const hasMinStock = productColumns.some(col => col.name === 'min_stock');
-    
-    if (!hasMinStock) {
-      console.log('⚙️  Agregando columna min_stock a products...');
+    if (!productColumns.some(col => col.name === 'min_stock')) {
       db.exec('ALTER TABLE products ADD COLUMN min_stock INTEGER DEFAULT 5');
-      console.log('✅ Migración completada: min_stock');
     }
+
+    // Nueva tabla si no existe
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS supplier_order_drafts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_id INTEGER NOT NULL,
+        supplier_id INTEGER,
+        quantity INTEGER DEFAULT 1,
+        notes TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (product_id) REFERENCES products(id),
+        FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
+      );
+    `);
     
     console.log('✅ Todas las migraciones completadas');
   } catch (error) {
