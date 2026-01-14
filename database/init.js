@@ -88,6 +88,29 @@ function initDatabase() {
       FOREIGN KEY (product_id) REFERENCES products(id)
     );
     
+    -- Pedidos a proveedores
+    CREATE TABLE IF NOT EXISTS supplier_orders (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      supplier_id INTEGER NOT NULL,
+      status TEXT DEFAULT 'pending',
+      notes TEXT,
+      created_at TEXT NOT NULL,
+      completed_at TEXT,
+      FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
+    );
+    
+    -- Items de pedidos a proveedores
+    CREATE TABLE IF NOT EXISTS supplier_order_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      order_id INTEGER NOT NULL,
+      product_id INTEGER NOT NULL,
+      quantity INTEGER NOT NULL,
+      received_quantity INTEGER DEFAULT 0,
+      received_at TEXT,
+      FOREIGN KEY (order_id) REFERENCES supplier_orders(id),
+      FOREIGN KEY (product_id) REFERENCES products(id)
+    );
+    
     -- Índices para mejor rendimiento
     CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode);
     CREATE INDEX IF NOT EXISTS idx_products_department ON products(department_id);
@@ -96,13 +119,15 @@ function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_sales_date ON sales(created_at);
     CREATE INDEX IF NOT EXISTS idx_sales_user ON sales(user_id);
     CREATE INDEX IF NOT EXISTS idx_sales_payment ON sales(payment_method_id);
+    CREATE INDEX IF NOT EXISTS idx_supplier_orders_status ON supplier_orders(status);
+    CREATE INDEX IF NOT EXISTS idx_supplier_order_items_order ON supplier_order_items(order_id);
   `);
   
   // Ejecutar migraciones para bases de datos existentes
   runMigrations();
   
   console.log('✅ Base de datos inicializada');
-  console.log('✅ Tablas creadas: users, payment_methods, suppliers, departments, products, sales, sale_items');
+  console.log('✅ Tablas creadas: users, payment_methods, suppliers, departments, products, sales, sale_items, supplier_orders, supplier_order_items');
   
   return db;
 }
