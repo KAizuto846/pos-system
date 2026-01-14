@@ -384,6 +384,10 @@ app.post('/api/suppliers/update', requireAuth, (req, res) => {
       'UPDATE suppliers SET name = ?, contact = ?, phone = ?, email = ?, address = ?, active = ? WHERE id = ?'
     ).run(name, contact || null, phone || null, email || null, address || null, active ? 1 : 0, id);
     
+    // Actualizar productos asociados (actualización cascada)
+    db.prepare('UPDATE products SET updated_at = ? WHERE supplier_id = ?')
+      .run(new Date().toISOString(), id);
+    
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: 'Error al actualizar proveedor' });
@@ -614,10 +618,6 @@ app.post('/api/products/adjust-stock', requireAuth, (req, res) => {
     
     const newStock = product.stock + adjustment;
     
-    if (newStock < 0) {
-      return res.status(400).json({ error: 'El stock no puede ser negativo' });
-    }
-    
     db.prepare('UPDATE products SET stock = ?, updated_at = ? WHERE id = ?')
       .run(newStock, new Date().toISOString(), id);
     
@@ -625,6 +625,52 @@ app.post('/api/products/adjust-stock', requireAuth, (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Error al ajustar stock' });
+  }
+});
+
+// ==================== ALTA RÁPIDA DE PRODUCTOS ====================
+
+app.post('/api/products/quick-receive', requireAuth, (req, res) => {
+  try {
+    const { barcode, quantity, new_cost, new_price } = req.body;
+    
+    if (!barcode || !quantity) {
+      return res.status(400).json({ error: 'Código de barras y cantidad son requeridos' });
+    }
+    
+    const product = db.prepare('SELECT * FROM products WHERE barcode = ?').get(barcode);
+    
+    if (!product) {
+      return res.status(404).json({ error: 'Producto no encontrado. Verifica el código de barras.' });
+    }
+    
+    const newStock = product.stock + quantity;
+    const finalCost = new_cost !== undefined ? new_cost : product.cost;
+    const finalPrice = new_price !== undefined ? new_price : product.price;
+    
+    db.prepare(`
+      UPDATE products 
+      SET stock = ?, cost = ?, price = ?, updated_at = ?
+      WHERE id = ?
+    `).run(newStock, finalCost, finalPrice, new Date().toISOString(), product.id);
+    
+    res.json({ 
+      success: true, 
+      product: {
+        id: product.id,
+        name: product.name,
+        barcode: product.barcode,
+        old_stock: product.stock,
+        new_stock: newStock,
+        old_cost: product.cost,
+        new_cost: finalCost,
+        old_price: product.price,
+        new_price: finalPrice
+      }
+    });
+  } catch (error) {
+    console.error('Error en alta rápida:', error);
+    res.status(500).json({ error: 'Error al procesar alta rápida' });
   }
 });
 
@@ -752,7 +798,7 @@ app.post('/api/products/import', requireAuth, upload.single('file'), async (req,
   }
 });
 
-// ==================== VENTAS ====================
+// ==================== VENTAS (CON STOCK NEGATIVO PERMITIDO) ====================
 
 app.post('/api/sales/create', requireAuth, (req, res) => {
   const createSale = db.transaction((saleData) => {
@@ -770,7 +816,7 @@ app.post('/api/sales/create', requireAuth, (req, res) => {
       
       const saleId = saleResult.lastInsertRowid;
       
-      // Insertar items y actualizar stock
+      // Insertar items y actualizar stock (PERMITIR STOCK NEGATIVO)
       const insertItem = db.prepare(
         'INSERT INTO sale_items (sale_id, product_id, quantity, price) VALUES (?, ?, ?, ?)'
       );
@@ -780,17 +826,10 @@ app.post('/api/sales/create', requireAuth, (req, res) => {
       );
       
       for (const item of items) {
-        // Verificar stock disponible
-        const product = db.prepare('SELECT stock FROM products WHERE id = ?').get(item.product_id);
-        
-        if (!product || product.stock < item.quantity) {
-          throw new Error(`Stock insuficiente para producto ID ${item.product_id}`);
-        }
-        
-        // Insertar item
+        // Insertar item (sin validar stock)
         insertItem.run(saleId, item.product_id, item.quantity, item.price);
         
-        // Actualizar stock
+        // Actualizar stock (puede quedar negativo)
         updateStock.run(item.quantity, new Date().toISOString(), item.product_id);
       }
       
@@ -806,6 +845,275 @@ app.post('/api/sales/create', requireAuth, (req, res) => {
   } catch (error) {
     console.error('Error creando venta:', error);
     res.status(500).json({ error: error.message || 'Error al procesar la venta' });
+  }
+});
+
+// ==================== DEVOLUCIONES ====================
+
+app.post('/api/returns/create', requireAuth, (req, res) => {
+  const createReturn = db.transaction((returnData) => {
+    try {
+      const { sale_id, items, reason } = returnData;
+      
+      if (!items || items.length === 0) {
+        throw new Error('No hay productos en la devolución');
+      }
+      
+      // Verificar que la venta existe
+      const sale = db.prepare('SELECT * FROM sales WHERE id = ?').get(sale_id);
+      if (!sale) {
+        throw new Error('Venta no encontrada');
+      }
+      
+      // Crear registro de devolución (usando tabla sales con total negativo)
+      const returnTotal = items.reduce((sum, item) => sum + (item.quantity * item.price), 0);
+      
+      const returnResult = db.prepare(
+        'INSERT INTO sales (total, payment_method_id, user_id, created_at) VALUES (?, ?, ?, ?)'
+      ).run(-returnTotal, sale.payment_method_id, req.session.userId, new Date().toISOString());
+      
+      const returnId = returnResult.lastInsertRowid;
+      
+      // Insertar items de devolución y restaurar stock
+      const insertItem = db.prepare(
+        'INSERT INTO sale_items (sale_id, product_id, quantity, price) VALUES (?, ?, ?, ?)'
+      );
+      
+      const updateStock = db.prepare(
+        'UPDATE products SET stock = stock + ?, updated_at = ? WHERE id = ?'
+      );
+      
+      for (const item of items) {
+        // Insertar item con cantidad negativa
+        insertItem.run(returnId, item.product_id, -item.quantity, item.price);
+        
+        // Restaurar stock
+        updateStock.run(item.quantity, new Date().toISOString(), item.product_id);
+      }
+      
+      return returnId;
+    } catch (error) {
+      throw error;
+    }
+  });
+  
+  try {
+    const returnId = createReturn(req.body);
+    res.json({ success: true, returnId });
+  } catch (error) {
+    console.error('Error procesando devolución:', error);
+    res.status(500).json({ error: error.message || 'Error al procesar la devolución' });
+  }
+});
+
+// Buscar venta por folio para devolución
+app.get('/api/sales/:id', requireAuth, (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const sale = db.prepare(`
+      SELECT 
+        s.*,
+        pm.name as payment_method_name,
+        u.username as cashier_name
+      FROM sales s
+      LEFT JOIN payment_methods pm ON s.payment_method_id = pm.id
+      LEFT JOIN users u ON s.user_id = u.id
+      WHERE s.id = ?
+    `).get(id);
+    
+    if (!sale) {
+      return res.status(404).json({ error: 'Venta no encontrada' });
+    }
+    
+    const items = db.prepare(`
+      SELECT 
+        si.*,
+        p.name as product_name,
+        p.barcode
+      FROM sale_items si
+      LEFT JOIN products p ON si.product_id = p.id
+      WHERE si.sale_id = ?
+    `).all(id);
+    
+    res.json({ ...sale, items });
+  } catch (error) {
+    console.error('Error obteniendo venta:', error);
+    res.status(500).json({ error: 'Error al obtener venta' });
+  }
+});
+
+// ==================== PEDIDOS A PROVEEDORES ====================
+
+// Obtener todos los pedidos guardados
+app.get('/api/supplier-orders', requireAuth, (req, res) => {
+  try {
+    const orders = db.prepare(`
+      SELECT * FROM supplier_orders 
+      ORDER BY created_at DESC
+    `).all();
+    
+    // Obtener items de cada pedido
+    const ordersWithItems = orders.map(order => {
+      const items = db.prepare(`
+        SELECT 
+          soi.*,
+          p.name as product_name,
+          p.barcode
+        FROM supplier_order_items soi
+        LEFT JOIN products p ON soi.product_id = p.id
+        WHERE soi.order_id = ?
+      `).all(order.id);
+      
+      return { ...order, items };
+    });
+    
+    res.json(ordersWithItems);
+  } catch (error) {
+    console.error('Error obteniendo pedidos:', error);
+    res.status(500).json({ error: 'Error al obtener pedidos' });
+  }
+});
+
+// Guardar nuevo pedido a proveedor
+app.post('/api/supplier-orders/create', requireAuth, (req, res) => {
+  const createOrder = db.transaction((orderData) => {
+    try {
+      const { supplier_id, items, notes } = orderData;
+      
+      if (!supplier_id || !items || items.length === 0) {
+        throw new Error('Proveedor e items son requeridos');
+      }
+      
+      // Crear pedido
+      const orderResult = db.prepare(
+        'INSERT INTO supplier_orders (supplier_id, status, notes, created_at) VALUES (?, ?, ?, ?)'
+      ).run(supplier_id, 'pending', notes || '', new Date().toISOString());
+      
+      const orderId = orderResult.lastInsertRowid;
+      
+      // Insertar items
+      const insertItem = db.prepare(
+        'INSERT INTO supplier_order_items (order_id, product_id, quantity, received_quantity) VALUES (?, ?, ?, ?)'
+      );
+      
+      for (const item of items) {
+        insertItem.run(orderId, item.product_id, item.quantity, 0);
+      }
+      
+      return orderId;
+    } catch (error) {
+      throw error;
+    }
+  });
+  
+  try {
+    const orderId = createOrder(req.body);
+    res.json({ success: true, orderId });
+  } catch (error) {
+    console.error('Error creando pedido:', error);
+    res.status(500).json({ error: error.message || 'Error al crear pedido' });
+  }
+});
+
+// Marcar producto como recibido en pedido
+app.post('/api/supplier-orders/mark-received', requireAuth, (req, res) => {
+  try {
+    const { order_id, item_id, received_quantity } = req.body;
+    
+    if (!order_id || !item_id || received_quantity === undefined) {
+      return res.status(400).json({ error: 'Datos incompletos' });
+    }
+    
+    // Actualizar cantidad recibida
+    db.prepare(`
+      UPDATE supplier_order_items 
+      SET received_quantity = ?, received_at = ?
+      WHERE id = ? AND order_id = ?
+    `).run(received_quantity, new Date().toISOString(), item_id, order_id);
+    
+    // Verificar si todos los items del pedido están recibidos
+    const pending = db.prepare(`
+      SELECT COUNT(*) as count 
+      FROM supplier_order_items 
+      WHERE order_id = ? AND received_quantity < quantity
+    `).get(order_id);
+    
+    if (pending.count === 0) {
+      db.prepare('UPDATE supplier_orders SET status = ? WHERE id = ?')
+        .run('completed', order_id);
+    }
+    
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error marcando como recibido:', error);
+    res.status(500).json({ error: 'Error al actualizar pedido' });
+  }
+});
+
+// Actualizar pedido (editar items)
+app.post('/api/supplier-orders/update', requireAuth, (req, res) => {
+  const updateOrder = db.transaction((orderData) => {
+    try {
+      const { order_id, items, notes } = orderData;
+      
+      if (!order_id) {
+        throw new Error('ID de pedido requerido');
+      }
+      
+      // Actualizar notas
+      if (notes !== undefined) {
+        db.prepare('UPDATE supplier_orders SET notes = ? WHERE id = ?')
+          .run(notes, order_id);
+      }
+      
+      // Eliminar items existentes
+      db.prepare('DELETE FROM supplier_order_items WHERE order_id = ?').run(order_id);
+      
+      // Insertar nuevos items
+      if (items && items.length > 0) {
+        const insertItem = db.prepare(
+          'INSERT INTO supplier_order_items (order_id, product_id, quantity, received_quantity) VALUES (?, ?, ?, ?)'
+        );
+        
+        for (const item of items) {
+          insertItem.run(order_id, item.product_id, item.quantity, item.received_quantity || 0);
+        }
+      }
+      
+      return order_id;
+    } catch (error) {
+      throw error;
+    }
+  });
+  
+  try {
+    updateOrder(req.body);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error actualizando pedido:', error);
+    res.status(500).json({ error: error.message || 'Error al actualizar pedido' });
+  }
+});
+
+// Eliminar pedido
+app.post('/api/supplier-orders/delete', requireAuth, (req, res) => {
+  const deleteOrder = db.transaction((orderId) => {
+    try {
+      db.prepare('DELETE FROM supplier_order_items WHERE order_id = ?').run(orderId);
+      db.prepare('DELETE FROM supplier_orders WHERE id = ?').run(orderId);
+    } catch (error) {
+      throw error;
+    }
+  });
+  
+  try {
+    const { id } = req.body;
+    deleteOrder(id);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error eliminando pedido:', error);
+    res.status(500).json({ error: 'Error al eliminar pedido' });
   }
 });
 
@@ -928,7 +1236,7 @@ app.get('/api/reports/by-cashier', requireAuth, (req, res) => {
   }
 });
 
-// Inventario con stock bajo
+// Inventario con stock bajo o negativo
 app.get('/api/reports/low-stock', requireAuth, (req, res) => {
   try {
     const lowStock = db.prepare(`
@@ -939,7 +1247,7 @@ app.get('/api/reports/low-stock', requireAuth, (req, res) => {
         min_stock
       FROM products
       WHERE stock <= min_stock AND active = 1
-      ORDER BY (stock - min_stock) ASC
+      ORDER BY stock ASC
     `).all();
     
     res.json(lowStock);
@@ -949,11 +1257,7 @@ app.get('/api/reports/low-stock', requireAuth, (req, res) => {
   }
 });
 
-// -------------------- REPORTES DETALLADOS (NUEVOS) --------------------
-
-// Ventas detalladas (agrupado por producto)
-// Columnas esperadas en frontend:
-// CANTIDAD; PRODUCTO; CODIGO; COSTO UNITARIO FARMACIA; COSTO TOTAL FARMACIA; COSTO UNITARIO; COSTO TOTAL
+// Ventas detalladas
 app.get('/api/reports/detailed-sales', requireAuth, (req, res) => {
   try {
     const { startDate, endDate, supplierId, userId, paymentMethodId } = req.query;
@@ -1012,8 +1316,7 @@ app.get('/api/reports/detailed-sales', requireAuth, (req, res) => {
   }
 });
 
-// Pedido por proveedor (agrupado por producto)
-// Columnas esperadas en frontend: CANTIDAD; PRODUCTO; CODIGO
+// Pedido por proveedor
 app.get('/api/reports/supplier-order', requireAuth, (req, res) => {
   try {
     const { startDate, endDate, supplierId } = req.query;
@@ -1051,8 +1354,7 @@ app.get('/api/reports/supplier-order', requireAuth, (req, res) => {
   }
 });
 
-// Historial de ventas (por item; no agrupado)
-// Columnas esperadas en frontend: CANTIDAD; PRODUCTO; CODIGO; COSTO TOTAL FARMACIA; COSTO TOTAL
+// Historial de ventas
 app.get('/api/reports/sales-history', requireAuth, (req, res) => {
   try {
     const { startDate, endDate, supplierId, userId, paymentMethodId } = req.query;
@@ -1113,4 +1415,8 @@ app.listen(PORT, () => {
   console.log(`📦 Sistema de importación masiva habilitado`);
   console.log(`🛍️ Módulo de punto de venta (POS) activo`);
   console.log(`📊 Módulo de reportes y analíticas activo`);
+  console.log(`🔄 Sistema de devoluciones activo`);
+  console.log(`📦 Gestión de pedidos a proveedores activo`);
+  console.log(`⚡ Alta rápida de productos activa`);
+  console.log(`✨ Ventas con stock negativo permitidas`);
 });
