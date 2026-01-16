@@ -210,7 +210,7 @@ async function generateReport() {
   const userId = document.getElementById('filterUser').value;
   
   if (type === 'supplier-order' && !supplierId) {
-    showNotification('Selecciona un proveedor para generar el pedido', 'error');
+    Utils.showError('Selecciona un proveedor para generar el pedido');
     return;
   }
   
@@ -227,37 +227,66 @@ async function generateReport() {
     switch(type) {
       case 'sales':
         const resSales = await fetch(`/api/reports/detailed-sales?${params}`);
+        if (!resSales.ok) throw new Error(`Error HTTP ${resSales.status}`);
         data = await resSales.json();
         state.reportData = data;
         html = renderDetailedSales(data);
         break;
         
       case 'supplier-order':
+        console.log('📊 Generando reporte de Pedido Proveedor...');
+        console.log('Parameters:', { startDate, endDate, supplierId });
+        
         const resOrder = await fetch(`/api/reports/supplier-order?${params}`);
+        if (!resOrder.ok) throw new Error(`Error HTTP ${resOrder.status}`);
+        
         data = await resOrder.json();
+        console.log('✅ Datos recibidos:', data);
+        
         state.supplierOrder = JSON.parse(JSON.stringify(data)); // Copia profunda
         state.reportData = data;
         html = renderSupplierOrder(data);
         
         // Cargar barra lateral de pedidos
         if (supplierId) {
+          console.log('📌 Cargando barra lateral para proveedor:', supplierId);
           setTimeout(() => {
-            SidebarPedidos.loadSupplierOrders(supplierId);
-          }, 500);
+            if (typeof SidebarPedidos !== 'undefined' && SidebarPedidos.loadSupplierOrders) {
+              SidebarPedidos.loadSupplierOrders(supplierId);
+            } else {
+              console.error('❌ SidebarPedidos no está disponible');
+            }
+          }, 300);
         }
         break;
         
       case 'history':
         const resHist = await fetch(`/api/reports/sales-history?${params}`);
+        if (!resHist.ok) throw new Error(`Error HTTP ${resHist.status}`);
         data = await resHist.json();
         state.reportData = data;
         html = renderHistoryReport(data);
         break;
     }
     
+    if (!html) {
+      console.warn('⚠️ HTML vacío para reporte', type);
+      container.innerHTML = '<div style="padding: 40px; text-align: center; color: #ff9800;">No se pudo generar el reporte</div>';
+      return;
+    }
+    
     container.innerHTML = html;
+    console.log('✅ Reporte renderizado');
     
   } catch (error) {
+    console.error('❌ Error generando reporte:', error);
+    container.innerHTML = `<div style="padding: 20px; color: red;">
+      <strong>Error al generar reporte:</strong>
+      <p>${error.message}</p>
+    </div>`;
+    Utils.showError('Error: ' + error.message);
+  }
+}
     console.error(error);
     container.innerHTML = `<div style="padding: 20px; color: red;">Error al generar reporte: ${error.message}</div>`;
   }

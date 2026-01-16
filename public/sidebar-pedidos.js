@@ -12,7 +12,15 @@ const SidebarPedidos = (() => {
    */
   function init() {
     createSidebarHTML();
-    attachEventListeners();
+    console.log('✅ Módulo SidebarPedidos inicializado');
+  }
+
+  /**
+   * Anexar listeners de eventos
+   */
+  function attachEventListeners() {
+    // Este método se llama cuando sea necesario
+    // Por ahora no hay eventos que anexar en inicialización
   }
 
   /**
@@ -86,14 +94,36 @@ const SidebarPedidos = (() => {
    * Cargar pedidos de un proveedor
    */
   async function loadSupplierOrders(supplierId) {
+    if (!supplierId) {
+      console.error('❌ supplierId no proporcionado');
+      return;
+    }
+
     currentSupplier = supplierId;
     showSidebar();
 
     const content = document.getElementById('sidebar-content');
-    content.innerHTML = '<p style="text-align: center;">⏳ Cargando...</p>';
+    if (!content) {
+      console.error('❌ No se encontró elemento sidebar-content');
+      return;
+    }
+
+    content.innerHTML = '<p style="text-align: center;">⏳ Cargando pedidos...</p>';
 
     try {
       const response = await fetch(`/api/supplier-orders-list?supplierId=${supplierId}&status=draft`);
+      
+      if (!response.ok) {
+        console.warn('⚠️ Respuesta no OK:', response.status);
+        content.innerHTML = `
+          <div style="text-align: center; padding: 20px; color: #ff9800;">
+            <p>No hay pedidos en borrador (o es la primera vez)</p>
+            <p style="font-size: 12px;">Usa el botón "Nuevo Pedido" para crear uno</p>
+          </div>
+        `;
+        return;
+      }
+
       const orders = await response.json();
 
       if (!orders || orders.length === 0) {
@@ -103,13 +133,20 @@ const SidebarPedidos = (() => {
             <p style="font-size: 12px;">Usa el botón "Nuevo Pedido" para crear uno</p>
           </div>
         `;
+        console.log('ℹ️ No hay pedidos en draft para supplier:', supplierId);
         return;
       }
 
+      console.log('✅ Pedidos cargados:', orders.length);
       renderOrdersList(orders);
     } catch (error) {
-      console.error('Error cargando pedidos:', error);
-      content.innerHTML = `<div style="color: red; padding: 10px;">Error al cargar pedidos</div>`;
+      console.error('❌ Error cargando pedidos:', error);
+      content.innerHTML = `
+        <div style="color: red; padding: 10px;">
+          <strong>Error al cargar pedidos:</strong>
+          <p style="font-size: 12px; margin-top: 5px;">${error.message}</p>
+        </div>
+      `;
     }
   }
 

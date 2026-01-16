@@ -1126,12 +1126,13 @@ app.get('/api/reports/supplier-order', requireAuth, (req, res) => {
       return res.status(400).json({ error: 'supplierId es requerido para Pedido Proveedor' });
     }
 
-    // Filtrar SOLO por productos donde esta es la línea PRINCIPAL
-    const rows = db.prepare(`
+    // Intenta primero con product_lines (líneas principales)
+    let rows = db.prepare(`
       SELECT
         SUM(si.quantity) as quantity,
         p.name as product_name,
-        p.barcode as barcode
+        p.barcode as barcode,
+        p.id as product_id
       FROM sale_items si
       INNER JOIN sales s ON si.sale_id = s.id
       INNER JOIN products p ON si.product_id = p.id
@@ -1143,14 +1144,34 @@ app.get('/api/reports/supplier-order', requireAuth, (req, res) => {
       ORDER BY quantity DESC
     `).all(startDate, endDate, supplierId);
 
+    // Si no hay resultados con product_lines, usa supplier_id directo (backward compatibility)
+    if (!rows || rows.length === 0) {
+      console.log('ℹ️ No hay product_lines, usando supplier_id directo');
+      rows = db.prepare(`
+        SELECT
+          SUM(si.quantity) as quantity,
+          p.name as product_name,
+          p.barcode as barcode,
+          p.id as product_id
+        FROM sale_items si
+        INNER JOIN sales s ON si.sale_id = s.id
+        INNER JOIN products p ON si.product_id = p.id
+        WHERE DATE(s.created_at) BETWEEN ? AND ?
+          AND p.supplier_id = ?
+        GROUP BY p.id, p.name, p.barcode
+        ORDER BY quantity DESC
+      `).all(startDate, endDate, supplierId);
+    }
+
     res.json(rows.map(r => ({
       quantity: Number(r.quantity || 0),
       product_name: r.product_name,
-      barcode: r.barcode
+      barcode: r.barcode,
+      product_id: r.product_id
     })));
   } catch (error) {
     console.error('Error en /api/reports/supplier-order:', error);
-    res.status(500).json({ error: 'Error al generar reporte' });
+    res.status(500).json({ error: 'Error al generar reporte: ' + error.message });
   }
 });
 
