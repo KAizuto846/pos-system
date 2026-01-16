@@ -3,8 +3,13 @@ let reportData = {
   sales: [],
   topProducts: [],
   cashiers: [],
-  lowStock: []
+  lowStock: [],
+  supplierOrders: []
 };
+
+// Estado para pedidos de proveedor
+let supplierOrders = JSON.parse(localStorage.getItem('supplierOrders') || '[]');
+let pendingProducts = JSON.parse(localStorage.getItem('pendingProducts') || '[]');
 
 // Verificar autenticación
 const currentUser = JSON.parse(localStorage.getItem('currentUser'));
@@ -100,6 +105,7 @@ async function loadReports() {
     renderTopProducts();
     renderCashiers();
     renderLowStock();
+    renderSupplierOrders();
   } catch (error) {
     console.error('Error cargando reportes:', error);
     alert('Error al cargar los reportes');
@@ -271,4 +277,138 @@ function exportToCSV() {
 function logout() {
   localStorage.removeItem('currentUser');
   window.location.href = 'login.html';
+}
+
+// ========== PEDIDOS DE PROVEEDOR ==========
+
+function renderSupplierOrders() {
+  const tbody = document.querySelector('#supplierOrdersTable tbody');
+  
+  if (supplierOrders.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" class="no-data">No hay pedidos registrados</td></tr>';
+    renderPendingProducts();
+    return;
+  }
+  
+  tbody.innerHTML = supplierOrders.map(order => `
+    <tr style="${order.received ? 'opacity: 0.6;' : ''}">
+      <td>${order.supplier}</td>
+      <td>${order.product}</td>
+      <td>${order.quantity}</td>
+      <td>${new Date(order.date).toLocaleDateString('es-MX')}</td>
+      <td>
+        <span class="badge ${order.received ? 'active' : 'inactive'}">
+          ${order.received ? '✅ Recibido' : '⏳ Pendiente'}
+        </span>
+      </td>
+      <td>
+        ${!order.received ? `
+          <button class="btn btn-small btn-success" onclick="markOrderAsReceived(${order.id})">✅ Marcar</button>
+          <button class="btn btn-small btn-danger" onclick="deleteSupplierOrder(${order.id})">🗑️</button>
+        ` : `
+          <button class="btn btn-small btn-secondary" onclick="moveToNextOrder(${order.id})">➡️ Próximo</button>
+        `}
+      </td>
+    </tr>
+  `).join('');
+  
+  renderPendingProducts();
+}
+
+function renderPendingProducts() {
+  const pending = supplierOrders.filter(o => !o.received);
+  const list = document.getElementById('pendingProductsList');
+  
+  if (pending.length === 0) {
+    list.innerHTML = `
+      <div style="text-align: center; color: var(--text-light); padding: 20px;">
+        No hay productos pendientes
+      </div>
+    `;
+    return;
+  }
+  
+  list.innerHTML = `
+    <div style="display: flex; flex-direction: column; gap: 8px;">
+      ${pending.map((order, idx) => `
+        <div style="padding: 12px; background: #f1f5f9; border-radius: 6px; font-size: 13px; border-left: 3px solid var(--primary-color);">
+          <div><strong>${order.product}</strong></div>
+          <div style="color: var(--text-light); margin-top: 2px;">
+            ${order.supplier} • ${order.quantity} unidades
+          </div>
+          <div style="color: var(--text-light); font-size: 11px; margin-top: 4px;">
+            ${new Date(order.date).toLocaleDateString('es-MX')}
+          </div>
+        </div>
+      `).join('')}
+    </div>
+    <div style="margin-top: 16px; padding: 12px; background: #eff6ff; border-radius: 6px; font-size: 12px; color: var(--primary-color);">
+      <strong>${pending.length}</strong> producto(s) pendiente(s)
+    </div>
+  `;
+}
+
+function createSupplierOrder() {
+  const productName = prompt('Nombre del producto:');
+  if (!productName) return;
+  
+  const supplier = prompt('Proveedor:');
+  if (!supplier) return;
+  
+  const quantity = parseInt(prompt('Cantidad:', '1'));
+  if (!quantity || quantity <= 0) return;
+  
+  const newOrder = {
+    id: Date.now(),
+    product: productName,
+    supplier: supplier,
+    quantity: quantity,
+    date: new Date().toISOString(),
+    received: false
+  };
+  
+  supplierOrders.push(newOrder);
+  localStorage.setItem('supplierOrders', JSON.stringify(supplierOrders));
+  renderSupplierOrders();
+  alert('Pedido creado correctamente');
+}
+
+function markOrderAsReceived(id) {
+  const order = supplierOrders.find(o => o.id === id);
+  if (!order) return;
+  
+  order.received = true;
+  localStorage.setItem('supplierOrders', JSON.stringify(supplierOrders));
+  renderSupplierOrders();
+}
+
+function moveToNextOrder(id) {
+  const order = supplierOrders.find(o => o.id === id);
+  if (!order || !order.received) return;
+  
+  // Mover a futuros pedidos u otros proveedores
+  const nextSupplier = prompt('Asignar a proveedor:', order.supplier);
+  if (!nextSupplier) return;
+  
+  const newOrder = {
+    id: Date.now(),
+    product: order.product,
+    supplier: nextSupplier,
+    quantity: order.quantity,
+    date: new Date().toISOString(),
+    received: false
+  };
+  
+  supplierOrders.push(newOrder);
+  localStorage.setItem('supplierOrders', JSON.stringify(supplierOrders));
+  renderSupplierOrders();
+  alert('Pedido trasladado correctamente');
+}
+
+function deleteSupplierOrder(id) {
+  if (!confirm('¿Eliminar este pedido?')) return;
+  
+  supplierOrders = supplierOrders.filter(o => o.id !== id);
+  localStorage.setItem('supplierOrders', JSON.stringify(supplierOrders));
+  renderSupplierOrders();
 }

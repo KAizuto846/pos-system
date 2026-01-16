@@ -318,6 +318,49 @@
         </div>
       </div>
 
+      <!-- Pedidos de Proveedor -->
+      <div class="report-card" style="display: grid; grid-template-columns: 3fr 1fr; gap: 20px;">
+        <div>
+          <h2>
+            <svg width="20" height="20" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M3 3h18v18H3V3zm16 16V5H5v14h14z"/>
+            </svg>
+            Pedidos de Proveedor
+          </h2>
+          <div class="table-wrapper">
+            <table id="supplierOrdersTable">
+              <thead>
+                <tr>
+                  <th>Proveedor</th>
+                  <th>Producto</th>
+                  <th>Cantidad</th>
+                  <th>Fecha</th>
+                  <th>Estado</th>
+                  <th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td colspan="6" class="no-data">No hay pedidos registrados</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        
+        <div style="border-left: 1px solid var(--border-color); padding-left: 20px;">
+          <h3 style="font-size: 14px; margin-bottom: 16px;">📋 Productos Pendientes</h3>
+          <div id="pendingProductsList" style="max-height: 500px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 8px; padding: 12px;">
+            <div style="text-align: center; color: var(--text-light); padding: 20px;">
+              No hay productos pendientes
+            </div>
+          </div>
+          <button class="btn btn-primary" onclick="createSupplierOrder()" style="width: 100%; margin-top: 16px;">
+            ➕ Crear Pedido
+          </button>
+        </div>
+      </div>
+
       <!-- Exportar -->
       <div class="report-card">
         <h2>

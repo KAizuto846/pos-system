@@ -99,6 +99,12 @@ async function loadModule(moduleName) {
     case 'reports':
       await renderReports();
       break;
+    case 'returns':
+      await renderReturns();
+      break;
+    case 'quick-entry':
+      await renderQuickEntry();
+      break;
     default:
       document.getElementById('content-wrapper').innerHTML = '<h1>Módulo no encontrado</h1>';
   }
@@ -648,7 +654,8 @@ async function fetchStats() {
 // ============ PUNTO DE VENTA (POS) - CON PAGO EFECTIVO PREDETERMINADO ============
 async function renderPOS() {
   const wrapper = document.getElementById('content-wrapper');
-  state.cart = [];
+  // NO limpiar el carrito cuando se vuelve a renderizar
+  // state.cart = [];
   await loadPaymentMethods();
   
   // Buscar el ID del método de pago "Efectivo"
@@ -744,7 +751,7 @@ async function renderPOS() {
               style="width: 100%; padding: 15px; font-size: 18px; margin-top: 10px;"
               disabled
             >
-              ✅ Completar Venta (F12)
+              ✅ Completar Venta (F3)
             </button>
           </div>
         </div>
@@ -757,7 +764,7 @@ async function renderPOS() {
             <div><kbd>F2</kbd> - Enfocar búsqueda</div>
             <div><kbd>Enter</kbd> - Agregar producto</div>
             <div><kbd>Esc</kbd> - Limpiar búsqueda</div>
-            <div><kbd>F12</kbd> - Completar venta</div>
+            <div><kbd>F3</kbd> - Completar venta</div>
           </div>
         </div>
       </div>
@@ -765,6 +772,7 @@ async function renderPOS() {
   `;
   
   document.addEventListener('keydown', handlePOSKeyboard);
+  updateCartDisplay();
   setTimeout(() => document.getElementById('pos-search')?.focus(), 100);
 }
 
@@ -774,9 +782,21 @@ function handlePOSKeyboard(e) {
   if (e.key === 'F2') {
     e.preventDefault();
     document.getElementById('pos-search')?.focus();
-  } else if (e.key === 'F12') {
+  } else if (e.key === 'F3') {
     e.preventDefault();
     if (state.cart.length > 0) completeSale();
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    const searchInput = document.getElementById('pos-search');
+    const resultsList = document.getElementById('search-results-list');
+    
+    if (searchInput === document.activeElement) {
+      // Si hay resultados visibles, agregar el primero
+      const firstProduct = resultsList.querySelector('div');
+      if (firstProduct) {
+        firstProduct.click();
+      }
+    }
   } else if (e.key === 'Escape') {
     document.getElementById('pos-search').value = '';
     document.getElementById('search-results').style.display = 'none';
@@ -840,18 +860,10 @@ async function searchProducts(event) {
 }
 
 function addToCart(productId, productName, price, stock) {
-  if (stock <= 0) {
-    showNotification('Producto sin stock disponible', 'error');
-    return;
-  }
-  
   const existing = state.cart.find(item => item.productId === productId);
   
   if (existing) {
-    if (existing.quantity >= stock) {
-      showNotification('No hay suficiente stock', 'error');
-      return;
-    }
+    // Permitir agregar productos sin límite de stock
     existing.quantity++;
   } else {
     state.cart.push({
@@ -944,11 +956,7 @@ function updateQuantity(index, change) {
     return;
   }
   
-  if (newQuantity > item.stock) {
-    showNotification('No hay suficiente stock', 'error');
-    return;
-  }
-  
+  // Permitir cantidades ilimitadas (sin restricción de stock)
   item.quantity = newQuantity;
   updateCartDisplay();
 }
@@ -1037,7 +1045,7 @@ async function completeSale() {
     }
     
     btn.disabled = false;
-    btn.textContent = '✅ Completar Venta (F12)';
+    btn.textContent = '✅ Completar Venta (F3)';
   } catch (error) {
     console.error('Error:', error);
     showNotification('Error al conectar con el servidor', 'error');
@@ -1829,7 +1837,7 @@ async function renderProducts() {
               <option value="">Todos</option>
               <option value="low">Stock Bajo</option>
               <option value="normal">Stock Normal</option>
-              <option value="zero">Sin Stock</option>
+              <option value="zeroOrNegative">Sin stock o en negativo</option>
             </select>
           </div>
         </div>
@@ -1914,8 +1922,8 @@ function applyProductFilters() {
       matchesStock = p.lowStock && p.stock > 0;
     } else if (stockFilter === 'normal') {
       matchesStock = !p.lowStock && p.stock > 0;
-    } else if (stockFilter === 'zero') {
-      matchesStock = p.stock === 0;
+    } else if (stockFilter === 'zeroOrNegative') {
+      matchesStock = p.stock <= 0;
     }
     
     return matchesSearch && matchesSupplier && matchesDepartment && matchesStock;
@@ -2263,4 +2271,788 @@ function showNotification(message, type) {
   setTimeout(() => {
     notification.remove();
   }, 3000);
+}
+
+// ============ DEVOLUCIONES ============
+async function renderReturns() {
+  const wrapper = document.getElementById('content-wrapper');
+  await loadProducts();
+  
+  wrapper.innerHTML = `
+    <div class="section-header">
+      <div>
+        <h1>🔄 Devoluciones</h1>
+        <p>Procesa devoluciones de productos vendidos</p>
+      </div>
+    </div>
+    
+    <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 20px;">
+      <div>
+        <div class="table-container" style="margin-bottom: 20px;">
+          <div style="padding: 20px;">
+            <div class="search-box" style="margin-bottom: 0;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="11" cy="11" r="8"/>
+                <path d="m21 21-4.35-4.35"/>
+              </svg>
+              <input 
+                type="text" 
+                placeholder="Buscar producto por nombre o código" 
+                id="return-search"
+                onkeyup="searchReturnProducts(event)"
+                autofocus
+              >
+            </div>
+          </div>
+        </div>
+        
+        <div id="return-search-results" style="display: none;" class="table-container">
+          <div class="table-header">
+            <h3>Resultados de búsqueda</h3>
+          </div>
+          <div id="return-search-list" style="max-height: 300px; overflow-y: auto;"></div>
+        </div>
+        
+        <div class="table-container">
+          <div class="table-header">
+            <h2>🛒 Carrito de Devoluciones</h2>
+          </div>
+          <div id="return-items" class="table-wrapper">
+            <div style="padding: 40px; text-align: center; color: var(--text-light);">
+              <p>🛒 El carrito está vacío</p>
+              <p style="font-size: 14px; margin-top: 10px;">Busca productos arriba para agregar a devoluciones</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <div>
+        <div class="table-container" style="margin-bottom: 20px;">
+          <div class="table-header">
+            <h2>💰 Resumen</h2>
+          </div>
+          <div style="padding: 20px;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 15px; padding-bottom: 15px; border-bottom: 1px solid var(--border-color);">
+              <span style="color: var(--text-light);">Items:</span>
+              <strong id="return-summary-items">0</strong>
+            </div>
+            <div style="display: flex; justify-content: space-between; margin-bottom: 20px; padding: 15px; background: var(--primary-color); color: white; border-radius: 8px; font-size: 20px;">
+              <span>TOTAL DEVOLUCIÓN:</span>
+              <strong id="return-summary-total">$0.00</strong>
+            </div>
+            
+            <div class="form-group">
+              <label>Motivo de Devolución *</label>
+              <select id="return-reason" required>
+                <option value="">Seleccionar...</option>
+                <option value="defective">Producto Defectuoso</option>
+                <option value="wrong">Producto Incorrecto</option>
+                <option value="damaged">Producto Dañado</option>
+                <option value="expired">Producto Vencido</option>
+                <option value="customer-request">Solicitud del Cliente</option>
+                <option value="other">Otro</option>
+              </select>
+            </div>
+            
+            <div class="form-group">
+              <label>Notas (Opcional)</label>
+              <textarea id="return-notes" rows="3" placeholder="Detalles adicionales sobre la devolución..."></textarea>
+            </div>
+            
+            <button 
+              class="btn btn-primary" 
+              onclick="completeReturn()" 
+              id="complete-return-btn"
+              style="width: 100%; padding: 15px; font-size: 18px; margin-top: 10px;"
+              disabled
+            >
+              ✅ Procesar Devolución
+            </button>
+            
+            <button 
+              class="btn btn-secondary" 
+              onclick="clearReturnCart()" 
+              style="width: 100%; padding: 12px; font-size: 16px; margin-top: 10px;"
+            >
+              🗑️ Limpiar
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  // Inicializar estado para devoluciones
+  if (!state.returnCart) {
+    state.returnCart = [];
+  }
+  updateReturnCartDisplay();
+}
+
+function searchReturnProducts(event) {
+  const query = event.target.value.trim();
+  const resultsDiv = document.getElementById('return-search-results');
+  const resultsList = document.getElementById('return-search-list');
+  
+  if (!query) {
+    resultsDiv.style.display = 'none';
+    return;
+  }
+  
+  clearTimeout(searchTimeout);
+  
+  searchTimeout = setTimeout(async () => {
+    try {
+      const response = await fetch(`/api/products/search?q=${encodeURIComponent(query)}`);
+      const products = await response.json();
+      
+      if (products.length === 0) {
+        resultsDiv.style.display = 'none';
+        return;
+      }
+      
+      resultsDiv.style.display = 'block';
+      resultsList.innerHTML = products.map(p => `
+        <div 
+          onclick="addToReturnCart(${p.id}, '${p.name.replace(/'/g, "\\'").replace(/"/g, '&quot;')}', ${p.price})"
+          style="
+            padding: 15px;
+            border-bottom: 1px solid var(--border-color);
+            cursor: pointer;
+            transition: background 0.2s;
+          "
+          onmouseover="this.style.background='#f8fafc'"
+          onmouseout="this.style.background='white'"
+        >
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+              <strong style="font-size: 16px;">${p.name}</strong>
+              <div style="font-size: 12px; color: var(--text-light); margin-top: 4px;">
+                Código: ${p.barcode || 'N/A'} | Precio: $${parseFloat(p.price).toFixed(2)}
+              </div>
+            </div>
+            <div style="text-align: right;">
+              <div style="font-size: 20px; color: var(--success-color); font-weight: bold;">$${parseFloat(p.price).toFixed(2)}</div>
+            </div>
+          </div>
+        </div>
+      `).join('');
+      
+    } catch (error) {
+      console.error('Error buscando productos:', error);
+    }
+  }, 300);
+}
+
+function addToReturnCart(productId, productName, price) {
+  if (!state.returnCart) {
+    state.returnCart = [];
+  }
+  
+  const existing = state.returnCart.find(item => item.productId === productId);
+  
+  if (existing) {
+    existing.quantity++;
+  } else {
+    state.returnCart.push({
+      productId,
+      name: productName,
+      price,
+      quantity: 1
+    });
+  }
+  
+  updateReturnCartDisplay();
+  document.getElementById('return-search').value = '';
+  document.getElementById('return-search-results').style.display = 'none';
+  document.getElementById('return-search').focus();
+}
+
+function updateReturnCartDisplay() {
+  const cartDiv = document.getElementById('return-items');
+  
+  if (!state.returnCart || state.returnCart.length === 0) {
+    cartDiv.innerHTML = `
+      <div style="padding: 40px; text-align: center; color: var(--text-light);">
+        <p>🛒 El carrito está vacío</p>
+        <p style="font-size: 14px; margin-top: 10px;">Busca productos arriba para agregar a devoluciones</p>
+      </div>
+    `;
+    document.getElementById('complete-return-btn').disabled = true;
+  } else {
+    cartDiv.innerHTML = `
+      <table>
+        <thead>
+          <tr>
+            <th>Producto</th>
+            <th style="width: 80px;">Cant.</th>
+            <th style="width: 100px;">Precio</th>
+            <th style="width: 100px;">Total</th>
+            <th style="width: 80px;">Acción</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${state.returnCart.map((item, index) => `
+            <tr>
+              <td>
+                <strong>${item.name}</strong>
+              </td>
+              <td>
+                <div style="display: flex; align-items: center; gap: 5px;">
+                  <button 
+                    onclick="updateReturnQuantity(${index}, -1)" 
+                    class="btn btn-small btn-secondary"
+                    style="padding: 2px 8px; font-size: 16px;"
+                  >-</button>
+                  <span style="font-weight: bold; min-width: 20px; text-align: center;">${item.quantity}</span>
+                  <button 
+                    onclick="updateReturnQuantity(${index}, 1)" 
+                    class="btn btn-small btn-secondary"
+                    style="padding: 2px 8px; font-size: 16px;"
+                  >+</button>
+                </div>
+              </td>
+              <td>$${item.price.toFixed(2)}</td>
+              <td><strong>$${(item.price * item.quantity).toFixed(2)}</strong></td>
+              <td>
+                <button 
+                  onclick="removeFromReturnCart(${index})" 
+                  class="btn btn-small btn-danger"
+                  style="padding: 4px 8px;"
+                >🗑️</button>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+    document.getElementById('complete-return-btn').disabled = false;
+  }
+  
+  updateReturnSummary();
+}
+
+function updateReturnQuantity(index, change) {
+  const item = state.returnCart[index];
+  const newQuantity = item.quantity + change;
+  
+  if (newQuantity <= 0) {
+    removeFromReturnCart(index);
+    return;
+  }
+  
+  item.quantity = newQuantity;
+  updateReturnCartDisplay();
+}
+
+function removeFromReturnCart(index) {
+  state.returnCart.splice(index, 1);
+  updateReturnCartDisplay();
+}
+
+function clearReturnCart() {
+  if (!state.returnCart || state.returnCart.length === 0) return;
+  
+  if (confirm('¿Deseas limpiar todo el carrito de devoluciones?')) {
+    state.returnCart = [];
+    updateReturnCartDisplay();
+    document.getElementById('return-search').focus();
+  }
+}
+
+function updateReturnSummary() {
+  const totalItems = state.returnCart ? state.returnCart.reduce((sum, item) => sum + item.quantity, 0) : 0;
+  const total = state.returnCart ? state.returnCart.reduce((sum, item) => sum + (item.price * item.quantity), 0) : 0;
+  
+  document.getElementById('return-summary-items').textContent = totalItems;
+  document.getElementById('return-summary-total').textContent = `$${total.toFixed(2)}`;
+}
+
+async function completeReturn() {
+  const reason = document.getElementById('return-reason').value;
+  const notes = document.getElementById('return-notes').value;
+  
+  if (!reason) {
+    showNotification('Selecciona un motivo de devolución', 'error');
+    return;
+  }
+  
+  if (!state.returnCart || state.returnCart.length === 0) {
+    showNotification('El carrito está vacío', 'error');
+    return;
+  }
+  
+  const total = state.returnCart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+  
+  const returnData = {
+    items: state.returnCart.map(item => ({
+      product_id: item.productId,
+      quantity: item.quantity,
+      price: item.price
+    })),
+    reason,
+    notes,
+    total
+  };
+  
+  try {
+    const btn = document.getElementById('complete-return-btn');
+    btn.disabled = true;
+    btn.textContent = '⏳ Procesando...';
+    
+    const response = await fetch('/api/returns/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(returnData)
+    });
+    
+    const result = await response.json();
+    
+    if (response.ok) {
+      showNotification(`✅ Devolución procesada: $${total.toFixed(2)}`, 'success');
+      
+      // Mostrar recibo de devolución
+      showReturnReceipt(result.returnId, state.returnCart, total, reason);
+      
+      state.returnCart = [];
+      document.getElementById('return-reason').value = '';
+      document.getElementById('return-notes').value = '';
+      
+      updateReturnCartDisplay();
+      document.getElementById('return-search').focus();
+    } else {
+      showNotification(result.error || 'Error al procesar devolución', 'error');
+    }
+    
+    btn.disabled = false;
+    btn.textContent = '✅ Procesar Devolución';
+  } catch (error) {
+    console.error('Error:', error);
+    showNotification('Error al conectar con el servidor', 'error');
+  }
+}
+
+function showReturnReceipt(returnId, items, total, reason) {
+  const now = new Date();
+  
+  document.getElementById('modal-title').textContent = '🧾 Recibo de Devolución';
+  document.getElementById('modal-body').innerHTML = `
+    <div style="font-family: monospace; font-size: 14px; line-height: 1.6;">
+      <div style="text-align: center; margin-bottom: 20px; border-bottom: 2px dashed #333; padding-bottom: 10px;">
+        <h2 style="margin: 0;">RECIBO DE DEVOLUCIÓN</h2>
+        <p style="margin: 5px 0;">Folio: #${returnId}</p>
+        <p style="margin: 5px 0;">${now.toLocaleString('es-MX')}</p>
+        <p style="margin: 5px 0;">Recibido por: ${state.currentUser.username}</p>
+      </div>
+      
+      <div style="margin-bottom: 15px; padding: 10px; background: #f1f5f9; border-radius: 4px;">
+        <p style="margin: 0;"><strong>Motivo:</strong> ${reason}</p>
+      </div>
+      
+      <table style="width: 100%; margin-bottom: 20px;">
+        <thead>
+          <tr style="border-bottom: 1px solid #333;">
+            <th style="text-align: left; padding: 5px;">Producto</th>
+            <th style="text-align: center; padding: 5px;">Cant</th>
+            <th style="text-align: right; padding: 5px;">Precio</th>
+            <th style="text-align: right; padding: 5px;">Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${items.map(item => `
+            <tr>
+              <td style="padding: 5px;">${item.name}</td>
+              <td style="text-align: center; padding: 5px;">${item.quantity}</td>
+              <td style="text-align: right; padding: 5px;">$${item.price.toFixed(2)}</td>
+              <td style="text-align: right; padding: 5px;">$${(item.price * item.quantity).toFixed(2)}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+      
+      <div style="border-top: 2px solid #333; padding-top: 10px; margin-bottom: 20px;">
+        <div style="display: flex; justify-content: space-between; font-size: 18px; font-weight: bold;">
+          <span>TOTAL DEVOLUCIÓN:</span>
+          <span>$${total.toFixed(2)}</span>
+        </div>
+      </div>
+      
+      <div style="text-align: center; border-top: 2px dashed #333; padding-top: 10px;">
+        <p>Devolución procesada correctamente</p>
+      </div>
+    </div>
+    
+    <div class="form-actions" style="margin-top: 20px;">
+      <button class="btn btn-secondary" onclick="closeModal()">Cerrar</button>
+      <button class="btn btn-primary" onclick="window.print()">🖨️ Imprimir</button>
+    </div>
+  `;
+  
+  openModal();
+}
+
+// ============ ALTA RÁPIDA DE PRODUCTOS ============
+async function renderQuickEntry() {
+  const wrapper = document.getElementById('content-wrapper');
+  await loadSuppliers();
+  await loadDepartments();
+  
+  // Inicializar estado para entrada rápida
+  if (!state.quickEntryQueue) {
+    state.quickEntryQueue = [];
+  }
+  
+  wrapper.innerHTML = `
+    <div class="section-header">
+      <div>
+        <h1>📦 Alta Rápida de Productos</h1>
+        <p>Registra productos que llegan del proveedor escanendo códigos de barras</p>
+      </div>
+    </div>
+    
+    <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 20px;">
+      <div>
+        <div class="table-container" style="margin-bottom: 20px;">
+          <div class="table-header">
+            <h3>📱 Escanear Código de Barras</h3>
+          </div>
+          <div style="padding: 20px;">
+            <div class="form-group">
+              <label>Código de Barras / Producto *</label>
+              <input 
+                type="text" 
+                id="quick-barcode" 
+                placeholder="Escanea o escribe el código de barras"
+                onkeyup="handleQuickEntryInput(event)"
+                autofocus
+              >
+            </div>
+            <div class="form-group">
+              <label>Cantidad que llega *</label>
+              <input 
+                type="number" 
+                id="quick-quantity" 
+                min="1" 
+                value="1"
+                placeholder="1"
+              >
+            </div>
+            <button class="btn btn-primary" onclick="addToQuickQueue()" style="width: 100%; padding: 12px;">
+              ➕ Agregar a Cola
+            </button>
+          </div>
+        </div>
+        
+        <div class="table-container">
+          <div class="table-header">
+            <h2>📋 Cola de Entrada</h2>
+          </div>
+          <div id="quick-entry-queue" class="table-wrapper">
+            <div style="padding: 40px; text-align: center; color: var(--text-light);">
+              <p>📦 No hay productos en la cola</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <div>
+        <div class="table-container" style="margin-bottom: 20px;">
+          <div class="table-header">
+            <h2>✏️ Detalles del Producto</h2>
+          </div>
+          <div id="quick-product-details" style="padding: 20px;">
+            <div style="text-align: center; color: var(--text-light);">
+              Selecciona un producto para editar
+            </div>
+          </div>
+        </div>
+        
+        <div class="table-container">
+          <div class="table-header">
+            <h3>📊 Resumen</h3>
+          </div>
+          <div style="padding: 20px;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 15px; padding-bottom: 15px; border-bottom: 1px solid var(--border-color);">
+              <span style="color: var(--text-light);">Productos:</span>
+              <strong id="quick-summary-count">0</strong>
+            </div>
+            
+            <button 
+              class="btn btn-primary" 
+              onclick="processQuickEntry()" 
+              id="process-quick-btn"
+              style="width: 100%; padding: 15px; font-size: 18px; margin-top: 10px;"
+              disabled
+            >
+              ✅ Procesar Entrada
+            </button>
+            
+            <button 
+              class="btn btn-secondary" 
+              onclick="clearQuickQueue()" 
+              style="width: 100%; padding: 12px; font-size: 16px; margin-top: 10px;"
+            >
+              🗑️ Limpiar Cola
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  updateQuickEntryDisplay();
+}
+
+async function handleQuickEntryInput(event) {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    addToQuickQueue();
+  }
+}
+
+async function addToQuickQueue() {
+  const barcode = document.getElementById('quick-barcode').value.trim();
+  const quantity = parseInt(document.getElementById('quick-quantity').value) || 1;
+  
+  if (!barcode) {
+    showNotification('Ingresa un código de barras', 'error');
+    return;
+  }
+  
+  if (quantity <= 0) {
+    showNotification('La cantidad debe ser mayor a 0', 'error');
+    return;
+  }
+  
+  // Buscar el producto
+  try {
+    const response = await fetch(`/api/products/search?q=${encodeURIComponent(barcode)}`);
+    const products = await response.json();
+    
+    if (products.length === 0) {
+      showNotification('Producto no encontrado', 'error');
+      return;
+    }
+    
+    const product = products[0];
+    
+    if (!state.quickEntryQueue) {
+      state.quickEntryQueue = [];
+    }
+    
+    const existing = state.quickEntryQueue.find(item => item.productId === product.id);
+    
+    if (existing) {
+      existing.quantity += quantity;
+    } else {
+      state.quickEntryQueue.push({
+        productId: product.id,
+        name: product.name,
+        barcode: product.barcode,
+        currentPrice: product.price,
+        newPharmacyPrice: product.cost || 0,
+        newPublicPrice: product.price,
+        quantity: quantity,
+        department: product.department_id,
+        supplier: product.supplier_id
+      });
+    }
+    
+    updateQuickEntryDisplay();
+    document.getElementById('quick-barcode').value = '';
+    document.getElementById('quick-quantity').value = '1';
+    document.getElementById('quick-barcode').focus();
+    
+  } catch (error) {
+    console.error('Error:', error);
+    showNotification('Error al buscar el producto', 'error');
+  }
+}
+
+function updateQuickEntryDisplay() {
+  const queueDiv = document.getElementById('quick-entry-queue');
+  const summaryCount = document.getElementById('quick-summary-count');
+  
+  if (!state.quickEntryQueue || state.quickEntryQueue.length === 0) {
+    queueDiv.innerHTML = `
+      <div style="padding: 40px; text-align: center; color: var(--text-light);">
+        <p>📦 No hay productos en la cola</p>
+      </div>
+    `;
+    summaryCount.textContent = '0';
+    document.getElementById('process-quick-btn').disabled = true;
+  } else {
+    queueDiv.innerHTML = `
+      <table>
+        <thead>
+          <tr>
+            <th>Producto</th>
+            <th style="width: 80px;">Cantidad</th>
+            <th>Acción</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${state.quickEntryQueue.map((item, index) => `
+            <tr>
+              <td>
+                <strong>${item.name}</strong>
+                <div style="font-size: 12px; color: var(--text-light);">
+                  ${item.barcode || 'N/A'}
+                </div>
+              </td>
+              <td>
+                <div style="display: flex; align-items: center; gap: 5px;">
+                  <button 
+                    onclick="updateQuickQuantity(${index}, -1)" 
+                    class="btn btn-small btn-secondary"
+                    style="padding: 2px 8px; font-size: 16px;"
+                  >-</button>
+                  <span style="font-weight: bold; min-width: 20px; text-align: center;">${item.quantity}</span>
+                  <button 
+                    onclick="updateQuickQuantity(${index}, 1)" 
+                    class="btn btn-small btn-secondary"
+                    style="padding: 2px 8px; font-size: 16px;"
+                  >+</button>
+                </div>
+              </td>
+              <td>
+                <button 
+                  onclick="editQuickEntry(${index})" 
+                  class="btn btn-small btn-secondary"
+                  style="padding: 4px 8px;"
+                >✏️</button>
+                <button 
+                  onclick="removeFromQuickQueue(${index})" 
+                  class="btn btn-small btn-danger"
+                  style="padding: 4px 8px;"
+                >🗑️</button>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+    summaryCount.textContent = state.quickEntryQueue.length;
+    document.getElementById('process-quick-btn').disabled = false;
+  }
+}
+
+function updateQuickQuantity(index, change) {
+  const item = state.quickEntryQueue[index];
+  const newQuantity = item.quantity + change;
+  
+  if (newQuantity <= 0) {
+    removeFromQuickQueue(index);
+    return;
+  }
+  
+  item.quantity = newQuantity;
+  updateQuickEntryDisplay();
+}
+
+function removeFromQuickQueue(index) {
+  state.quickEntryQueue.splice(index, 1);
+  updateQuickEntryDisplay();
+  document.getElementById('quick-product-details').innerHTML = '<div style="text-align: center; color: var(--text-light);">Selecciona un producto para editar</div>';
+}
+
+function clearQuickQueue() {
+  if (!state.quickEntryQueue || state.quickEntryQueue.length === 0) return;
+  
+  if (confirm('¿Deseas limpiar toda la cola?')) {
+    state.quickEntryQueue = [];
+    updateQuickEntryDisplay();
+    document.getElementById('quick-product-details').innerHTML = '<div style="text-align: center; color: var(--text-light);">Selecciona un producto para editar</div>';
+    document.getElementById('quick-barcode').focus();
+  }
+}
+
+function editQuickEntry(index) {
+  const item = state.quickEntryQueue[index];
+  
+  document.getElementById('quick-product-details').innerHTML = `
+    <form onsubmit="saveQuickEntryChanges(event, ${index})">
+      <div class="form-group">
+        <label><strong>${item.name}</strong></label>
+        <small style="color: var(--text-light);">Código: ${item.barcode || 'N/A'}</small>
+      </div>
+      
+      <div class="form-group">
+        <label>Cantidad que llega</label>
+        <input type="number" id="quick-qty-edit" value="${item.quantity}" min="1" required>
+      </div>
+      
+      <div class="form-group">
+        <label>Precio Farmacia (Costo)</label>
+        <input type="number" step="0.01" id="quick-pharmacy-price" value="${item.newPharmacyPrice.toFixed(2)}" required>
+      </div>
+      
+      <div class="form-group">
+        <label>Precio Público</label>
+        <input type="number" step="0.01" id="quick-public-price" value="${item.newPublicPrice.toFixed(2)}" required>
+      </div>
+      
+      <div style="display: flex; gap: 10px;">
+        <button type="submit" class="btn btn-primary" style="flex: 1;">💾 Guardar</button>
+        <button type="button" class="btn btn-secondary" onclick="updateQuickEntryDisplay()" style="flex: 1;">Cerrar</button>
+      </div>
+    </form>
+  `;
+}
+
+function saveQuickEntryChanges(event, index) {
+  event.preventDefault();
+  
+  const item = state.quickEntryQueue[index];
+  item.quantity = parseInt(document.getElementById('quick-qty-edit').value);
+  item.newPharmacyPrice = parseFloat(document.getElementById('quick-pharmacy-price').value);
+  item.newPublicPrice = parseFloat(document.getElementById('quick-public-price').value);
+  
+  updateQuickEntryDisplay();
+  showNotification('Cambios guardados', 'success');
+}
+
+async function processQuickEntry() {
+  if (!state.quickEntryQueue || state.quickEntryQueue.length === 0) {
+    showNotification('No hay productos para procesar', 'error');
+    return;
+  }
+  
+  const btn = document.getElementById('process-quick-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Procesando...';
+  
+  try {
+    const entries = state.quickEntryQueue.map(item => ({
+      product_id: item.productId,
+      quantity: item.quantity,
+      pharmacy_price: item.newPharmacyPrice,
+      public_price: item.newPublicPrice
+    }));
+    
+    const response = await fetch('/api/products/quick-entry', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entries })
+    });
+    
+    const result = await response.json();
+    
+    if (response.ok) {
+      showNotification(`✅ ${state.quickEntryQueue.length} producto(s) ingresado(s) al inventario`, 'success');
+      state.quickEntryQueue = [];
+      updateQuickEntryDisplay();
+      document.getElementById('quick-barcode').focus();
+    } else {
+      showNotification(result.error || 'Error al procesar entrada', 'error');
+    }
+    
+    btn.disabled = false;
+    btn.textContent = '✅ Procesar Entrada';
+  } catch (error) {
+    console.error('Error:', error);
+    showNotification('Error al conectar con el servidor', 'error');
+    btn.disabled = false;
+    btn.textContent = '✅ Procesar Entrada';
+  }
 }

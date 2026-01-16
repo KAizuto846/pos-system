@@ -780,17 +780,18 @@ app.post('/api/sales/create', requireAuth, (req, res) => {
       );
       
       for (const item of items) {
-        // Verificar stock disponible
+        // Verificar que el producto existe (pero permitir venta sin stock)
         const product = db.prepare('SELECT stock FROM products WHERE id = ?').get(item.product_id);
         
-        if (!product || product.stock < item.quantity) {
-          throw new Error(`Stock insuficiente para producto ID ${item.product_id}`);
+        if (!product) {
+          throw new Error(`Producto ID ${item.product_id} no encontrado`);
         }
         
+        // Permitir venta incluso si stock es insuficiente
         // Insertar item
         insertItem.run(saleId, item.product_id, item.quantity, item.price);
         
-        // Actualizar stock
+        // Actualizar stock (puede quedarse negativo)
         updateStock.run(item.quantity, new Date().toISOString(), item.product_id);
       }
       
@@ -806,6 +807,96 @@ app.post('/api/sales/create', requireAuth, (req, res) => {
   } catch (error) {
     console.error('Error creando venta:', error);
     res.status(500).json({ error: error.message || 'Error al procesar la venta' });
+  }
+});
+
+// ==================== DEVOLUCIONES ====================
+
+app.post('/api/returns/create', requireAuth, (req, res) => {
+  const processReturn = db.transaction((returnData) => {
+    try {
+      const { items, reason, notes, total } = returnData;
+      
+      if (!items || items.length === 0) {
+        throw new Error('No hay productos en la devolución');
+      }
+      
+      // Crear devolución (usando tabla de sales como referencia)
+      const returnResult = db.prepare(
+        'INSERT INTO sales (total, payment_method_id, user_id, created_at) VALUES (?, ?, ?, ?)'
+      ).run(-total, null, req.session.userId, new Date().toISOString());
+      
+      const returnId = returnResult.lastInsertRowid;
+      
+      // Insertar items y actualizar stock (AGREGAR stock en lugar de restar)
+      const insertItem = db.prepare(
+        'INSERT INTO sale_items (sale_id, product_id, quantity, price) VALUES (?, ?, ?, ?)'
+      );
+      
+      const updateStock = db.prepare(
+        'UPDATE products SET stock = stock + ?, updated_at = ? WHERE id = ?'
+      );
+      
+      for (const item of items) {
+        // Insertar item
+        insertItem.run(returnId, item.product_id, item.quantity, item.price);
+        
+        // Actualizar stock (sumar porque es devolución)
+        updateStock.run(item.quantity, new Date().toISOString(), item.product_id);
+      }
+      
+      return returnId;
+    } catch (error) {
+      throw error;
+    }
+  });
+  
+  try {
+    const returnId = processReturn(req.body);
+    res.json({ success: true, returnId });
+  } catch (error) {
+    console.error('Error procesando devolución:', error);
+    res.status(500).json({ error: error.message || 'Error al procesar la devolución' });
+  }
+});
+
+// ==================== ENTRADA RÁPIDA DE PRODUCTOS ====================
+
+app.post('/api/products/quick-entry', requireAuth, (req, res) => {
+  const processEntry = db.transaction((entryData) => {
+    try {
+      const { entries } = entryData;
+      
+      if (!entries || entries.length === 0) {
+        throw new Error('No hay productos para procesar');
+      }
+      
+      const updateStock = db.prepare(
+        'UPDATE products SET stock = stock + ?, cost = ?, price = ?, updated_at = ? WHERE id = ?'
+      );
+      
+      for (const entry of entries) {
+        updateStock.run(
+          entry.quantity,
+          entry.pharmacy_price || 0,
+          entry.public_price || 0,
+          new Date().toISOString(),
+          entry.product_id
+        );
+      }
+      
+      return entries.length;
+    } catch (error) {
+      throw error;
+    }
+  });
+  
+  try {
+    const processedCount = processEntry(req.body);
+    res.json({ success: true, processed: processedCount });
+  } catch (error) {
+    console.error('Error en entrada rápida:', error);
+    res.status(500).json({ error: error.message || 'Error al procesar entrada de productos' });
   }
 });
 
