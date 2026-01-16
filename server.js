@@ -5,9 +5,9 @@ const path = require('path');
 const multer = require('multer');
 const XLSX = require('xlsx');
 const { initDatabase, getDB } = require('./database/init');
+const config = require('./config');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
 
 // Configurar multer para subida de archivos
 const upload = multer({ 
@@ -23,11 +23,7 @@ const db = getDB();
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(express.static('public'));
-app.use(session({
-  secret: 'pos-secret-key-change-in-production',
-  resave: false,
-  saveUninitialized: false,
-  cookie: { secure: false }
+app.use(session(config.session));
 }));
 
 // Middleware de autenticación
@@ -1416,9 +1412,11 @@ app.patch('/api/supplier-orders/:orderId', requireAuth, (req, res) => {
 });
 
 // Iniciar servidor
-app.listen(PORT, () => {
-  console.log(`✅ Servidor POS corriendo en http://localhost:${PORT}`);
-  console.log(`🚀 Listo para usar en Codespaces`);
+app.listen(config.server.port, config.server.host, () => {
+  console.log(`✅ Servidor POS corriendo en http://${config.server.host}:${config.server.port}`);
+  console.log(`🌍 Ambiente: ${config.env}`);
+  console.log(`📂 Base de datos: ${config.database.path}`);
+  console.log(`🚀 Listo para usar`);
   console.log(`📦 Sistema de importación masiva habilitado`);
   console.log(`🛍️ Módulo de punto de venta (POS) activo`);
   console.log(`📊 Módulo de reportes y analíticas activo`);
