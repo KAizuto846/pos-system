@@ -470,11 +470,25 @@ app.get('/api/products', requireAuth, (req, res) => {
       ORDER BY p.created_at DESC
     `).all();
     
-    res.json(products.map(p => ({ 
-      ...p, 
-      active: p.active === 1,
-      lowStock: p.stock <= p.min_stock
-    })));
+    // Obtener líneas para cada producto
+    const productsWithLines = products.map(p => {
+      const lines = db.prepare(`
+        SELECT pl.id, pl.supplier_id, s.name as supplier_name, pl.is_primary
+        FROM product_lines pl
+        INNER JOIN suppliers s ON pl.supplier_id = s.id
+        WHERE pl.product_id = ?
+        ORDER BY pl.is_primary DESC
+      `).all(p.id);
+      
+      return {
+        ...p,
+        active: p.active === 1,
+        lowStock: p.stock <= p.min_stock,
+        lines: lines || []
+      };
+    });
+    
+    res.json(productsWithLines);
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Error al obtener productos' });
@@ -1194,6 +1208,210 @@ app.get('/api/reports/sales-history', requireAuth, (req, res) => {
   } catch (error) {
     console.error('Error en /api/reports/sales-history:', error);
     res.status(500).json({ error: 'Error al generar reporte' });
+  }
+});
+
+// ==================== MÚLTIPLES LÍNEAS / PROVEEDORES ====================
+
+// Obtener líneas de un producto
+app.get('/api/products/:productId/lines', requireAuth, (req, res) => {
+  try {
+    const lines = db.prepare(`
+      SELECT pl.id, s.id as supplier_id, s.name as supplier_name, pl.is_primary
+      FROM product_lines pl
+      INNER JOIN suppliers s ON pl.supplier_id = s.id
+      WHERE pl.product_id = ?
+      ORDER BY pl.is_primary DESC
+    `).all(req.params.productId);
+    
+    res.json(lines);
+  } catch (error) {
+    res.status(500).json({ error: 'Error al obtener líneas' });
+  }
+});
+
+// Agregar línea a un producto
+app.post('/api/products/:productId/lines', requireAuth, (req, res) => {
+  if (req.session.role !== 'admin') {
+    return res.status(403).json({ error: 'Solo administradores pueden agregar líneas' });
+  }
+  
+  const { supplierId, isPrimary } = req.body;
+  
+  try {
+    const result = db.prepare(`
+      INSERT INTO product_lines (product_id, supplier_id, is_primary, created_at)
+      VALUES (?, ?, ?, ?)
+    `).run(req.params.productId, supplierId, isPrimary ? 1 : 0, new Date().toISOString());
+    
+    // Si es línea principal, actualizar el producto
+    if (isPrimary) {
+      db.prepare('UPDATE products SET primary_line_id = ? WHERE id = ?')
+        .run(supplierId, req.params.productId);
+    }
+    
+    res.json({ success: true, id: result.lastInsertRowid });
+  } catch (error) {
+    res.status(500).json({ error: 'Error al agregar línea' });
+  }
+});
+
+// Eliminar línea de un producto
+app.delete('/api/products/:productId/lines/:lineId', requireAuth, (req, res) => {
+  if (req.session.role !== 'admin') {
+    return res.status(403).json({ error: 'Solo administradores pueden eliminar líneas' });
+  }
+  
+  try {
+    db.prepare('DELETE FROM product_lines WHERE id = ? AND product_id = ?')
+      .run(req.params.lineId, req.params.productId);
+    
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Error al eliminar línea' });
+  }
+});
+
+// ==================== PEDIDOS DE PROVEEDOR MEJORADOS ====================
+
+// Obtener pedidos de proveedor
+app.get('/api/supplier-orders', requireAuth, (req, res) => {
+  try {
+    const { status, supplierId, lineId } = req.query;
+    
+    let query = `
+      SELECT so.*, p.name as product_name, p.barcode, s.name as supplier_name
+      FROM supplier_orders so
+      INNER JOIN products p ON so.product_id = p.id
+      INNER JOIN suppliers s ON so.supplier_id = s.id
+      WHERE 1=1
+    `;
+    const params = [];
+    
+    if (status) {
+      query += ` AND so.status = ?`;
+      params.push(status);
+    }
+    
+    if (supplierId) {
+      query += ` AND so.supplier_id = ?`;
+      params.push(supplierId);
+    }
+    
+    if (lineId) {
+      query += ` AND p.primary_line_id = ?`;
+      params.push(lineId);
+    }
+    
+    query += ` ORDER BY so.created_at DESC`;
+    
+    const orders = db.prepare(query).all(...params);
+    res.json(orders);
+  } catch (error) {
+    res.status(500).json({ error: 'Error al obtener pedidos' });
+  }
+});
+
+// Crear pedido de proveedor
+app.post('/api/supplier-orders', requireAuth, (req, res) => {
+  if (req.session.role !== 'admin') {
+    return res.status(403).json({ error: 'Solo administradores pueden crear pedidos' });
+  }
+  
+  const { productId, supplierId, quantity } = req.body;
+  
+  if (!productId || !supplierId || !quantity || quantity <= 0) {
+    return res.status(400).json({ error: 'Datos incompletos' });
+  }
+  
+  try {
+    const result = db.prepare(`
+      INSERT INTO supplier_orders (product_id, supplier_id, quantity, status, created_at)
+      VALUES (?, ?, ?, 'pending', ?)
+    `).run(productId, supplierId, quantity, new Date().toISOString());
+    
+    res.json({ success: true, id: result.lastInsertRowid });
+  } catch (error) {
+    res.status(500).json({ error: 'Error al crear pedido' });
+  }
+});
+
+// Marcar como recibido
+app.patch('/api/supplier-orders/:orderId/receive', requireAuth, (req, res) => {
+  if (req.session.role !== 'admin') {
+    return res.status(403).json({ error: 'Solo administradores pueden marcar como recibido' });
+  }
+  
+  const { receivedQuantity } = req.body;
+  
+  try {
+    db.prepare(`
+      UPDATE supplier_orders 
+      SET received_quantity = ?, received = 1, status = 'received', received_at = ?
+      WHERE id = ?
+    `).run(receivedQuantity || 0, new Date().toISOString(), req.params.orderId);
+    
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Error al marcar como recibido' });
+  }
+});
+
+// Duplicar pedido a otro proveedor
+app.post('/api/supplier-orders/:orderId/duplicate', requireAuth, (req, res) => {
+  if (req.session.role !== 'admin') {
+    return res.status(403).json({ error: 'Solo administradores pueden duplicar pedidos' });
+  }
+  
+  const { newSupplierId } = req.body;
+  
+  try {
+    const order = db.prepare('SELECT * FROM supplier_orders WHERE id = ?').get(req.params.orderId);
+    
+    if (!order) {
+      return res.status(404).json({ error: 'Pedido no encontrado' });
+    }
+    
+    const result = db.prepare(`
+      INSERT INTO supplier_orders (product_id, supplier_id, quantity, status, created_at)
+      VALUES (?, ?, ?, 'pending', ?)
+    `).run(order.product_id, newSupplierId, order.quantity, new Date().toISOString());
+    
+    res.json({ success: true, id: result.lastInsertRowid });
+  } catch (error) {
+    res.status(500).json({ error: 'Error al duplicar pedido' });
+  }
+});
+
+// Eliminar pedido
+app.delete('/api/supplier-orders/:orderId', requireAuth, (req, res) => {
+  if (req.session.role !== 'admin') {
+    return res.status(403).json({ error: 'Solo administradores pueden eliminar pedidos' });
+  }
+  
+  try {
+    db.prepare('DELETE FROM supplier_orders WHERE id = ?').run(req.params.orderId);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Error al eliminar pedido' });
+  }
+});
+
+// Actualizar estado de pedido
+app.patch('/api/supplier-orders/:orderId', requireAuth, (req, res) => {
+  if (req.session.role !== 'admin') {
+    return res.status(403).json({ error: 'Solo administradores pueden actualizar pedidos' });
+  }
+  
+  const { status } = req.body;
+  
+  try {
+    db.prepare('UPDATE supplier_orders SET status = ? WHERE id = ?')
+      .run(status, req.params.orderId);
+    
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Error al actualizar pedido' });
   }
 });
 

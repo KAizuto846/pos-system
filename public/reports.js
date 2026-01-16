@@ -105,7 +105,7 @@ async function loadReports() {
     renderTopProducts();
     renderCashiers();
     renderLowStock();
-    renderSupplierOrders();
+    await renderSupplierOrders();
   } catch (error) {
     console.error('Error cargando reportes:', error);
     alert('Error al cargar los reportes');
@@ -279,50 +279,60 @@ function logout() {
   window.location.href = 'login.html';
 }
 
-// ========== PEDIDOS DE PROVEEDOR ==========
+// ========== PEDIDOS DE PROVEEDOR MEJORADOS ==========
 
-function renderSupplierOrders() {
-  const tbody = document.querySelector('#supplierOrdersTable tbody');
-  
-  if (supplierOrders.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="6" class="no-data">No hay pedidos registrados</td></tr>';
-    renderPendingProducts();
-    return;
+async function renderSupplierOrders() {
+  try {
+    const response = await fetch('/api/supplier-orders');
+    const orders = await response.json();
+    
+    const tbody = document.querySelector('#supplierOrdersTable tbody');
+    
+    if (!orders || orders.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" class="no-data">No hay pedidos registrados</td></tr>';
+      renderPendingProducts([]);
+      return;
+    }
+    
+    tbody.innerHTML = orders.map(order => `
+      <tr style="${order.status === 'received' ? 'opacity: 0.6;' : ''}">
+        <td>${order.supplier_name}</td>
+        <td>${order.product_name}</td>
+        <td>${order.barcode || 'N/A'}</td>
+        <td>${order.quantity}</td>
+        <td>${order.received_quantity || 0}</td>
+        <td>${new Date(order.created_at).toLocaleDateString('es-MX')}</td>
+        <td>
+          <span class="badge ${order.status === 'received' ? 'active' : 'inactive'}">
+            ${order.status === 'received' ? '✅ Recibido' : '⏳ Pendiente'}
+          </span>
+        </td>
+        <td>
+          ${order.status !== 'received' ? `
+            <button class="btn btn-small btn-success" onclick="markOrderAsReceived(${order.id})">✅ Marcar</button>
+            <button class="btn btn-small btn-warning" onclick="duplicateOrder(${order.id})">➡️ Copiar</button>
+            <button class="btn btn-small btn-danger" onclick="deleteSupplierOrder(${order.id})">🗑️</button>
+          ` : `
+            <button class="btn btn-small btn-secondary" onclick="reactivateOrder(${order.id})">↩️ Reactivar</button>
+          `}
+        </td>
+      </tr>
+    `).join('');
+    
+    renderPendingProducts(orders.filter(o => o.status !== 'received'));
+  } catch (error) {
+    console.error('Error cargando pedidos:', error);
+    alert('Error al cargar pedidos de proveedor');
   }
-  
-  tbody.innerHTML = supplierOrders.map(order => `
-    <tr style="${order.received ? 'opacity: 0.6;' : ''}">
-      <td>${order.supplier}</td>
-      <td>${order.product}</td>
-      <td>${order.quantity}</td>
-      <td>${new Date(order.date).toLocaleDateString('es-MX')}</td>
-      <td>
-        <span class="badge ${order.received ? 'active' : 'inactive'}">
-          ${order.received ? '✅ Recibido' : '⏳ Pendiente'}
-        </span>
-      </td>
-      <td>
-        ${!order.received ? `
-          <button class="btn btn-small btn-success" onclick="markOrderAsReceived(${order.id})">✅ Marcar</button>
-          <button class="btn btn-small btn-danger" onclick="deleteSupplierOrder(${order.id})">🗑️</button>
-        ` : `
-          <button class="btn btn-small btn-secondary" onclick="moveToNextOrder(${order.id})">➡️ Próximo</button>
-        `}
-      </td>
-    </tr>
-  `).join('');
-  
-  renderPendingProducts();
 }
 
-function renderPendingProducts() {
-  const pending = supplierOrders.filter(o => !o.received);
+function renderPendingProducts(orders) {
   const list = document.getElementById('pendingProductsList');
   
-  if (pending.length === 0) {
+  if (!orders || orders.length === 0) {
     list.innerHTML = `
       <div style="text-align: center; color: var(--text-light); padding: 20px;">
-        No hay productos pendientes
+        ✅ No hay productos pendientes
       </div>
     `;
     return;
@@ -330,85 +340,237 @@ function renderPendingProducts() {
   
   list.innerHTML = `
     <div style="display: flex; flex-direction: column; gap: 8px;">
-      ${pending.map((order, idx) => `
-        <div style="padding: 12px; background: #f1f5f9; border-radius: 6px; font-size: 13px; border-left: 3px solid var(--primary-color);">
-          <div><strong>${order.product}</strong></div>
-          <div style="color: var(--text-light); margin-top: 2px;">
-            ${order.supplier} • ${order.quantity} unidades
+      ${orders.map((order, idx) => `
+        <div 
+          style="padding: 12px; background: #f1f5f9; border-radius: 6px; font-size: 13px; border-left: 3px solid var(--primary-color); cursor: move;"
+          draggable="true"
+          ondragstart="startDrag(event, ${order.id})"
+          ondragover="allowDrop(event)"
+          ondrop="handleDrop(event, ${order.id})"
+        >
+          <div><strong>${order.product_name}</strong></div>
+          <div style="color: var(--text-light); margin-top: 4px; font-size: 12px;">
+            ${order.supplier_name} • ${order.quantity} unidades
           </div>
           <div style="color: var(--text-light); font-size: 11px; margin-top: 4px;">
-            ${new Date(order.date).toLocaleDateString('es-MX')}
+            ${new Date(order.created_at).toLocaleDateString('es-MX')}
+          </div>
+          <div style="margin-top: 8px; display: flex; gap: 4px;">
+            <button class="btn btn-small btn-success" onclick="markOrderAsReceived(${order.id})" style="flex: 1; padding: 4px;">✅ Recibido</button>
+            <button class="btn btn-small btn-secondary" onclick="showChangeSupplierDialog(${order.id})" style="flex: 1; padding: 4px;">➡️ Cambiar</button>
           </div>
         </div>
       `).join('')}
     </div>
     <div style="margin-top: 16px; padding: 12px; background: #eff6ff; border-radius: 6px; font-size: 12px; color: var(--primary-color);">
-      <strong>${pending.length}</strong> producto(s) pendiente(s)
+      <strong>${orders.length}</strong> producto(s) pendiente(s)
     </div>
   `;
 }
 
-function createSupplierOrder() {
-  const productName = prompt('Nombre del producto:');
-  if (!productName) return;
+async function markOrderAsReceived(orderId) {
+  const quantity = prompt('¿Cantidad recibida?', '');
+  if (quantity === null) return;
   
-  const supplier = prompt('Proveedor:');
-  if (!supplier) return;
+  const receivedQty = parseInt(quantity) || 0;
   
-  const quantity = parseInt(prompt('Cantidad:', '1'));
-  if (!quantity || quantity <= 0) return;
-  
-  const newOrder = {
-    id: Date.now(),
-    product: productName,
-    supplier: supplier,
-    quantity: quantity,
-    date: new Date().toISOString(),
-    received: false
-  };
-  
-  supplierOrders.push(newOrder);
-  localStorage.setItem('supplierOrders', JSON.stringify(supplierOrders));
-  renderSupplierOrders();
-  alert('Pedido creado correctamente');
+  try {
+    const response = await fetch(`/api/supplier-orders/${orderId}/receive`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ receivedQuantity: receivedQty })
+    });
+    
+    if (response.ok) {
+      showNotification('✅ Pedido marcado como recibido', 'success');
+      await renderSupplierOrders();
+    } else {
+      showNotification('Error al marcar como recibido', 'error');
+    }
+  } catch (error) {
+    console.error('Error:', error);
+    showNotification('Error al conectar con el servidor', 'error');
+  }
 }
 
-function markOrderAsReceived(id) {
-  const order = supplierOrders.find(o => o.id === id);
-  if (!order) return;
-  
-  order.received = true;
-  localStorage.setItem('supplierOrders', JSON.stringify(supplierOrders));
-  renderSupplierOrders();
+async function duplicateOrder(orderId) {
+  try {
+    const response = await fetch(`/api/supplier-orders/${orderId}`);
+    if (!response.ok) return;
+    
+    // Mostrar lista de proveedores disponibles
+    const suppliersRes = await fetch('/api/suppliers');
+    const suppliers = await suppliersRes.json();
+    
+    // Crear selector (simplificado con prompt)
+    const supplierNames = suppliers.map(s => s.name).join('\n');
+    const newSupplier = prompt(`Selecciona un proveedor para duplicar:\n${supplierNames}`, '');
+    
+    if (!newSupplier) return;
+    
+    const supplier = suppliers.find(s => s.name === newSupplier);
+    if (!supplier) {
+      showNotification('Proveedor no encontrado', 'error');
+      return;
+    }
+    
+    const dupRes = await fetch(`/api/supplier-orders/${orderId}/duplicate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ newSupplierId: supplier.id })
+    });
+    
+    if (dupRes.ok) {
+      showNotification('✅ Pedido copiado a nuevo proveedor', 'success');
+      await renderSupplierOrders();
+    }
+  } catch (error) {
+    console.error('Error:', error);
+    showNotification('Error al duplicar pedido', 'error');
+  }
 }
 
-function moveToNextOrder(id) {
-  const order = supplierOrders.find(o => o.id === id);
-  if (!order || !order.received) return;
-  
-  // Mover a futuros pedidos u otros proveedores
-  const nextSupplier = prompt('Asignar a proveedor:', order.supplier);
-  if (!nextSupplier) return;
-  
-  const newOrder = {
-    id: Date.now(),
-    product: order.product,
-    supplier: nextSupplier,
-    quantity: order.quantity,
-    date: new Date().toISOString(),
-    received: false
-  };
-  
-  supplierOrders.push(newOrder);
-  localStorage.setItem('supplierOrders', JSON.stringify(supplierOrders));
-  renderSupplierOrders();
-  alert('Pedido trasladado correctamente');
-}
-
-function deleteSupplierOrder(id) {
+async function deleteSupplierOrder(orderId) {
   if (!confirm('¿Eliminar este pedido?')) return;
   
-  supplierOrders = supplierOrders.filter(o => o.id !== id);
-  localStorage.setItem('supplierOrders', JSON.stringify(supplierOrders));
-  renderSupplierOrders();
+  try {
+    const response = await fetch(`/api/supplier-orders/${orderId}`, {
+      method: 'DELETE'
+    });
+    
+    if (response.ok) {
+      showNotification('✅ Pedido eliminado', 'success');
+      await renderSupplierOrders();
+    }
+  } catch (error) {
+    console.error('Error:', error);
+    showNotification('Error al eliminar pedido', 'error');
+  }
+}
+
+async function reactivateOrder(orderId) {
+  // Revertir estado a pendiente
+  try {
+    const response = await fetch(`/api/supplier-orders/${orderId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'pending' })
+    });
+    
+    if (response.ok) {
+      showNotification('✅ Pedido reactivado', 'success');
+      await renderSupplierOrders();
+    }
+  } catch (error) {
+    console.error('Error:', error);
+  }
+}
+
+async function showChangeSupplierDialog(orderId) {
+  try {
+    const suppliersRes = await fetch('/api/suppliers');
+    const suppliers = await suppliersRes.json();
+    
+    const supplierNames = suppliers.map(s => s.name).join('\n');
+    const newSupplier = prompt(`Cambiar a proveedor:\n${supplierNames}`, '');
+    
+    if (!newSupplier) return;
+    
+    const supplier = suppliers.find(s => s.name === newSupplier);
+    if (!supplier) {
+      showNotification('Proveedor no encontrado', 'error');
+      return;
+    }
+    
+    await duplicateOrder(orderId);
+    await deleteSupplierOrder(orderId);
+  } catch (error) {
+    console.error('Error:', error);
+  }
+}
+
+// Funciones de arrastrar y soltar (drag & drop)
+let draggedOrderId = null;
+
+function startDrag(event, orderId) {
+  draggedOrderId = orderId;
+  event.dataTransfer.effectAllowed = 'move';
+}
+
+function allowDrop(event) {
+  event.preventDefault();
+  event.dataTransfer.dropEffect = 'move';
+}
+
+async function handleDrop(event, targetOrderId) {
+  event.preventDefault();
+  
+  if (draggedOrderId === targetOrderId) return;
+  
+  // Aquí se podría implementar lógica para cambiar proveedores al soltar
+  draggedOrderId = null;
+}
+
+// Función auxiliar para mostrar notificaciones
+function showNotification(message, type = 'info') {
+  // Reutilizar la lógica de notificaciones existente si está disponible
+  // O crear una simple alerta
+  console.log(`[${type}] ${message}`);
+}
+
+// Crear pedido de proveedor
+async function showCreateOrderDialog() {
+  try {
+    // Obtener productos y proveedores
+    const [productsRes, suppliersRes] = await Promise.all([
+      fetch('/api/products'),
+      fetch('/api/suppliers')
+    ]);
+    
+    const products = await productsRes.json();
+    const suppliers = await suppliersRes.json();
+    
+    if (!products.length || !suppliers.length) {
+      showNotification('Necesita productos y proveedores registrados', 'error');
+      return;
+    }
+    
+    // Crear diálogo simple
+    const productNames = products.map(p => `${p.id}:${p.name}`).join('\n');
+    const supplierNames = suppliers.map(s => `${s.id}:${s.name}`).join('\n');
+    
+    const productSelection = prompt(`Selecciona un producto:\n${productNames}`, '');
+    if (!productSelection) return;
+    
+    const productId = parseInt(productSelection.split(':')[0]);
+    
+    const supplierSelection = prompt(`Selecciona un proveedor:\n${supplierNames}`, '');
+    if (!supplierSelection) return;
+    
+    const supplierId = parseInt(supplierSelection.split(':')[0]);
+    
+    const quantity = parseInt(prompt('Cantidad:', '10'));
+    if (!quantity || quantity <= 0) return;
+    
+    // Crear pedido
+    const response = await fetch('/api/supplier-orders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        productId,
+        supplierId,
+        quantity
+      })
+    });
+    
+    if (response.ok) {
+      showNotification('✅ Pedido creado correctamente', 'success');
+      await renderSupplierOrders();
+    } else {
+      showNotification('Error al crear pedido', 'error');
+    }
+  } catch (error) {
+    console.error('Error:', error);
+    showNotification('Error al crear pedido', 'error');
+  }
 }

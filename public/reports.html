@@ -333,7 +333,9 @@
                 <tr>
                   <th>Proveedor</th>
                   <th>Producto</th>
-                  <th>Cantidad</th>
+                  <th>Código</th>
+                  <th>Solicitado</th>
+                  <th>Recibido</th>
                   <th>Fecha</th>
                   <th>Estado</th>
                   <th>Acciones</th>
@@ -341,7 +343,7 @@
               </thead>
               <tbody>
                 <tr>
-                  <td colspan="6" class="no-data">No hay pedidos registrados</td>
+                  <td colspan="8" class="no-data">No hay pedidos registrados</td>
                 </tr>
               </tbody>
             </table>
@@ -355,8 +357,8 @@
               No hay productos pendientes
             </div>
           </div>
-          <button class="btn btn-primary" onclick="createSupplierOrder()" style="width: 100%; margin-top: 16px;">
-            ➕ Crear Pedido
+          <button class="btn btn-primary" onclick="showCreateOrderDialog()" style="width: 100%; margin-top: 16px;">
+            ➕ Nuevo Pedido
           </button>
         </div>
       </div>
