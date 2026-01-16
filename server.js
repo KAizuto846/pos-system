@@ -1126,6 +1126,7 @@ app.get('/api/reports/supplier-order', requireAuth, (req, res) => {
       return res.status(400).json({ error: 'supplierId es requerido para Pedido Proveedor' });
     }
 
+    // Filtrar SOLO por productos donde esta es la línea PRINCIPAL
     const rows = db.prepare(`
       SELECT
         SUM(si.quantity) as quantity,
@@ -1134,8 +1135,10 @@ app.get('/api/reports/supplier-order', requireAuth, (req, res) => {
       FROM sale_items si
       INNER JOIN sales s ON si.sale_id = s.id
       INNER JOIN products p ON si.product_id = p.id
+      INNER JOIN product_lines pl ON p.id = pl.product_id
       WHERE DATE(s.created_at) BETWEEN ? AND ?
-        AND p.supplier_id = ?
+        AND pl.supplier_id = ?
+        AND pl.is_primary = 1
       GROUP BY p.id, p.name, p.barcode
       ORDER BY quantity DESC
     `).all(startDate, endDate, supplierId);
@@ -1352,61 +1355,329 @@ app.patch('/api/supplier-orders/:orderId/receive', requireAuth, (req, res) => {
   }
 });
 
-// Duplicar pedido a otro proveedor
-app.post('/api/supplier-orders/:orderId/duplicate', requireAuth, (req, res) => {
+// NUEVA ESTRUCTURA: Pedidos en cabecera, items en tabla relacionada
+
+// Crear pedido de proveedor (cabecera)
+app.post('/api/supplier-orders/create-header', requireAuth, (req, res) => {
   if (req.session.role !== 'admin') {
-    return res.status(403).json({ error: 'Solo administradores pueden duplicar pedidos' });
+    return res.status(403).json({ error: 'Solo administradores' });
   }
   
-  const { newSupplierId } = req.body;
+  const { supplierId, notes } = req.body;
+  
+  if (!supplierId) {
+    return res.status(400).json({ error: 'supplierId requerido' });
+  }
   
   try {
-    const order = db.prepare('SELECT * FROM supplier_orders WHERE id = ?').get(req.params.orderId);
+    const result = db.prepare(`
+      INSERT INTO supplier_orders (supplier_id, status, notes, created_at, updated_at)
+      VALUES (?, 'draft', ?, ?, ?)
+    `).run(supplierId, notes || '', new Date().toISOString(), new Date().toISOString());
+    
+    res.json({ success: true, orderId: result.lastInsertRowid });
+  } catch (error) {
+    res.status(500).json({ error: 'Error al crear pedido' });
+  }
+});
+
+// Obtener items de un pedido
+app.get('/api/supplier-orders/:orderId/items', requireAuth, (req, res) => {
+  try {
+    const items = db.prepare(`
+      SELECT 
+        soi.id,
+        soi.product_id,
+        p.name as product_name,
+        p.barcode,
+        soi.quantity,
+        soi.received_quantity,
+        soi.received,
+        soi.notes
+      FROM supplier_order_items soi
+      INNER JOIN products p ON soi.product_id = p.id
+      WHERE soi.supplier_order_id = ?
+      ORDER BY soi.created_at ASC
+    `).all(req.params.orderId);
+    
+    res.json(items);
+  } catch (error) {
+    res.status(500).json({ error: 'Error al obtener items' });
+  }
+});
+
+// Agregar item a un pedido
+app.post('/api/supplier-orders/:orderId/items', requireAuth, (req, res) => {
+  if (req.session.role !== 'admin') {
+    return res.status(403).json({ error: 'Solo administradores' });
+  }
+  
+  const { productId, quantity, notes } = req.body;
+  
+  if (!productId || !quantity || quantity <= 0) {
+    return res.status(400).json({ error: 'productId y quantity requeridos' });
+  }
+  
+  try {
+    // Verificar que el producto existe
+    const product = db.prepare('SELECT id FROM products WHERE id = ?').get(productId);
+    if (!product) {
+      return res.status(404).json({ error: 'Producto no encontrado' });
+    }
+    
+    // Verificar que no existe el item ya
+    const existing = db.prepare(
+      'SELECT id FROM supplier_order_items WHERE supplier_order_id = ? AND product_id = ?'
+    ).get(req.params.orderId, productId);
+    
+    if (existing) {
+      return res.status(400).json({ error: 'El producto ya está en este pedido' });
+    }
+    
+    const result = db.prepare(`
+      INSERT INTO supplier_order_items (supplier_order_id, product_id, quantity, notes, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(req.params.orderId, productId, quantity, notes || '', new Date().toISOString(), new Date().toISOString());
+    
+    res.json({ success: true, itemId: result.lastInsertRowid });
+  } catch (error) {
+    res.status(500).json({ error: 'Error al agregar item' });
+  }
+});
+
+// Actualizar item del pedido
+app.patch('/api/supplier-orders/:orderId/items/:itemId', requireAuth, (req, res) => {
+  if (req.session.role !== 'admin') {
+    return res.status(403).json({ error: 'Solo administradores' });
+  }
+  
+  const { quantity, notes, received, receivedQuantity } = req.body;
+  
+  try {
+    let updates = [];
+    let params = [];
+    
+    if (quantity !== undefined && quantity > 0) {
+      updates.push('quantity = ?');
+      params.push(quantity);
+    }
+    
+    if (notes !== undefined) {
+      updates.push('notes = ?');
+      params.push(notes);
+    }
+    
+    if (received !== undefined) {
+      updates.push('received = ?');
+      params.push(received ? 1 : 0);
+    }
+    
+    if (receivedQuantity !== undefined && receivedQuantity >= 0) {
+      updates.push('received_quantity = ?');
+      params.push(receivedQuantity);
+    }
+    
+    updates.push('updated_at = ?');
+    params.push(new Date().toISOString());
+    
+    params.push(req.params.orderId);
+    params.push(req.params.itemId);
+    
+    db.prepare(`
+      UPDATE supplier_order_items
+      SET ${updates.join(', ')}
+      WHERE supplier_order_id = ? AND id = ?
+    `).run(...params);
+    
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Error al actualizar item' });
+  }
+});
+
+// Eliminar item del pedido
+app.delete('/api/supplier-orders/:orderId/items/:itemId', requireAuth, (req, res) => {
+  if (req.session.role !== 'admin') {
+    return res.status(403).json({ error: 'Solo administradores' });
+  }
+  
+  try {
+    db.prepare('DELETE FROM supplier_order_items WHERE id = ? AND supplier_order_id = ?')
+      .run(req.params.itemId, req.params.orderId);
+    
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Error al eliminar item' });
+  }
+});
+
+// Marcar item como recibido
+app.patch('/api/supplier-orders/:orderId/items/:itemId/receive', requireAuth, (req, res) => {
+  if (req.session.role !== 'admin') {
+    return res.status(403).json({ error: 'Solo administradores' });
+  }
+  
+  const { receivedQuantity } = req.body;
+  
+  try {
+    const item = db.prepare(
+      'SELECT quantity FROM supplier_order_items WHERE id = ? AND supplier_order_id = ?'
+    ).get(req.params.itemId, req.params.orderId);
+    
+    if (!item) {
+      return res.status(404).json({ error: 'Item no encontrado' });
+    }
+    
+    const finalQuantity = receivedQuantity !== undefined ? receivedQuantity : item.quantity;
+    
+    db.prepare(`
+      UPDATE supplier_order_items
+      SET received_quantity = ?, received = 1, updated_at = ?
+      WHERE id = ? AND supplier_order_id = ?
+    `).run(finalQuantity, new Date().toISOString(), req.params.itemId, req.params.orderId);
+    
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Error al marcar como recibido' });
+  }
+});
+
+// Actualizar estado del pedido
+app.patch('/api/supplier-orders/:orderId/status', requireAuth, (req, res) => {
+  if (req.session.role !== 'admin') {
+    return res.status(403).json({ error: 'Solo administradores' });
+  }
+  
+  const { status } = req.body;
+  const validStatuses = ['draft', 'sent', 'pending', 'partial_received', 'received'];
+  
+  if (!validStatuses.includes(status)) {
+    return res.status(400).json({ error: 'Estado inválido' });
+  }
+  
+  try {
+    db.prepare(`
+      UPDATE supplier_orders
+      SET status = ?, updated_at = ?
+      WHERE id = ?
+    `).run(status, new Date().toISOString(), req.params.orderId);
+    
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Error al actualizar estado' });
+  }
+});
+
+// Obtener todos los pedidos con resumen
+app.get('/api/supplier-orders-list', requireAuth, (req, res) => {
+  try {
+    const { supplierId, status } = req.query;
+    
+    let query = `
+      SELECT 
+        so.id,
+        so.supplier_id,
+        s.name as supplier_name,
+        so.status,
+        so.notes,
+        so.created_at,
+        COUNT(soi.id) as item_count,
+        SUM(CASE WHEN soi.received = 1 THEN 1 ELSE 0 END) as received_count
+      FROM supplier_orders so
+      INNER JOIN suppliers s ON so.supplier_id = s.id
+      LEFT JOIN supplier_order_items soi ON so.id = soi.supplier_order_id
+      WHERE 1=1
+    `;
+    
+    const params = [];
+    
+    if (supplierId) {
+      query += ' AND so.supplier_id = ?';
+      params.push(supplierId);
+    }
+    
+    if (status) {
+      query += ' AND so.status = ?';
+      params.push(status);
+    }
+    
+    query += ` GROUP BY so.id ORDER BY so.created_at DESC`;
+    
+    const orders = db.prepare(query).all(...params);
+    res.json(orders);
+  } catch (error) {
+    res.status(500).json({ error: 'Error al obtener pedidos' });
+  }
+});
+
+// Obtener un pedido completo (cabecera + items)
+app.get('/api/supplier-orders/:orderId/complete', requireAuth, (req, res) => {
+  try {
+    const order = db.prepare(`
+      SELECT 
+        so.id,
+        so.supplier_id,
+        s.name as supplier_name,
+        so.status,
+        so.notes,
+        so.created_at,
+        so.updated_at
+      FROM supplier_orders so
+      INNER JOIN suppliers s ON so.supplier_id = s.id
+      WHERE so.id = ?
+    `).get(req.params.orderId);
     
     if (!order) {
       return res.status(404).json({ error: 'Pedido no encontrado' });
     }
     
-    const result = db.prepare(`
-      INSERT INTO supplier_orders (product_id, supplier_id, quantity, status, created_at)
-      VALUES (?, ?, ?, 'pending', ?)
-    `).run(order.product_id, newSupplierId, order.quantity, new Date().toISOString());
+    const items = db.prepare(`
+      SELECT 
+        soi.id,
+        soi.product_id,
+        p.name as product_name,
+        p.barcode,
+        soi.quantity,
+        soi.received_quantity,
+        soi.received,
+        soi.notes
+      FROM supplier_order_items soi
+      INNER JOIN products p ON soi.product_id = p.id
+      WHERE soi.supplier_order_id = ?
+      ORDER BY soi.created_at ASC
+    `).all(req.params.orderId);
     
-    res.json({ success: true, id: result.lastInsertRowid });
+    res.json({ ...order, items });
   } catch (error) {
-    res.status(500).json({ error: 'Error al duplicar pedido' });
+    res.status(500).json({ error: 'Error al obtener pedido' });
   }
 });
 
-// Eliminar pedido
+// Eliminar pedido (solo si está en draft)
 app.delete('/api/supplier-orders/:orderId', requireAuth, (req, res) => {
   if (req.session.role !== 'admin') {
-    return res.status(403).json({ error: 'Solo administradores pueden eliminar pedidos' });
+    return res.status(403).json({ error: 'Solo administradores' });
   }
   
   try {
+    const order = db.prepare('SELECT status FROM supplier_orders WHERE id = ?').get(req.params.orderId);
+    
+    if (!order) {
+      return res.status(404).json({ error: 'Pedido no encontrado' });
+    }
+    
+    if (order.status !== 'draft') {
+      return res.status(400).json({ error: 'Solo puedes eliminar pedidos en draft' });
+    }
+    
+    // Eliminar items primero
+    db.prepare('DELETE FROM supplier_order_items WHERE supplier_order_id = ?').run(req.params.orderId);
+    // Eliminar pedido
     db.prepare('DELETE FROM supplier_orders WHERE id = ?').run(req.params.orderId);
+    
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: 'Error al eliminar pedido' });
-  }
-});
-
-// Actualizar estado de pedido
-app.patch('/api/supplier-orders/:orderId', requireAuth, (req, res) => {
-  if (req.session.role !== 'admin') {
-    return res.status(403).json({ error: 'Solo administradores pueden actualizar pedidos' });
-  }
-  
-  const { status } = req.body;
-  
-  try {
-    db.prepare('UPDATE supplier_orders SET status = ? WHERE id = ?')
-      .run(status, req.params.orderId);
-    
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ error: 'Error al actualizar pedido' });
   }
 });
 

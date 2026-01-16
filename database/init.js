@@ -83,16 +83,28 @@ function initDatabase() {
     -- Pedidos de proveedor mejorados
     CREATE TABLE IF NOT EXISTS supplier_orders (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      product_id INTEGER NOT NULL,
       supplier_id INTEGER NOT NULL,
+      status TEXT DEFAULT 'pending',
+      notes TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      sent_at TEXT,
+      FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
+    );
+    
+    -- Items de pedido de proveedor (relación 1-N)
+    CREATE TABLE IF NOT EXISTS supplier_order_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      supplier_order_id INTEGER NOT NULL,
+      product_id INTEGER NOT NULL,
       quantity INTEGER NOT NULL,
       received_quantity INTEGER DEFAULT 0,
       received INTEGER DEFAULT 0,
-      status TEXT DEFAULT 'pending',
+      notes TEXT,
       created_at TEXT NOT NULL,
-      received_at TEXT,
-      FOREIGN KEY (product_id) REFERENCES products(id),
-      FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (supplier_order_id) REFERENCES supplier_orders(id),
+      FOREIGN KEY (product_id) REFERENCES products(id)
     );
     
     -- Ventas
@@ -125,9 +137,12 @@ function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_products_active ON products(active);
     CREATE INDEX IF NOT EXISTS idx_product_lines_product ON product_lines(product_id);
     CREATE INDEX IF NOT EXISTS idx_product_lines_supplier ON product_lines(supplier_id);
-    CREATE INDEX IF NOT EXISTS idx_supplier_orders_product ON supplier_orders(product_id);
+    CREATE INDEX IF NOT EXISTS idx_product_lines_primary ON product_lines(is_primary);
     CREATE INDEX IF NOT EXISTS idx_supplier_orders_supplier ON supplier_orders(supplier_id);
     CREATE INDEX IF NOT EXISTS idx_supplier_orders_status ON supplier_orders(status);
+    CREATE INDEX IF NOT EXISTS idx_supplier_order_items_order ON supplier_order_items(supplier_order_id);
+    CREATE INDEX IF NOT EXISTS idx_supplier_order_items_product ON supplier_order_items(product_id);
+    CREATE INDEX IF NOT EXISTS idx_supplier_order_items_received ON supplier_order_items(received);
     CREATE INDEX IF NOT EXISTS idx_sales_date ON sales(created_at);
     CREATE INDEX IF NOT EXISTS idx_sales_user ON sales(user_id);
     CREATE INDEX IF NOT EXISTS idx_sales_payment ON sales(payment_method_id);
@@ -221,26 +236,69 @@ function runMigrations() {
       console.log('ℹ️  Tabla product_lines ya existe');
     }
     
-    // Migración 6: Crear tabla supplier_orders si no existe
+    // Migración 6: Crear tabla supplier_orders con nueva estructura
     try {
       db.exec(`
         CREATE TABLE IF NOT EXISTS supplier_orders (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
-          product_id INTEGER NOT NULL,
           supplier_id INTEGER NOT NULL,
-          quantity INTEGER NOT NULL,
-          received_quantity INTEGER DEFAULT 0,
-          received INTEGER DEFAULT 0,
           status TEXT DEFAULT 'pending',
+          notes TEXT,
           created_at TEXT NOT NULL,
-          received_at TEXT,
-          FOREIGN KEY (product_id) REFERENCES products(id),
+          updated_at TEXT NOT NULL,
+          sent_at TEXT,
           FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
         )
       `);
       console.log('✅ Tabla supplier_orders creada o verificada');
     } catch (e) {
       console.log('ℹ️  Tabla supplier_orders ya existe');
+    }
+    
+    // Migración 7: Crear tabla supplier_order_items
+    try {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS supplier_order_items (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          supplier_order_id INTEGER NOT NULL,
+          product_id INTEGER NOT NULL,
+          quantity INTEGER NOT NULL,
+          received_quantity INTEGER DEFAULT 0,
+          received INTEGER DEFAULT 0,
+          notes TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY (supplier_order_id) REFERENCES supplier_orders(id),
+          FOREIGN KEY (product_id) REFERENCES products(id)
+        )
+      `);
+      console.log('✅ Tabla supplier_order_items creada o verificada');
+    } catch (e) {
+      console.log('ℹ️  Tabla supplier_order_items ya existe');
+    }
+    
+    // Migración 8: Verificar status en supplier_orders
+    try {
+      const soColumns = db.pragma('table_info(supplier_orders)');
+      const hasStatus = soColumns.some(col => col.name === 'status');
+      if (!hasStatus) {
+        db.exec('ALTER TABLE supplier_orders ADD COLUMN status TEXT DEFAULT "pending"');
+        console.log('✅ Migración completada: status en supplier_orders');
+      }
+    } catch (e) {
+      console.log('ℹ️  Columna status ya existe en supplier_orders');
+    }
+    
+    // Migración 9: Verificar notas en supplier_orders
+    try {
+      const soColumns = db.pragma('table_info(supplier_orders)');
+      const hasNotes = soColumns.some(col => col.name === 'notes');
+      if (!hasNotes) {
+        db.exec('ALTER TABLE supplier_orders ADD COLUMN notes TEXT');
+        console.log('✅ Migración completada: notes en supplier_orders');
+      }
+    } catch (e) {
+      console.log('ℹ️  Columna notes ya existe en supplier_orders');
     }
     
     console.log('✅ Todas las migraciones completadas');

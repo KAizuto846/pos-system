@@ -238,6 +238,13 @@ async function generateReport() {
         state.supplierOrder = JSON.parse(JSON.stringify(data)); // Copia profunda
         state.reportData = data;
         html = renderSupplierOrder(data);
+        
+        // Cargar barra lateral de pedidos
+        if (supplierId) {
+          setTimeout(() => {
+            SidebarPedidos.loadSupplierOrders(supplierId);
+          }, 500);
+        }
         break;
         
       case 'history':
