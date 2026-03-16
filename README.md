@@ -53,17 +53,49 @@ npm start
 
 ```
 pos-system/
+├── constants/
+│   ├── roles.js              # Constantes de roles (ADMIN, CASHIER)
+│   └── orderStatus.js        # Constantes de estados de pedidos
+├── middleware/
+│   └── auth.js               # requireAuth y requireRole middleware
+├── routes/
+│   ├── auth.routes.js        # Login, logout, sesión, crear admin
+│   ├── users.routes.js       # CRUD de usuarios
+│   ├── suppliers.routes.js   # CRUD de proveedores
+│   ├── departments.routes.js # CRUD de departamentos
+│   ├── paymentMethods.routes.js # CRUD de formas de pago
+│   ├── products.routes.js    # CRUD de productos, stock, importación
+│   ├── sales.routes.js       # Registro de ventas
+│   ├── returns.routes.js     # Devoluciones
+│   ├── reports.routes.js     # Reportes y analíticas
+│   └── supplierOrders.routes.js # Pedidos a proveedores
 ├── database/
-│   ├── init.js         # Inicialización de SQLite
-│   └── pos.db          # Base de datos (auto-generada)
+│   ├── init.js               # Inicialización de SQLite
+│   └── pos.db                # Base de datos (auto-generada)
 ├── public/
-│   ├── index.html      # Interfaz de login
-│   ├── dashboard.html  # Dashboard principal
-│   ├── dashboard.css   # Estilos del dashboard
-│   ├── dashboard.js    # Lógica completa del dashboard
-│   ├── styles.css      # Estilos del login
-│   └── login.js        # Lógica del login
-├── server.js           # Servidor Express + todas las APIs REST
+│   ├── index.html            # Interfaz de login
+│   ├── login.js              # Lógica del login
+│   ├── styles.css            # Estilos del login
+│   ├── dashboard.html        # Dashboard principal
+│   ├── dashboard.css         # Estilos del dashboard
+│   ├── sidebar-pedidos.js    # Barra lateral de pedidos (IIFE)
+│   └── js/
+│       ├── state.js          # Estado global de la aplicación
+│       ├── utils.js          # Utilidades (showNotification, etc.)
+│       ├── api.js            # Cliente API centralizado (apiFetch, apiGet, apiPost)
+│       ├── dashboard.js      # Estadísticas del dashboard
+│       ├── pos.js            # Punto de venta
+│       ├── products.js       # Gestión de productos
+│       ├── users.js          # Gestión de usuarios
+│       ├── suppliers.js      # Gestión de proveedores
+│       ├── departments.js    # Gestión de departamentos
+│       ├── paymentMethods.js # Gestión de formas de pago
+│       ├── reports.js        # Reportes y analíticas
+│       ├── returns.js        # Devoluciones
+│       ├── quickEntry.js     # Alta rápida de productos
+│       └── app.js            # Inicialización, navegación, auth
+├── server.js                 # Entry point (Express setup + montaje de rutas)
+├── config.js                 # Configuración del servidor
 ├── package.json
 └── README.md
 ```
@@ -185,6 +217,21 @@ npm install  # Solo si hay nuevas dependencias
 - **Base de datos**: SQLite (better-sqlite3)
 - **Seguridad**: bcrypt + express-session + middleware de autenticación
 - **Frontend**: HTML5 + CSS3 + JavaScript Vanilla (sin frameworks)
+
+## 🏗️ Arquitectura
+
+### Backend
+- **Entry point** (`server.js`): Configuración de Express, sesiones, middleware y montaje de rutas
+- **Rutas** (`routes/`): Cada dominio tiene su propio archivo de rutas con validaciones y lógica de negocio
+- **Middleware** (`middleware/auth.js`): `requireAuth` verifica sesión activa; `requireRole(...roles)` restringe por rol
+- **Constantes** (`constants/`): Roles y estados de pedidos centralizados, eliminando strings hardcodeados
+
+### Frontend
+- **Sin frameworks ni bundler**: Vanilla JS con funciones globales en `window`
+- **Módulos** (`public/js/`): El monolítico `dashboard.js` fue dividido en 13 módulos especializados
+- **API centralizada** (`public/js/api.js`): `apiFetch`, `apiGet` y `apiPost` reemplazan todas las llamadas `fetch()` directas, con manejo de errores consistente
+- **Estado global** (`public/js/state.js`): Objeto mutable `state` compartido entre módulos
+- **Carga por scripts**: `dashboard.html` carga los módulos en orden de dependencia (state → utils → api → módulos → app)
 
 ## 🔐 Seguridad
 
