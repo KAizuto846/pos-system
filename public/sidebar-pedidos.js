@@ -111,20 +111,7 @@ const SidebarPedidos = (() => {
     content.innerHTML = '<p style="text-align: center;">⏳ Cargando pedidos...</p>';
 
     try {
-      const response = await fetch(`/api/supplier-orders-list?supplierId=${supplierId}&status=draft`);
-      
-      if (!response.ok) {
-        console.warn('⚠️ Respuesta no OK:', response.status);
-        content.innerHTML = `
-          <div style="text-align: center; padding: 20px; color: #ff9800;">
-            <p>No hay pedidos en borrador (o es la primera vez)</p>
-            <p style="font-size: 12px;">Usa el botón "Nuevo Pedido" para crear uno</p>
-          </div>
-        `;
-        return;
-      }
-
-      const orders = await response.json();
+      const orders = await apiGet(`/api/supplier-orders/list?supplierId=${supplierId}&status=draft`);
 
       if (!orders || orders.length === 0) {
         content.innerHTML = `
@@ -196,14 +183,12 @@ const SidebarPedidos = (() => {
    */
   async function loadOrderDetails(orderId) {
     try {
-      const response = await fetch(`/api/supplier-orders/${orderId}/complete`);
-      const order = await response.json();
-      
+      const order = await apiGet(`/api/supplier-orders/${orderId}/complete`);
       currentOrder = order;
       renderOrderDetails(order);
     } catch (error) {
       console.error('Error cargando detalles:', error);
-      Utils.showError('Error al cargar detalles del pedido');
+      showNotification('Error al cargar detalles del pedido', 'error');
     }
   }
 
@@ -293,19 +278,18 @@ const SidebarPedidos = (() => {
    */
   async function updateItemQuantity(orderId, itemId, quantity) {
     if (quantity <= 0) {
-      Utils.showError('La cantidad debe ser mayor a 0');
+      showNotification('La cantidad debe ser mayor a 0', 'error');
       return;
     }
 
     try {
-      await fetch(`/api/supplier-orders/${orderId}/items/${itemId}`, {
+      await apiFetch(`/api/supplier-orders/${orderId}/items/${itemId}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ quantity: parseInt(quantity) })
       });
-      Utils.showSuccess('Cantidad actualizada');
+      showNotification('Cantidad actualizada', 'success');
     } catch (error) {
-      Utils.showError('Error al actualizar cantidad');
+      showNotification('Error al actualizar cantidad', 'error');
     }
   }
 
@@ -314,19 +298,18 @@ const SidebarPedidos = (() => {
    */
   async function updateItemReceived(orderId, itemId, receivedQuantity) {
     if (receivedQuantity < 0) {
-      Utils.showError('La cantidad debe ser 0 o mayor');
+      showNotification('La cantidad debe ser 0 o mayor', 'error');
       return;
     }
 
     try {
-      await fetch(`/api/supplier-orders/${orderId}/items/${itemId}`, {
+      await apiFetch(`/api/supplier-orders/${orderId}/items/${itemId}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ receivedQuantity: parseInt(receivedQuantity) })
       });
-      Utils.showSuccess('Cantidad recibida actualizada');
+      showNotification('Cantidad recibida actualizada', 'success');
     } catch (error) {
-      Utils.showError('Error al actualizar cantidad recibida');
+      showNotification('Error al actualizar cantidad recibida', 'error');
     }
   }
 
@@ -335,14 +318,13 @@ const SidebarPedidos = (() => {
    */
   async function toggleItemReceived(orderId, itemId, received) {
     try {
-      await fetch(`/api/supplier-orders/${orderId}/items/${itemId}`, {
+      await apiFetch(`/api/supplier-orders/${orderId}/items/${itemId}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ received: received ? 1 : 0 })
       });
-      Utils.showSuccess(received ? 'Marcado como recibido' : 'Desmarcado como no recibido');
+      showNotification(received ? 'Marcado como recibido' : 'Desmarcado como no recibido', 'success');
     } catch (error) {
-      Utils.showError('Error al actualizar estado');
+      showNotification('Error al actualizar estado', 'error');
     }
   }
 
@@ -351,14 +333,13 @@ const SidebarPedidos = (() => {
    */
   async function updateItemNotes(orderId, itemId, notes) {
     try {
-      await fetch(`/api/supplier-orders/${orderId}/items/${itemId}`, {
+      await apiFetch(`/api/supplier-orders/${orderId}/items/${itemId}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ notes })
       });
-      Utils.showSuccess('Notas guardadas');
+      showNotification('Notas guardadas', 'success');
     } catch (error) {
-      Utils.showError('Error al guardar notas');
+      showNotification('Error al guardar notas', 'error');
     }
   }
 
@@ -369,13 +350,13 @@ const SidebarPedidos = (() => {
     if (!confirm('¿Eliminar este producto del pedido?')) return;
 
     try {
-      await fetch(`/api/supplier-orders/${orderId}/items/${itemId}`, {
+      await apiFetch(`/api/supplier-orders/${orderId}/items/${itemId}`, {
         method: 'DELETE'
       });
-      Utils.showSuccess('Producto eliminado del pedido');
+      showNotification('Producto eliminado del pedido', 'success');
       loadOrderDetails(orderId);
     } catch (error) {
-      Utils.showError('Error al eliminar producto');
+      showNotification('Error al eliminar producto', 'error');
     }
   }
 
@@ -390,24 +371,14 @@ const SidebarPedidos = (() => {
     if (!quantity || isNaN(quantity) || quantity <= 0) return;
 
     try {
-      const response = await fetch(`/api/supplier-orders/${orderId}/items`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          productId: parseInt(productId),
-          quantity: parseInt(quantity)
-        })
+      await apiPost(`/api/supplier-orders/${orderId}/items`, {
+        productId: parseInt(productId),
+        quantity: parseInt(quantity)
       });
-
-      if (response.ok) {
-        Utils.showSuccess('Producto agregado al pedido');
-        loadOrderDetails(orderId);
-      } else {
-        const error = await response.json();
-        Utils.showError(error.error || 'Error al agregar producto');
-      }
+      showNotification('Producto agregado al pedido', 'success');
+      loadOrderDetails(orderId);
     } catch (error) {
-      Utils.showError('Error al agregar producto');
+      showNotification(error.data?.error || 'Error al agregar producto', 'error');
     }
   }
 
@@ -416,31 +387,21 @@ const SidebarPedidos = (() => {
    */
   async function createNewOrder() {
     if (!currentSupplier) {
-      Utils.showError('Selecciona un proveedor primero');
+      showNotification('Selecciona un proveedor primero', 'error');
       return;
     }
 
     const notes = prompt('Notas para el pedido (opcional):', '');
 
     try {
-      const response = await fetch('/api/supplier-orders/create-header', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          supplierId: currentSupplier,
-          notes
-        })
+      await apiPost('/api/supplier-orders/create-header', {
+        supplierId: currentSupplier,
+        notes
       });
-
-      if (response.ok) {
-        const data = await response.json();
-        Utils.showSuccess('Pedido creado. Agrega productos.');
-        loadSupplierOrders(currentSupplier);
-      } else {
-        Utils.showError('Error al crear pedido');
-      }
+      showNotification('Pedido creado. Agrega productos.', 'success');
+      loadSupplierOrders(currentSupplier);
     } catch (error) {
-      Utils.showError('Error al crear pedido');
+      showNotification('Error al crear pedido', 'error');
     }
   }
 
@@ -449,21 +410,19 @@ const SidebarPedidos = (() => {
    */
   async function saveCurrentOrder() {
     if (!currentOrder) {
-      Utils.showError('No hay pedido seleccionado');
+      showNotification('No hay pedido seleccionado', 'error');
       return;
     }
 
     try {
-      await fetch(`/api/supplier-orders/${currentOrder.id}/status`, {
+      await apiFetch(`/api/supplier-orders/${currentOrder.id}/status`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: 'sent' })
       });
-
-      Utils.showSuccess('Pedido enviado al proveedor');
+      showNotification('Pedido enviado al proveedor', 'success');
       loadSupplierOrders(currentSupplier);
     } catch (error) {
-      Utils.showError('Error al guardar pedido');
+      showNotification('Error al guardar pedido', 'error');
     }
   }
 
@@ -474,13 +433,13 @@ const SidebarPedidos = (() => {
     if (!confirm('¿Eliminar este pedido completamente?')) return;
 
     try {
-      await fetch(`/api/supplier-orders/${orderId}`, {
+      await apiFetch(`/api/supplier-orders/${orderId}`, {
         method: 'DELETE'
       });
-      Utils.showSuccess('Pedido eliminado');
+      showNotification('Pedido eliminado', 'success');
       loadSupplierOrders(currentSupplier);
     } catch (error) {
-      Utils.showError('Error al eliminar pedido');
+      showNotification('Error al eliminar pedido', 'error');
     }
   }
 
