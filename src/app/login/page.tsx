@@ -45,16 +45,24 @@ export default function LoginPage() {
         redirect: false,
       });
 
+      console.log('[Login] signIn result:', result);
+
       if (result?.error) {
-        setError('Invalid username or password');
+        setError('Usuario o contraseña incorrectos');
         setLoading(false);
         return;
       }
 
-      router.push('/');
-      router.refresh();
-    } catch {
-      setError('An error occurred. Please try again.');
+      if (result?.ok) {
+        // Hard redirect para forzar recarga y detectar sesión
+        window.location.href = '/';
+      } else {
+        setError('Error al iniciar sesión');
+        setLoading(false);
+      }
+    } catch (err) {
+      console.error('[Login] Error:', err);
+      setError('Error de conexión. Intenta de nuevo.');
       setLoading(false);
     }
   };

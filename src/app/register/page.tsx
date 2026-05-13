@@ -73,7 +73,7 @@ export default function RegisterPage() {
       }
 
       setSuccess('Admin account created successfully! Redirecting to login...');
-      setTimeout(() => router.push('/login'), 1500);
+      setTimeout(() => { window.location.href = '/login'; }, 1500);
     } catch {
       setError('An error occurred. Please try again.');
       setLoading(false);
