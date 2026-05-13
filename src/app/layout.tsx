@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { ToasterProvider } from "@/components/ui/toast";
@@ -10,8 +10,11 @@ export const metadata: Metadata = {
   title: "POS System - Punto de Venta",
   description: "Sistema de Punto de Venta moderno, rápido y robusto",
   manifest: "/manifest.json",
-  themeColor: "#059669",
   appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "POS System" },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#059669",
 };
 
 export default function RootLayout({
