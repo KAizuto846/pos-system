@@ -13,6 +13,7 @@ import {
   Receipt,
   ClipboardList,
   BarChart3,
+  Upload,
   LogOut,
   X,
 } from 'lucide-react';
@@ -36,6 +37,7 @@ const navLinks = [
   { href: '/sales', label: 'Ventas', icon: Receipt },
   { href: '/orders', label: 'Pedidos', icon: ClipboardList },
   { href: '/reports', label: 'Reportes', icon: BarChart3 },
+  { href: '/import', label: 'Importar Datos', icon: Upload },
 ];
 
 export default function Sidebar({ open, onClose }: SidebarProps) {
