@@ -37,7 +37,7 @@ const navLinks = [
   { href: '/sales', label: 'Ventas', icon: Receipt },
   { href: '/orders', label: 'Pedidos', icon: ClipboardList },
   { href: '/reports', label: 'Reportes', icon: BarChart3 },
-  { href: '/import', label: 'Importar Datos', icon: Upload },
+  { href: '/importar', label: 'Importar Datos', icon: Upload },
 ];
 
 export default function Sidebar({ open, onClose }: SidebarProps) {
