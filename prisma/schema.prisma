@@ -1,0 +1,212 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  username  String   @unique
+  password  String
+  name      String   @default("")
+  role      String   @default("CASHIER")
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  accounts  Account[]
+  sessions  Session[]
+  sales     Sale[]
+
+  @@map("users")
+}
+
+model Account {
+  id                Int      @id @default(autoincrement())
+  userId            Int      @map("user_id")
+  type              String
+  provider          String
+  providerAccountId String  @map("provider_account_id")
+  refreshToken      String? @map("refresh_token")
+  accessToken       String? @map("access_token")
+  expiresAt         Int?    @map("expires_at")
+  tokenType         String? @map("token_type")
+  scope             String?
+  idToken           String? @map("id_token")
+  sessionState      String? @map("session_state")
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           Int      @id @default(autoincrement())
+  sessionToken String   @unique @map("session_token")
+  userId       Int      @map("user_id")
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+model Department {
+  id          Int      @id @default(autoincrement())
+  name        String
+  description String   @default("")
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  products    Product[]
+
+  @@map("departments")
+}
+
+model Supplier {
+  id        Int      @id @default(autoincrement())
+  name      String
+  contact   String   @default("")
+  phone     String   @default("")
+  email     String   @default("")
+  address   String   @default("")
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  products       Product[]
+  productLines   ProductLine[]
+  supplierOrders SupplierOrder[]
+
+  @@map("suppliers")
+}
+
+model PaymentMethod {
+  id          Int      @id @default(autoincrement())
+  name        String
+  affectsCash Boolean  @default(true) @map("affects_cash")
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  sales Sale[]
+
+  @@map("payment_methods")
+}
+
+model Product {
+  id           Int        @id @default(autoincrement())
+  name         String
+  barcode      String     @default("")
+  price        Float
+  cost         Float      @default(0)
+  stock        Int        @default(0)
+  minStock     Int        @default(5) @map("min_stock")
+  active       Boolean    @default(true)
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+
+  departmentId Int?       @map("department_id")
+  department   Department? @relation(fields: [departmentId], references: [id])
+  supplierId   Int?       @map("supplier_id")
+  supplier     Supplier?  @relation(fields: [supplierId], references: [id])
+
+  productLines    ProductLine[]
+  saleItems       SaleItem[]
+  orderItems      SupplierOrderItem[]
+
+  @@index([barcode])
+  @@index([departmentId])
+  @@index([supplierId])
+  @@map("products")
+}
+
+model ProductLine {
+  id         Int      @id @default(autoincrement())
+  productId  Int      @map("product_id")
+  supplierId Int      @map("supplier_id")
+  isPrimary  Boolean  @default(false) @map("is_primary")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  product  Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  supplier Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, supplierId])
+  @@map("product_lines")
+}
+
+model Sale {
+  id              Int           @id @default(autoincrement())
+  total           Float
+  paymentMethodId Int?          @map("payment_method_id")
+  paymentMethod   PaymentMethod? @relation(fields: [paymentMethodId], references: [id])
+  userId          Int           @map("user_id")
+  user            User          @relation(fields: [userId], references: [id])
+  createdAt       DateTime      @default(now()) @map("created_at")
+
+  items SaleItem[]
+
+  @@index([createdAt])
+  @@index([userId])
+  @@index([paymentMethodId])
+  @@map("sales")
+}
+
+model SaleItem {
+  id        Int     @id @default(autoincrement())
+  saleId    Int     @map("sale_id")
+  sale      Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  productId Int     @map("product_id")
+  product   Product @relation(fields: [productId], references: [id])
+  quantity  Int
+  price     Float
+
+  @@map("sale_items")
+}
+
+model SupplierOrder {
+  id         Int      @id @default(autoincrement())
+  supplierId Int      @map("supplier_id")
+  supplier   Supplier @relation(fields: [supplierId], references: [id])
+  status     String   @default("pending")
+  notes      String   @default("")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+  sentAt     DateTime? @map("sent_at")
+
+  items SupplierOrderItem[]
+
+  @@index([supplierId])
+  @@index([status])
+  @@map("supplier_orders")
+}
+
+model SupplierOrderItem {
+  id                 Int           @id @default(autoincrement())
+  supplierOrderId    Int           @map("supplier_order_id")
+  supplierOrder      SupplierOrder @relation(fields: [supplierOrderId], references: [id], onDelete: Cascade)
+  productId          Int           @map("product_id")
+  product            Product       @relation(fields: [productId], references: [id])
+  quantity           Int
+  receivedQuantity   Int           @default(0) @map("received_quantity")
+  received           Boolean       @default(false)
+  notes              String        @default("")
+  createdAt          DateTime      @default(now()) @map("created_at")
+  updatedAt          DateTime      @updatedAt @map("updated_at")
+
+  @@index([supplierOrderId])
+  @@index([productId])
+  @@map("supplier_order_items")
+}
