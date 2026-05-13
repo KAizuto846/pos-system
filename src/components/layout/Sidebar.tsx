@@ -17,7 +17,7 @@ import {
   LogOut,
   X,
 } from 'lucide-react';
-import { signOut } from '@/lib/auth';
+import { signOut } from 'next-auth/react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 
