@@ -26,20 +26,16 @@ export default function RegisterPage() {
   const [checking, setChecking] = useState(true);
 
   useEffect(() => {
-    fetch('/api/users')
+    fetch('/api/auth/register')
       .then((res) => res.json())
-      .then((users) => {
-        if (Array.isArray(users)) {
-          const hasAdmin = users.some((u: { role: string }) => u.role === 'ADMIN');
-          if (hasAdmin) {
-            router.push('/login');
-          }
+      .then((data) => {
+        if (data.hasAdmin) {
+          router.push('/login');
         }
         setChecking(false);
       })
       .catch(() => {
-        // If fetch fails, assume admin exists and redirect
-        router.push('/login');
+        // If fetch fails, assume admin doesn't exist
         setChecking(false);
       });
   }, [router]);

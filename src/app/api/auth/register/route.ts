@@ -3,6 +3,21 @@ import { hash } from "bcrypt-ts";
 import { prisma } from "@/lib/db";
 import { registerSchema } from "@/lib/validations";
 
+export async function GET() {
+  try {
+    const adminCount = await prisma.user.count({
+      where: { role: "ADMIN" },
+    });
+    return NextResponse.json({ hasAdmin: adminCount > 0 });
+  } catch (error) {
+    console.error("Check admin error:", error);
+    return NextResponse.json(
+      { error: "Error interno del servidor" },
+      { status: 500 }
+    );
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();

@@ -25,16 +25,12 @@ export default function LoginPage() {
   const [hasAdmin, setHasAdmin] = useState<boolean | null>(null);
 
   useEffect(() => {
-    fetch('/api/users')
+    fetch('/api/auth/register')
       .then((res) => res.json())
-      .then((users) => {
-        if (Array.isArray(users)) {
-          setHasAdmin(users.some((u: { role: string }) => u.role === 'ADMIN'));
-        } else {
-          setHasAdmin(true);
-        }
+      .then((data) => {
+        setHasAdmin(data.hasAdmin ?? true);
       })
-      .catch(() => setHasAdmin(true));
+      .catch(() => setHasAdmin(false));
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
