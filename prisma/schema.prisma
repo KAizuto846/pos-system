@@ -225,6 +225,7 @@ model SupplierOrderItem {
 model CashEntry {
   id              Int           @id @default(autoincrement())
   type            String        // INCOME, EXPENSE, TRANSFER
+  category        String        @default("other") // INCOME: sales, manual_deposit, other. EXPENSE: profit_withdrawal, profit_cost_withdrawal, operating_expense, purchase, other
   amount          Float
   description     String        @default("")
   saleId          Int?          @map("sale_id")
@@ -237,6 +238,7 @@ model CashEntry {
   createdAt       DateTime      @default(now()) @map("created_at")
 
   @@index([type])
+  @@index([category])
   @@index([recordedAt])
   @@index([paymentMethodId])
   @@index([userId])

@@ -18,7 +18,7 @@ import {
   LogOut,
   X,
 } from 'lucide-react';
-import { signOut } from 'next-auth/react';
+import { signOut, useSession } from 'next-auth/react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 
@@ -36,7 +36,13 @@ const navLinks = [
   { href: '/departments', label: 'Departamentos', icon: Building2 },
   { href: '/payment-methods', label: 'Métodos de Pago', icon: Wallet },
   { href: '/sales', label: 'Ventas', icon: Receipt },
+];
+
+const adminLinks = [
   { href: '/finance', label: 'Finanzas', icon: DollarSign },
+];
+
+const extraLinks = [
   { href: '/orders', label: 'Pedidos', icon: ClipboardList },
   { href: '/reports', label: 'Reportes', icon: BarChart3 },
   { href: '/importar', label: 'Importar Datos', icon: Upload },
@@ -44,10 +50,33 @@ const navLinks = [
 
 export default function Sidebar({ open, onClose }: SidebarProps) {
   const pathname = usePathname();
+  const { data: session } = useSession();
+  const isAdmin = session?.user?.role === 'ADMIN';
 
   const isActive = (href: string) => {
     if (href === '/') return pathname === '/';
     return pathname.startsWith(href);
+  };
+
+  const renderLink = (link: { href: string; label: string; icon: React.ComponentType<{ className?: string }> }) => {
+    const Icon = link.icon;
+    const active = isActive(link.href);
+    return (
+      <Link
+        key={link.href}
+        href={link.href}
+        onClick={onClose}
+        className={cn(
+          'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors',
+          active
+            ? 'bg-emerald-600/20 text-emerald-400'
+            : 'text-slate-300 hover:bg-slate-700/50 hover:text-slate-100'
+        )}
+      >
+        <Icon className="h-5 w-5 flex-shrink-0" />
+        <span>{link.label}</span>
+      </Link>
+    );
   };
 
   return (
@@ -84,26 +113,16 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
 
         {/* Navigation */}
         <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-1">
-          {navLinks.map((link) => {
-            const Icon = link.icon;
-            const active = isActive(link.href);
-            return (
-              <Link
-                key={link.href}
-                href={link.href}
-                onClick={onClose}
-                className={cn(
-                  'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors',
-                  active
-                    ? 'bg-emerald-600/20 text-emerald-400'
-                    : 'text-slate-300 hover:bg-slate-700/50 hover:text-slate-100'
-                )}
-              >
-                <Icon className="h-5 w-5 flex-shrink-0" />
-                <span>{link.label}</span>
-              </Link>
-            );
-          })}
+          {navLinks.map(renderLink)}
+          {isAdmin && (
+            <>
+              <div className="my-2 border-t border-slate-700 pt-2">
+                <p className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">Administración</p>
+              </div>
+              {adminLinks.map(renderLink)}
+            </>
+          )}
+          {extraLinks.map(renderLink)}
         </nav>
 
         {/* Logout */}

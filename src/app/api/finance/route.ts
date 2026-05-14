@@ -21,21 +21,17 @@ export async function GET(request: Request) {
 
     switch (action) {
       case "summary": {
-        // Total sales
+        // Total sales in period
         const salesAgg = await prisma.sale.aggregate({
           _sum: { total: true },
           _count: true,
           where: whereDate,
         });
 
-        // Profit from sales (sum of (price - cost) * quantity)
+        // Profit from sales
         const salesWithItems = await prisma.sale.findMany({
           where: whereDate,
-          include: {
-            items: {
-              include: { product: { select: { cost: true } } },
-            },
-          },
+          include: { items: { include: { product: { select: { cost: true } } } } },
         });
 
         let totalCost = 0;
@@ -47,23 +43,19 @@ export async function GET(request: Request) {
           }
         }
 
-        // Cash balance (sum of all INCOME - EXPENSE entries)
-        const cashAgg = await prisma.cashEntry.aggregate({
+        // Cash breakdown by category
+        const incomeByCategory = await prisma.cashEntry.groupBy({
+          by: ["category"],
+          where: { type: "INCOME" },
           _sum: { amount: true },
-          where: {
-            type: "INCOME",
-            ...(Object.keys(dateFilter).length > 0 ? { recordedAt: dateFilter } : {}),
-          },
         });
-        const expenseAgg = await prisma.cashEntry.aggregate({
+        const expenseByCategory = await prisma.cashEntry.groupBy({
+          by: ["category"],
+          where: { type: { in: ["EXPENSE", "TRANSFER"] } },
           _sum: { amount: true },
-          where: {
-            type: { in: ["EXPENSE", "TRANSFER"] },
-            ...(Object.keys(dateFilter).length > 0 ? { recordedAt: dateFilter } : {}),
-          },
         });
 
-        // Total cash balance (all time)
+        // All-time total cash in safe
         const allIncome = await prisma.cashEntry.aggregate({
           _sum: { amount: true },
           where: { type: "INCOME" },
@@ -74,31 +66,96 @@ export async function GET(request: Request) {
         });
         const cashBalance = (allIncome._sum.amount || 0) - (allExpense._sum.amount || 0);
 
+        // Build category map
+        const incomeByCat: Record<string, number> = {};
+        for (const c of incomeByCategory) incomeByCat[c.category] = c._sum.amount || 0;
+        const expenseByCat: Record<string, number> = {};
+        for (const c of expenseByCategory) expenseByCat[c.category] = c._sum.amount || 0;
+
+        // Total profits available for withdrawal = sales profit - profit_withdrawals already taken
+        const profitWithdrawn = expenseByCat["profit_withdrawal"] || 0;
+        const profitCostWithdrawn = expenseByCat["profit_cost_withdrawal"] || 0;
+        const netProfit = totalRevenue - totalCost;
+        const availableProfit = netProfit - profitWithdrawn;
+        const combinedAvailable = (totalRevenue - totalCost) - profitCostWithdrawn;
+
         return Response.json({
           period: { from: from || "all", to: to || "all" },
           sales: {
             count: salesAgg._count,
             revenue: totalRevenue,
             totalCost,
-            profit: totalRevenue - totalCost,
-            profitMargin: totalRevenue > 0 ? ((totalRevenue - totalCost) / totalRevenue * 100).toFixed(1) : "0",
+            profit: netProfit,
+            profitMargin: totalRevenue > 0 ? ((netProfit / totalRevenue) * 100).toFixed(1) : "0",
+            availableProfit,
+            combinedAvailable,
           },
           cash: {
-            income: cashAgg._sum.amount || 0,
-            expenses: expenseAgg._sum.amount || 0,
             balance: cashBalance,
+            incomeByCategory: incomeByCat,
+            expenseByCategory: expenseByCat,
+            incomeTotal: allIncome._sum.amount || 0,
+            expenseTotal: allExpense._sum.amount || 0,
           },
+        });
+      }
+
+      case "product-breakdown": {
+        const page = Math.max(1, parseInt(searchParams.get("page") || "1"));
+        const limit = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") || "50")));
+        const skip = (page - 1) * limit;
+        const search = searchParams.get("q") || "";
+        const deptId = searchParams.get("departmentId");
+
+        const where: Record<string, unknown> = { active: true };
+        if (search) {
+          where.OR = [
+            { name: { contains: search } },
+            { barcode: { contains: search } },
+          ];
+        }
+        if (deptId) where.departmentId = parseInt(deptId);
+
+        const [products, total] = await Promise.all([
+          prisma.product.findMany({
+            where,
+            include: { department: { select: { name: true } }, supplier: { select: { name: true } } },
+            orderBy: { name: "asc" },
+            skip,
+            take: limit,
+          }),
+          prisma.product.count({ where }),
+        ]);
+
+        const items = products.map((p) => ({
+          id: p.id,
+          name: p.name,
+          barcode: p.barcode,
+          publicPrice: p.price,
+          costPrice: p.cost,
+          profit: p.price - p.cost,
+          margin: p.price > 0 ? ((p.price - p.cost) / p.price * 100).toFixed(1) : "0",
+          stock: p.stock,
+          department: p.department?.name || null,
+          supplier: p.supplier?.name || null,
+        }));
+
+        return Response.json({
+          products: items,
+          pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
         });
       }
 
       case "cash-entries": {
         const page = Math.max(1, parseInt(searchParams.get("page") || "1"));
-        const limit = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") || "20")));
+        const limit = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") || "30")));
         const skip = (page - 1) * limit;
-        const type = searchParams.get("type"); // INCOME, EXPENSE, or null for all
+        const type = searchParams.get("type");
+        const category = searchParams.get("category");
 
         const where: Record<string, unknown> = {};
         if (type) where.type = type;
+        if (category) where.category = category;
         if (Object.keys(dateFilter).length > 0) where.recordedAt = dateFilter;
 
         const [entries, total] = await Promise.all([
@@ -132,7 +189,6 @@ export async function GET(request: Request) {
           where: { type: { in: ["EXPENSE", "TRANSFER"] } },
         });
         const balance = (allIncome._sum.amount || 0) - (allExpense._sum.amount || 0);
-
         return Response.json({ balance });
       }
 
@@ -152,8 +208,13 @@ export async function POST(request: Request) {
       return Response.json({ error: "No autorizado" }, { status: 401 });
     }
 
+    // Admin-only for manual cash entries
+    if (session.user.role !== "ADMIN") {
+      return Response.json({ error: "Solo administradores" }, { status: 403 });
+    }
+
     const body = await request.json();
-    const { type, amount, description, paymentMethodId } = body;
+    const { type, amount, description, category, paymentMethodId, recordedAt } = body;
 
     if (!type || !["INCOME", "EXPENSE", "TRANSFER"].includes(type)) {
       return Response.json({ error: "Tipo inválido. Usa: INCOME, EXPENSE o TRANSFER" }, { status: 400 });
@@ -163,13 +224,28 @@ export async function POST(request: Request) {
       return Response.json({ error: "Monto inválido" }, { status: 400 });
     }
 
+    // Validate category based on type
+    const validCategories = {
+      INCOME: ["manual_deposit", "other"],
+      EXPENSE: ["profit_withdrawal", "profit_cost_withdrawal", "operating_expense", "purchase", "other"],
+      TRANSFER: ["transfer"],
+    };
+    const finalCategory = category || (type === "EXPENSE" ? "other" : "manual_deposit");
+    if (!validCategories[type as keyof typeof validCategories].includes(finalCategory)) {
+      return Response.json({
+        error: `Categoría inválida para ${type}. Válidas: ${validCategories[type as keyof typeof validCategories].join(", ")}`,
+      }, { status: 400 });
+    }
+
     const entry = await prisma.cashEntry.create({
       data: {
         type,
+        category: finalCategory,
         amount,
         description: description || "",
         paymentMethodId: paymentMethodId ? parseInt(paymentMethodId) : null,
         userId: parseInt(session.user.id, 10),
+        recordedAt: recordedAt ? new Date(recordedAt) : new Date(),
       },
       include: {
         paymentMethod: { select: { name: true } },

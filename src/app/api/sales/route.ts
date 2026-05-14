@@ -104,6 +104,7 @@ export async function POST(request: Request) {
       await tx.cashEntry.create({
         data: {
           type: "INCOME",
+          category: "sales",
           amount: data.total,
           description: `Venta #${newSale.id}`,
           saleId: newSale.id,
