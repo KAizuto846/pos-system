@@ -195,7 +195,13 @@ async function processProduct(
     if (supp) supplierId = supp.id;
   }
 
-  const barcode = String(mapped.barcode || '').trim();
+  let barcode = String(mapped.barcode || '').trim();
+  // Sanitize barcode: remove non-ASCII, non-printable, and problematic chars
+  barcode = barcode.replace(/[^\x20-\x7E]/g, '').trim();
+  // If barcode looks like a name (mostly letters/spaces, too long, or contains ñ/áéíóú), skip it
+  if (barcode && (barcode.length > 25 || /^[A-Za-zÁÉÍÓÚÑáéíóúñ\s]+$/.test(barcode))) {
+    barcode = '';
+  }
 
   // Find existing
   let existing = barcode
