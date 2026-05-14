@@ -72,12 +72,21 @@ export async function GET(request: Request) {
         const expenseByCat: Record<string, number> = {};
         for (const c of expenseByCategory) expenseByCat[c.category] = c._sum.amount || 0;
 
-        // Total profits available for withdrawal = sales profit - profit_withdrawals already taken
+        // Total profits available for withdrawal = sales profit - profit_withdrawals
         const profitWithdrawn = expenseByCat["profit_withdrawal"] || 0;
         const profitCostWithdrawn = expenseByCat["profit_cost_withdrawal"] || 0;
-        const netProfit = totalRevenue - totalCost;
-        const availableProfit = netProfit - profitWithdrawn;
-        const combinedAvailable = (totalRevenue - totalCost) - profitCostWithdrawn;
+        const grossProfit = totalRevenue - totalCost;
+        
+        // profit_withdrawal: deducts ONLY from profit
+        // profit_cost_withdrawal: deducts from profit first, then from cost remainder
+        // Effective: profit decreases by profit_withdrawal + min(profit_cost_withdrawal, remaining_profit)
+        const remainingProfit = grossProfit - profitWithdrawn;
+        const profitFromCombined = Math.min(profitCostWithdrawn, Math.max(0, remainingProfit));
+        const costFromCombined = Math.max(0, profitCostWithdrawn - profitFromCombined);
+        
+        const netProfit = grossProfit - profitWithdrawn - profitFromCombined;
+        const netCost = totalCost - costFromCombined;
+        const effectiveRevenue = netProfit + netCost;
 
         return Response.json({
           period: { from: from || "all", to: to || "all" },
@@ -86,9 +95,16 @@ export async function GET(request: Request) {
             revenue: totalRevenue,
             totalCost,
             profit: netProfit,
-            profitMargin: totalRevenue > 0 ? ((netProfit / totalRevenue) * 100).toFixed(1) : "0",
-            availableProfit,
-            combinedAvailable,
+            grossProfit,
+            profitMargin: effectiveRevenue > 0 ? ((netProfit / effectiveRevenue) * 100).toFixed(1) : "0",
+            withdrawn: {
+              profitOnly: profitWithdrawn,
+              profitFromCombined,
+              costFromCombined,
+              total: profitWithdrawn + profitCostWithdrawn,
+            },
+            availableProfit: Math.max(0, grossProfit - profitWithdrawn - profitFromCombined),
+            combinedAvailable: Math.max(0, (totalRevenue - totalCost) - profitWithdrawn - profitCostWithdrawn),
           },
           cash: {
             balance: cashBalance,

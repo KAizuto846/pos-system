@@ -96,7 +96,7 @@ export default function FinancePage() {
   const [entryPage, setEntryPage] = useState(1);
   const [entryHasMore, setEntryHasMore] = useState(false);
   const [entryTotal, setEntryTotal] = useState(0);
-  const [entryFilter, setEntryFilter] = useState('');
+  const [entryFilter, setEntryFilter] = useState('all');
 
   // Product breakdown
   const [productSearch, setProductSearch] = useState('');
@@ -105,7 +105,7 @@ export default function FinancePage() {
   const [productTotal, setProductTotal] = useState(0);
   const [productLoading, setProductLoading] = useState(false);
   const [departments, setDepartments] = useState<{ id: number; name: string }[]>([]);
-  const [productDeptFilter, setProductDeptFilter] = useState('');
+  const [productDeptFilter, setProductDeptFilter] = useState('all');
 
   // Cash dialog
   const [cashDialogOpen, setCashDialogOpen] = useState(false);
@@ -147,7 +147,7 @@ export default function FinancePage() {
     });
     if (from) params.set('from', from);
     if (to) params.set('to', to);
-    if (entryFilter) params.set('type', entryFilter);
+    if (entryFilter && entryFilter !== 'all') params.set('type', entryFilter);
 
     const res = await fetch(`/api/finance?${params}`);
     if (res.ok) {
@@ -165,7 +165,7 @@ export default function FinancePage() {
       action: 'product-breakdown', page: String(page), limit: '50'
     });
     if (productSearch) params.set('q', productSearch);
-    if (productDeptFilter) params.set('departmentId', productDeptFilter);
+    if (productDeptFilter && productDeptFilter !== 'all') params.set('departmentId', productDeptFilter);
 
     const res = await fetch(`/api/finance?${params}`);
     if (res.ok) {
@@ -381,7 +381,11 @@ export default function FinancePage() {
             </div>
             <p className="text-xs text-slate-500 mt-1">
               Margen: {summary ? `${summary.sales.profitMargin}%` : '—'}
-              <span className="ml-2 text-emerald-600">Disponible: {summary ? formatCurrency(summary.sales.availableProfit) : '—'}</span>
+              {summary && summary.sales.withdrawn?.total > 0 && (
+                <span className="ml-2 text-amber-400">
+                  (Retirado: {formatCurrency(summary.sales.withdrawn.total)})
+                </span>
+              )}
             </p>
           </CardContent>
         </Card>
@@ -473,7 +477,7 @@ export default function FinancePage() {
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div className="flex justify-between items-center">
-                    <span className="text-sm text-slate-400">Ingreso por ventas</span>
+                    <span className="text-sm text-slate-400">Ingreso bruto por ventas</span>
                     <span className="font-semibold text-slate-100">{formatCurrency(summary.sales.revenue)}</span>
                   </div>
                   <div className="flex justify-between items-center">
@@ -482,11 +486,49 @@ export default function FinancePage() {
                   </div>
                   <Separator className="bg-slate-700" />
                   <div className="flex justify-between items-center">
-                    <span className="text-sm text-slate-200 font-medium">Ganancia neta</span>
+                    <span className="text-sm text-slate-200 font-medium">Ganancia bruta</span>
+                    <span className="font-semibold text-emerald-400">{formatCurrency(summary.sales.grossProfit)}</span>
+                  </div>
+                  
+                  {/* Withdrawals breakdown */}
+                  {summary.sales.withdrawn?.total > 0 && (
+                    <>
+                      <Separator className="bg-slate-700" />
+                      <p className="text-xs font-medium text-amber-400 uppercase tracking-wide">Retirado de caja</p>
+                      {summary.sales.withdrawn.profitOnly > 0 && (
+                        <div className="flex justify-between items-center">
+                          <span className="flex items-center gap-1 text-sm text-slate-400">
+                            💵 Solo ganancias
+                          </span>
+                          <span className="font-semibold text-amber-400">-{formatCurrency(summary.sales.withdrawn.profitOnly)}</span>
+                        </div>
+                      )}
+                      {summary.sales.withdrawn.profitFromCombined > 0 && (
+                        <div className="flex justify-between items-center">
+                          <span className="flex items-center gap-1 text-sm text-slate-400">
+                            💳 De ganancias (retiro mixto)
+                          </span>
+                          <span className="font-semibold text-amber-400">-{formatCurrency(summary.sales.withdrawn.profitFromCombined)}</span>
+                        </div>
+                      )}
+                      {summary.sales.withdrawn.costFromCombined > 0 && (
+                        <div className="flex justify-between items-center">
+                          <span className="flex items-center gap-1 text-sm text-slate-400">
+                            📦 De costos (retiro mixto)
+                          </span>
+                          <span className="font-semibold text-orange-400">-{formatCurrency(summary.sales.withdrawn.costFromCombined)}</span>
+                        </div>
+                      )}
+                    </>
+                  )}
+                  
+                  <Separator className="bg-slate-700" />
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-slate-200 font-medium">Ganancia neta (disponible)</span>
                     <span className="font-bold text-lg text-emerald-400">{formatCurrency(summary.sales.profit)}</span>
                   </div>
                   <div className="flex justify-between items-center">
-                    <span className="text-sm text-slate-400">Margen</span>
+                    <span className="text-sm text-slate-400">Margen sobre efectivo</span>
                     <Badge variant="default" className="bg-emerald-900/40 text-emerald-400">{summary.sales.profitMargin}%</Badge>
                   </div>
                   <Separator className="bg-slate-700" />
@@ -500,6 +542,7 @@ export default function FinancePage() {
                   </div>
                   <p className="text-xs text-slate-500 mt-2">
                     Al retirar dinero, elige si lo sacas de <strong>ganancias</strong> o de <strong>ganancias + costos</strong>.
+                    La ganancia neta se reduce automáticamente.
                   </p>
                 </CardContent>
               </Card>
@@ -518,7 +561,7 @@ export default function FinancePage() {
                       <SelectValue placeholder="Todos" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">Todos</SelectItem>
+                      <SelectItem value="all">Todos</SelectItem>
                       <SelectItem value="INCOME">Ingresos</SelectItem>
                       <SelectItem value="EXPENSE">Egresos</SelectItem>
                     </SelectContent>
@@ -593,7 +636,7 @@ export default function FinancePage() {
                       <SelectValue placeholder="Departamento" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">Todos</SelectItem>
+                      <SelectItem value="all">Todos</SelectItem>
                       {departments.map(d => (
                         <SelectItem key={d.id} value={String(d.id)}>{d.name}</SelectItem>
                       ))}
