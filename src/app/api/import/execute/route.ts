@@ -101,7 +101,18 @@ export async function POST(request: NextRequest) {
     } else {
       const text = await file.text();
       const Papa = await import('papaparse');
-      const result = Papa.parse(text, { header: true, skipEmptyLines: true });
+      // Auto-detect delimiter but prefer pipe for Aspel-exported files
+      const detectDelimiter = (content: string): string => {
+        const firstLine = content.split('\n')[0];
+        const pipeCount = (firstLine.match(/\|/g) || []).length;
+        const commaCount = (firstLine.match(/,/g) || []).length;
+        return pipeCount >= commaCount ? '|' : ',';
+      };
+      const result = Papa.parse(text, {
+        header: true,
+        skipEmptyLines: true,
+        delimiter: detectDelimiter(text),
+      });
       allRows = result.data as Record<string, unknown>[];
     }
 
@@ -198,8 +209,12 @@ async function processProduct(
   let barcode = String(mapped.barcode || '').trim();
   // Sanitize barcode: remove non-ASCII, non-printable, and problematic chars
   barcode = barcode.replace(/[^\x20-\x7E]/g, '').trim();
-  // If barcode looks like a name (mostly letters/spaces, too long, or contains ñ/áéíóú), skip it
-  if (barcode && (barcode.length > 25 || /^[A-Za-zÁÉÍÓÚÑáéíóúñ\s]+$/.test(barcode))) {
+  // If barcode looks like a name (mostly letters/spaces/punctuation, too long, or contains ñ/áéíóú)
+  if (barcode && (
+    barcode.length > 25 ||
+    barcode.length > 3 && /^[A-Za-zÁÉÍÓÚÑáéíóúñ\s\.\,\-]+$/.test(barcode) ||
+    [...barcode].filter(c => /\d/.test(c)).length < barcode.length * 0.3
+  )) {
     barcode = '';
   }
 

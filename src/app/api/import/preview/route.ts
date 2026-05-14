@@ -69,10 +69,18 @@ export async function POST(request: NextRequest) {
       // CSV parsing
       const text = await file.text();
       const Papa = await import('papaparse');
+      // Auto-detect delimiter but prefer pipe for Aspel-exported files
+      const detectDelimiter = (content: string): string => {
+        const firstLine = content.split('\n')[0];
+        const pipeCount = (firstLine.match(/\|/g) || []).length;
+        const commaCount = (firstLine.match(/,/g) || []).length;
+        return pipeCount >= commaCount ? '|' : ',';
+      };
       const result = Papa.parse(text, {
         header: true,
         skipEmptyLines: true,
         dynamicTyping: false,
+        delimiter: detectDelimiter(text),
       });
 
       if (result.errors.length > 0) {

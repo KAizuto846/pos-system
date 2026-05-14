@@ -59,10 +59,15 @@ const FIELD_OPTIONS: Record<string, Array<{ value: string; label: string; requir
 
 const ASPEL_AUTO_MAP: Record<string, Record<string, string>> = {
   // INVE01.DBF typical columns
+  nombre: { name: 'name', note: 'Nombre del producto' },
   cve_articulo: { name: 'name', note: 'Se usará como nombre' },
   descripcion: { name: 'name', note: '' },
   descripcion_articulo: { name: 'name', note: '' },
   articulo: { name: 'name', note: '' },
+  linea: { name: 'supplier', note: 'Código de línea/proveedor' },
+  departamento: { name: 'department', note: 'Código de departamento' },
+  stock_minimo: { name: 'minStock', note: '' },
+  existencia: { name: 'stock', note: '' },
   codigo_barras: { name: 'barcode', note: '' },
   precio_venta: { name: 'price', note: '' },
   precio: { name: 'price', note: '' },
