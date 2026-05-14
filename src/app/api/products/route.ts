@@ -11,28 +11,40 @@ export async function GET(request: Request) {
 
     const { searchParams } = new URL(request.url);
     const q = searchParams.get("q");
+    const page = Math.max(1, parseInt(searchParams.get("page") || "1"));
+    const limit = Math.min(200, Math.max(1, parseInt(searchParams.get("limit") || "50")));
+    const skip = (page - 1) * limit;
 
-    if (q) {
-      const products = await prisma.product.findMany({
-        where: {
+    const where = q
+      ? {
           OR: [
             { name: { contains: q } },
             { barcode: { contains: q } },
           ],
-        },
+        }
+      : {};
+
+    const [products, total] = await Promise.all([
+      prisma.product.findMany({
+        where,
         include: { department: true, supplier: true },
         orderBy: { name: "asc" },
-      });
+        skip,
+        take: limit,
+      }),
+      prisma.product.count({ where }),
+    ]);
 
-      return Response.json(products);
-    }
-
-    const products = await prisma.product.findMany({
-      include: { department: true, supplier: true },
-      orderBy: { name: "asc" },
+    return Response.json({
+      products,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+        hasMore: skip + limit < total,
+      },
     });
-
-    return Response.json(products);
   } catch (error) {
     console.error("Error listing products:", error);
     return Response.json({ error: "Error al obtener productos" }, { status: 500 });

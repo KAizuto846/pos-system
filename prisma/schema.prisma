@@ -20,6 +20,7 @@ model User {
   accounts  Account[]
   sessions  Session[]
   sales     Sale[]
+  cashEntries CashEntry[]
 
   @@map("users")
 }
@@ -104,6 +105,7 @@ model PaymentMethod {
   updatedAt   DateTime @updatedAt @map("updated_at")
 
   sales Sale[]
+  cashEntries CashEntry[]
 
   @@map("payment_methods")
 }
@@ -163,6 +165,8 @@ model Sale {
 
   items SaleItem[]
 
+  cashEntries CashEntry[]
+
   @@index([createdAt])
   @@index([userId])
   @@index([paymentMethodId])
@@ -216,4 +220,25 @@ model SupplierOrderItem {
   @@index([supplierOrderId])
   @@index([productId])
   @@map("supplier_order_items")
+}
+
+model CashEntry {
+  id              Int           @id @default(autoincrement())
+  type            String        // INCOME, EXPENSE, TRANSFER
+  amount          Float
+  description     String        @default("")
+  saleId          Int?          @map("sale_id")
+  sale            Sale?         @relation(fields: [saleId], references: [id], onDelete: SetNull)
+  paymentMethodId Int?          @map("payment_method_id")
+  paymentMethod   PaymentMethod? @relation(fields: [paymentMethodId], references: [id])
+  userId          Int           @map("user_id")
+  user            User          @relation(fields: [userId], references: [id])
+  recordedAt      DateTime      @default(now()) @map("recorded_at")
+  createdAt       DateTime      @default(now()) @map("created_at")
+
+  @@index([type])
+  @@index([recordedAt])
+  @@index([paymentMethodId])
+  @@index([userId])
+  @@map("cash_entries")
 }

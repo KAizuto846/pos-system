@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Search, ShoppingCart, Plus, Minus, X, Trash2 } from 'lucide-react';
+import { Search, ShoppingCart, Plus, Minus, X, Trash2, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -51,6 +51,17 @@ interface PaymentMethod {
   active: boolean;
 }
 
+interface PaginatedResponse {
+  products: Product[];
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+    hasMore: boolean;
+  };
+}
+
 function useDebounce<T>(value: T, delay: number): T {
   const [debouncedValue, setDebouncedValue] = useState(value);
   useEffect(() => {
@@ -72,9 +83,14 @@ export default function PosPage() {
   } = usePosStore();
 
   const searchRef = useRef<HTMLInputElement>(null);
+  const gridRef = useRef<HTMLDivElement>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
+  const [total, setTotal] = useState(0);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
   const [selectedPaymentMethodId, setSelectedPaymentMethodId] = useState<string>('');
   const [checkoutOpen, setCheckoutOpen] = useState(false);
@@ -82,30 +98,60 @@ export default function PosPage() {
 
   const debouncedSearch = useDebounce(searchTerm, 300);
 
-  // Fetch products
-  const fetchProducts = useCallback(async (query: string) => {
-    setLoading(true);
+  const LIMIT = 50;
+
+  // Fetch products with pagination
+  const fetchProducts = useCallback(async (query: string, pageNum: number, append: boolean) => {
+    if (pageNum === 1) setLoading(true);
+    else setLoadingMore(true);
+    
     try {
-      const url = query ? `/api/products?q=${encodeURIComponent(query)}` : '/api/products';
-      const res = await fetch(url);
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        setProducts(data);
-      } else {
-        setProducts([]);
+      const params = new URLSearchParams();
+      if (query) params.set('q', query);
+      params.set('page', String(pageNum));
+      params.set('limit', String(LIMIT));
+      
+      const res = await fetch(`/api/products?${params}`);
+      const data: PaginatedResponse = await res.json();
+      
+      if (data.products) {
+        setProducts(prev => append ? [...prev, ...data.products] : data.products);
+        setHasMore(data.pagination.hasMore);
+        setTotal(data.pagination.total);
+        setPage(pageNum);
       }
     } catch {
       toast.error('Error al cargar productos');
-      setProducts([]);
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
   }, []);
 
-  // Initial fetch and search fetch
+  // Initial load / search change resets to page 1
   useEffect(() => {
-    fetchProducts(debouncedSearch);
+    setProducts([]);
+    setPage(1);
+    setHasMore(true);
+    fetchProducts(debouncedSearch, 1, false);
   }, [debouncedSearch, fetchProducts]);
+
+  // Infinite scroll
+  useEffect(() => {
+    const grid = gridRef.current;
+    if (!grid) return;
+
+    const handleScroll = () => {
+      if (!hasMore || loadingMore || loading) return;
+      const { scrollTop, scrollHeight, clientHeight } = grid;
+      if (scrollHeight - scrollTop - clientHeight < 400) {
+        fetchProducts(debouncedSearch, page + 1, true);
+      }
+    };
+
+    grid.addEventListener('scroll', handleScroll);
+    return () => grid.removeEventListener('scroll', handleScroll);
+  }, [hasMore, loadingMore, loading, debouncedSearch, page, fetchProducts]);
 
   // Fetch payment methods
   useEffect(() => {
@@ -139,10 +185,9 @@ export default function PosPage() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  const total = subtotal();
+  const totalAmount = subtotal();
   const count = itemCount();
 
-  // Add product to cart
   const handleAddItem = (product: Product) => {
     addItem({
       productId: product.id,
@@ -153,7 +198,6 @@ export default function PosPage() {
     });
   };
 
-  // Checkout
   const handleCheckout = async () => {
     if (!selectedPaymentMethodId) {
       toast.error('Selecciona un método de pago');
@@ -169,7 +213,7 @@ export default function PosPage() {
           price: item.price,
         })),
         paymentMethodId: parseInt(selectedPaymentMethodId, 10),
-        total,
+        total: totalAmount,
       };
 
       const res = await fetch('/api/sales', {
@@ -198,23 +242,31 @@ export default function PosPage() {
     <div className="flex h-[calc(100vh-4rem)] gap-0 -m-4 lg:-m-6">
       {/* Left Panel — Product Search & Grid (2/3) */}
       <div className="flex w-2/3 flex-col overflow-hidden">
-        {/* Search */}
+        {/* Search bar with count */}
         <div className="relative px-4 pt-4 pb-3 lg:px-6">
           <Search className="absolute left-7 lg:left-9 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <Input
             ref={searchRef}
-            placeholder="Buscar productos por nombre o código..."
+            placeholder="Buscar productos por nombre o código de barras..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="bg-slate-800 border-slate-600 pl-10 pr-20 text-slate-100 placeholder:text-slate-500 focus-visible:ring-emerald-500"
+            className="bg-slate-800 border-slate-600 pl-10 pr-32 text-slate-100 placeholder:text-slate-500 focus-visible:ring-emerald-500"
           />
-          <span className="absolute right-7 lg:right-9 top-1/2 -translate-y-1/2 rounded bg-slate-700 px-2 py-0.5 text-xs text-slate-400">
-            F2
+          <span className="absolute right-7 lg:right-9 top-1/2 -translate-y-1/2 flex items-center gap-2">
+            <span className="text-xs text-slate-500">
+              {total > 0 ? `${products.length}/${total}` : ''}
+            </span>
+            <span className="rounded bg-slate-700 px-2 py-0.5 text-xs text-slate-400">
+              F2
+            </span>
           </span>
         </div>
 
-        {/* Product Grid */}
-        <div className="flex-1 overflow-y-auto px-4 pb-4 lg:px-6">
+        {/* Product Grid with infinite scroll */}
+        <div
+          ref={gridRef}
+          className="flex-1 overflow-y-auto px-4 pb-4 lg:px-6"
+        >
           {loading ? (
             <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4">
               {Array.from({ length: 12 }).map((_, i) => (
@@ -237,32 +289,48 @@ export default function PosPage() {
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4">
-              {products.map((product) => (
-                <Card
-                  key={product.id}
-                  onClick={() => handleAddItem(product)}
-                  className="cursor-pointer border-slate-700 bg-slate-800 transition-colors hover:bg-slate-700"
-                >
-                  <CardContent className="flex flex-col gap-1 p-4">
-                    <span className="truncate text-sm font-medium text-slate-100">
-                      {product.name}
-                    </span>
-                    <span className="text-lg font-bold text-emerald-400">
-                      {formatCurrency(product.price)}
-                    </span>
-                    <Badge
-                      variant={product.stock <= 0 ? 'destructive' : product.stock <= (product.minStock || 5) ? 'secondary' : 'outline'}
-                      className="w-fit text-xs"
-                    >
-                      {product.stock <= 0
-                        ? 'Sin stock'
-                        : `${product.stock} uds.`}
-                    </Badge>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
+            <>
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4">
+                {products.map((product) => (
+                  <Card
+                    key={product.id}
+                    onClick={() => handleAddItem(product)}
+                    className="cursor-pointer border-slate-700 bg-slate-800 transition-colors hover:bg-slate-700"
+                  >
+                    <CardContent className="flex flex-col gap-1 p-4">
+                      <span className="truncate text-sm font-medium text-slate-100">
+                        {product.name}
+                      </span>
+                      <span className="text-lg font-bold text-emerald-400">
+                        {formatCurrency(product.price)}
+                      </span>
+                      <Badge
+                        variant={product.stock <= 0 ? 'destructive' : product.stock <= (product.minStock || 5) ? 'secondary' : 'outline'}
+                        className="w-fit text-xs"
+                      >
+                        {product.stock <= 0
+                          ? 'Sin stock'
+                          : `${product.stock} uds.`}
+                      </Badge>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+
+              {/* Loading more indicator */}
+              {loadingMore && (
+                <div className="flex items-center justify-center py-6">
+                  <Loader2 className="h-5 w-5 animate-spin text-emerald-400" />
+                  <span className="ml-2 text-sm text-slate-400">Cargando más productos...</span>
+                </div>
+              )}
+
+              {!hasMore && products.length > 0 && (
+                <div className="py-4 text-center text-xs text-slate-600">
+                  — Todos los productos cargados ({total} en total) —
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -310,7 +378,6 @@ export default function PosPage() {
                   key={item.productId}
                   className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900/50 px-3 py-2"
                 >
-                  {/* Item details */}
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium text-slate-100">
                       {item.name}
@@ -320,7 +387,6 @@ export default function PosPage() {
                     </p>
                   </div>
 
-                  {/* Quantity controls */}
                   <div className="flex items-center gap-1">
                     <Button
                       variant="ghost"
@@ -350,12 +416,10 @@ export default function PosPage() {
                     </Button>
                   </div>
 
-                  {/* Line total */}
                   <span className="w-20 text-right text-sm font-semibold text-slate-100">
                     {formatCurrency(item.price * item.quantity)}
                   </span>
 
-                  {/* Remove button */}
                   <Button
                     variant="ghost"
                     size="icon"
@@ -370,18 +434,16 @@ export default function PosPage() {
           )}
         </div>
 
-        {/* Bottom Section: Subtotal, Payment, Checkout */}
+        {/* Bottom Section */}
         <div className="border-t border-slate-700 px-4 py-3">
-          {/* Subtotal */}
           <div className="flex items-center justify-between py-2">
             <span className="text-sm text-slate-400">Subtotal</span>
             <span className="text-lg font-bold text-slate-100">
-              {formatCurrency(total)}
+              {formatCurrency(totalAmount)}
             </span>
           </div>
           <Separator className="my-2" />
 
-          {/* Payment Method */}
           <div className="py-2">
             <label className="mb-1.5 block text-xs font-medium text-slate-400">
               Método de pago
@@ -403,19 +465,18 @@ export default function PosPage() {
             </Select>
           </div>
 
-          {/* Checkout Button */}
           <Button
             size="lg"
             disabled={count === 0}
             onClick={() => setCheckoutOpen(true)}
             className="mt-2 w-full bg-emerald-600 py-6 text-base font-bold text-white hover:bg-emerald-500"
           >
-            Cobrar — {formatCurrency(total)}
+            Cobrar — {formatCurrency(totalAmount)}
           </Button>
         </div>
       </div>
 
-      {/* Checkout Confirmation Dialog */}
+      {/* Checkout Dialog */}
       <Dialog open={checkoutOpen} onOpenChange={setCheckoutOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
@@ -428,7 +489,6 @@ export default function PosPage() {
           </DialogHeader>
 
           <div className="space-y-4">
-            {/* Summary */}
             <div className="rounded-lg border border-slate-700 bg-slate-800/50 p-4">
               <div className="flex justify-between text-sm">
                 <span className="text-slate-400">Artículos</span>
@@ -448,11 +508,10 @@ export default function PosPage() {
               <Separator className="my-2" />
               <div className="flex justify-between text-base font-bold">
                 <span className="text-slate-300">Total</span>
-                <span className="text-emerald-400">{formatCurrency(total)}</span>
+                <span className="text-emerald-400">{formatCurrency(totalAmount)}</span>
               </div>
             </div>
 
-            {/* Items list */}
             <div>
               <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
                 Productos

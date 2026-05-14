@@ -72,7 +72,11 @@ export default function ProductsPage() {
   const [departments, setDepartments] = useState<Department[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
+  const [total, setTotal] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -94,16 +98,30 @@ export default function ProductsPage() {
   // Stock adjust
   const [stockAdjust, setStockAdjust] = useState('');
 
-  const fetchProducts = (q?: string) => {
-    setLoading(true);
-    const url = q ? `/api/products?q=${encodeURIComponent(q)}` : '/api/products';
-    fetch(url)
+  const LIMIT = 50;
+
+  const fetchProducts = (q?: string, pageNum: number = 1, append: boolean = false) => {
+    if (pageNum === 1) setLoading(true);
+    else setLoadingMore(true);
+    
+    const params = new URLSearchParams();
+    if (q) params.set('q', q);
+    params.set('page', String(pageNum));
+    params.set('limit', String(LIMIT));
+    
+    fetch(`/api/products?${params}`)
       .then((res) => res.json())
       .then((data) => {
-        if (Array.isArray(data)) setProducts(data);
+        if (data.products) {
+          setProducts(prev => append ? [...prev, ...data.products] : data.products);
+          setHasMore(data.pagination.hasMore);
+          setTotal(data.pagination.total);
+          setPage(pageNum);
+        }
         setLoading(false);
+        setLoadingMore(false);
       })
-      .catch(() => setLoading(false));
+      .catch(() => { setLoading(false); setLoadingMore(false); });
   };
 
   const fetchDepartments = () => {
@@ -132,11 +150,15 @@ export default function ProductsPage() {
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      if (search) fetchProducts(search);
-      else fetchProducts();
+      fetchProducts(search || undefined, 1, false);
     }, 300);
     return () => clearTimeout(timer);
   }, [search]);
+
+  const loadMore = () => {
+    if (!hasMore || loadingMore || loading) return;
+    fetchProducts(search || undefined, page + 1, true);
+  };
 
   const resetForm = () => {
     setFormName('');
@@ -454,6 +476,30 @@ export default function ProductsPage() {
               )}
             </TableBody>
           </Table>
+          {/* Pagination controls */}
+          <div className="flex items-center justify-between border-t border-slate-700 px-4 py-3">
+            <p className="text-xs text-slate-500">
+              Mostrando {products.length} de {total} productos
+            </p>
+            {hasMore && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={loadMore}
+                disabled={loadingMore}
+                className="border-slate-600 text-slate-300"
+              >
+                {loadingMore ? (
+                  <span className="flex items-center gap-2">
+                    <span className="h-3 w-3 animate-spin rounded-full border-2 border-slate-400 border-t-transparent" />
+                    Cargando...
+                  </span>
+                ) : (
+                  `Cargar más (${total - products.length} restantes)`
+                )}
+              </Button>
+            )}
+          </div>
         </CardContent>
       </Card>
 

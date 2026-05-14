@@ -100,6 +100,18 @@ export async function POST(request: Request) {
         });
       }
 
+      // Auto-create cash entry for this sale
+      await tx.cashEntry.create({
+        data: {
+          type: "INCOME",
+          amount: data.total,
+          description: `Venta #${newSale.id}`,
+          saleId: newSale.id,
+          paymentMethodId: data.paymentMethodId,
+          userId,
+        },
+      });
+
       return newSale;
     });
 

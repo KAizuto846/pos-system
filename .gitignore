@@ -1,5 +1,9 @@
-prisma/*.db
+prisma/**/*.db
+prisma/**/*.db-shm
+prisma/**/*.db-wal
 pos-system/
 .next/
 node_modules/
 *.csv
+.env
+*.deb
