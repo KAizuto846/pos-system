@@ -72,6 +72,7 @@ model Department {
 
   products    Product[]
 
+  @@index([name])
   @@map("departments")
 }
 
@@ -90,6 +91,7 @@ model Supplier {
   productLines   ProductLine[]
   supplierOrders SupplierOrder[]
 
+  @@index([name])
   @@map("suppliers")
 }
 
@@ -130,6 +132,8 @@ model Product {
   @@index([barcode])
   @@index([departmentId])
   @@index([supplierId])
+  @@index([name])
+  @@index([createdAt])
   @@map("products")
 }
 
@@ -162,6 +166,7 @@ model Sale {
   @@index([createdAt])
   @@index([userId])
   @@index([paymentMethodId])
+  @@index([total])
   @@map("sales")
 }
 
@@ -174,6 +179,7 @@ model SaleItem {
   quantity  Int
   price     Float
 
+  @@index([saleId, productId])
   @@map("sale_items")
 }
 
