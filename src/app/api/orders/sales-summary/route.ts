@@ -35,7 +35,7 @@ export async function GET(request: Request) {
       return Response.json({ error: "Fechas inválidas" }, { status: 400 });
     }
 
-    // Obtener ventas en el rango, agrupadas por producto del proveedor
+    // Obtener ventas en el rango, agrupadas por producto del proveedor (multi-supplier via ProductLine)
     const saleItems = await prisma.saleItem.findMany({
       where: {
         sale: {
@@ -45,15 +45,16 @@ export async function GET(request: Request) {
           },
         },
         product: {
-          supplierId: sid,
           active: true,
+          productLines: {
+            some: { supplierId: sid },
+          },
         },
       },
       include: {
         product: {
           include: {
             department: true,
-            supplier: true,
           },
         },
       },

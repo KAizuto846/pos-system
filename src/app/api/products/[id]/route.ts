@@ -42,10 +42,53 @@ export async function PUT(
     if (data.departmentId !== undefined) updateData.departmentId = data.departmentId;
     if (data.supplierId !== undefined) updateData.supplierId = data.supplierId;
 
-    const product = await prisma.product.update({
-      where: { id: productId },
-      data: updateData,
-      include: { department: true, supplier: true },
+    const productLinesData = body.productLines;
+
+    // Use a transaction: update product + replace productLines
+    const product = await prisma.$transaction(async (tx) => {
+      // Update product fields
+      const updated = await tx.product.update({
+        where: { id: productId },
+        data: updateData,
+      });
+
+      // If productLines provided, replace all lines
+      if (productLinesData && Array.isArray(productLinesData)) {
+        // Delete existing lines
+        await tx.productLine.deleteMany({ where: { productId } });
+
+        // Create new lines if any
+        if (productLinesData.length > 0) {
+          await tx.productLine.createMany({
+            data: productLinesData.map((pl: { supplierId: number; supplierPrice?: number | null; isPrimary?: boolean }) => ({
+              productId,
+              supplierId: pl.supplierId,
+              supplierPrice: pl.supplierPrice ?? null,
+              isPrimary: pl.isPrimary ?? false,
+            })),
+          });
+        }
+
+        // Update supplierId on product based on primary line
+        const primary = productLinesData.find((pl: { isPrimary: boolean }) => pl.isPrimary) || productLinesData[0];
+        if (primary) {
+          await tx.product.update({
+            where: { id: productId },
+            data: { supplierId: primary.supplierId },
+          });
+        } else {
+          await tx.product.update({
+            where: { id: productId },
+            data: { supplierId: null },
+          });
+        }
+      }
+
+      // Return the final product with includes
+      return tx.product.findUnique({
+        where: { id: productId },
+        include: { department: true, supplier: true, productLines: { include: { supplier: true } } },
+      });
     });
 
     return Response.json(product);

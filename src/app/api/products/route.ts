@@ -31,13 +31,15 @@ export async function GET(request: Request) {
     }
 
     if (supplierId) {
-      where.supplierId = parseInt(supplierId);
+      where.productLines = {
+        some: { supplierId: parseInt(supplierId) },
+      };
     }
 
     const [products, total] = await Promise.all([
       prisma.product.findMany({
         where,
-        include: { department: true, supplier: true },
+        include: { department: true, supplier: true, productLines: { include: { supplier: true } } },
         orderBy: { name: "asc" },
         skip,
         take: limit,
@@ -80,6 +82,16 @@ export async function POST(request: Request) {
 
     const data = parsed.data;
 
+    // Support both old supplierId and new productLines
+    const productLinesData = body.productLines;
+    let supplierIdValue: number | null = data.supplierId ?? null;
+
+    // If productLines provided, derive supplierId from primary line
+    if (productLinesData && Array.isArray(productLinesData) && productLinesData.length > 0) {
+      const primary = productLinesData.find((pl: { isPrimary: boolean }) => pl.isPrimary) || productLinesData[0];
+      supplierIdValue = primary.supplierId;
+    }
+
     const product = await prisma.product.create({
       data: {
         name: data.name,
@@ -90,9 +102,20 @@ export async function POST(request: Request) {
         minStock: data.minStock,
         active: data.active,
         departmentId: data.departmentId ?? null,
-        supplierId: data.supplierId ?? null,
+        supplierId: supplierIdValue,
+        ...(productLinesData && Array.isArray(productLinesData) && productLinesData.length > 0
+          ? {
+              productLines: {
+                create: productLinesData.map((pl: { supplierId: number; supplierPrice?: number | null; isPrimary?: boolean }) => ({
+                  supplierId: pl.supplierId,
+                  supplierPrice: pl.supplierPrice ?? null,
+                  isPrimary: pl.isPrimary ?? false,
+                })),
+              },
+            }
+          : {}),
       },
-      include: { department: true, supplier: true },
+      include: { department: true, supplier: true, productLines: { include: { supplier: true } } },
     });
 
     return Response.json(product, { status: 201 });

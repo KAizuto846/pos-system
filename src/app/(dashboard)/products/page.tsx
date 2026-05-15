@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, Pencil, Trash2, PackageOpen, Search, Zap } from 'lucide-react';
+import { Plus, Pencil, Trash2, PackageOpen, Search, Zap, X, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -38,7 +38,7 @@ import {
   SelectContent,
   SelectItem,
 } from '@/components/ui/select';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { Checkbox } from '@/components/ui/checkbox';
 
 interface Department {
   id: number;
@@ -51,6 +51,15 @@ interface Supplier {
   id: number;
   name: string;
   active: boolean;
+}
+
+interface ProductLineItem {
+  id: number;
+  productId: number;
+  supplierId: number;
+  supplierPrice: number | null;
+  isPrimary: boolean;
+  supplier: Supplier;
 }
 
 interface Product {
@@ -66,6 +75,13 @@ interface Product {
   supplierId: number | null;
   department: Department | null;
   supplier: Supplier | null;
+  productLines: ProductLineItem[];
+}
+
+interface FormProductLine {
+  supplierId: string;
+  supplierPrice: string;
+  isPrimary: boolean;
 }
 
 export default function ProductsPage() {
@@ -97,7 +113,7 @@ export default function ProductsPage() {
   const [formStock, setFormStock] = useState('');
   const [formMinStock, setFormMinStock] = useState('5');
   const [formDepartmentId, setFormDepartmentId] = useState('all');
-  const [formSupplierId, setFormSupplierId] = useState('all');
+  const [formProductLines, setFormProductLines] = useState<FormProductLine[]>([]);
   const [formError, setFormError] = useState('');
   const [formLoading, setFormLoading] = useState(false);
 
@@ -169,6 +185,12 @@ export default function ProductsPage() {
     fetchProducts(page + 1, true);
   };
 
+  const emptyProductLine = (): FormProductLine => ({
+    supplierId: 'all',
+    supplierPrice: '',
+    isPrimary: false,
+  });
+
   const resetForm = () => {
     setFormName('');
     setFormBarcode('');
@@ -177,21 +199,89 @@ export default function ProductsPage() {
     setFormStock('');
     setFormMinStock('5');
     setFormDepartmentId('all');
-    setFormSupplierId('all');
+    setFormProductLines([]);
     setFormError('');
   };
 
-  const buildProductBody = () => ({
-    name: formName,
-    barcode: formBarcode,
-    price: parseFloat(formPrice),
-    cost: formCost ? parseFloat(formCost) : 0,
-    stock: parseInt(formStock || '0'),
-    minStock: parseInt(formMinStock || '5'),
-    departmentId: formDepartmentId !== 'all' ? parseInt(formDepartmentId) : null,
-    supplierId: formSupplierId !== 'all' ? parseInt(formSupplierId) : null,
-    active: true,
-  });
+  const addProductLine = () => {
+    setFormProductLines(prev => [...prev, emptyProductLine()]);
+  };
+
+  const removeProductLine = (index: number) => {
+    setFormProductLines(prev => {
+      const updated = prev.filter((_, i) => i !== index);
+      // If we removed the primary, make the first remaining one primary
+      if (updated.length > 0 && !updated.some(pl => pl.isPrimary)) {
+        updated[0].isPrimary = true;
+      }
+      return updated;
+    });
+  };
+
+  const updateProductLine = (index: number, field: keyof FormProductLine, value: string | boolean) => {
+    setFormProductLines(prev => {
+      const updated = prev.map((pl, i) => {
+        if (i !== index) return pl;
+        return { ...pl, [field]: value };
+      });
+
+      // If setting isPrimary to true, ensure no other line is primary
+      if (field === 'isPrimary' && value === true) {
+        return updated.map((pl, i) => ({
+          ...pl,
+          isPrimary: i === index ? true : false,
+        }));
+      }
+
+      // Ensure at least one primary if there are lines
+      if (updated.length > 0 && !updated.some(pl => pl.isPrimary)) {
+        updated[0].isPrimary = true;
+      }
+
+      return updated;
+    });
+  };
+
+  const getAvailableSuppliers = (currentIndex: number, currentLines: FormProductLine[]) => {
+    const selectedIds = currentLines
+      .filter((_, i) => i !== currentIndex)
+      .map(pl => pl.supplierId)
+      .filter(id => id !== 'all');
+    return suppliers.filter(s => !selectedIds.includes(String(s.id)));
+  };
+
+  const buildProductBody = (includeProductLines: boolean = true) => {
+    const body: Record<string, unknown> = {
+      name: formName,
+      barcode: formBarcode,
+      price: parseFloat(formPrice),
+      cost: formCost ? parseFloat(formCost) : 0,
+      stock: parseInt(formStock || '0'),
+      minStock: parseInt(formMinStock || '5'),
+      departmentId: formDepartmentId !== 'all' ? parseInt(formDepartmentId) : null,
+      active: true,
+    };
+
+    if (includeProductLines && formProductLines.length > 0) {
+      body.productLines = formProductLines
+        .filter(pl => pl.supplierId !== 'all')
+        .map(pl => ({
+          supplierId: parseInt(pl.supplierId),
+          supplierPrice: pl.supplierPrice ? parseFloat(pl.supplierPrice) : null,
+          isPrimary: pl.isPrimary,
+        }));
+      // Also set supplierId on product for backward compat
+      const primary = formProductLines.find(pl => pl.isPrimary && pl.supplierId !== 'all')
+        || formProductLines.find(pl => pl.supplierId !== 'all');
+      if (primary) {
+        body.supplierId = parseInt(primary.supplierId);
+      }
+    } else {
+      body.supplierId = null;
+    }
+
+    return body;
+  };
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -230,8 +320,18 @@ export default function ProductsPage() {
       stock: parseInt(formStock || '0'),
       minStock: parseInt(formMinStock || '5'),
       departmentId: formDepartmentId !== 'all' ? parseInt(formDepartmentId) : null,
-      supplierId: formSupplierId !== 'all' ? parseInt(formSupplierId) : null,
       active: true,
+      ...(formProductLines.length > 0
+        ? {
+            productLines: formProductLines
+              .filter(pl => pl.supplierId !== 'all')
+              .map(pl => ({
+                supplierId: parseInt(pl.supplierId),
+                supplierPrice: pl.supplierPrice ? parseFloat(pl.supplierPrice) : null,
+                isPrimary: pl.isPrimary,
+              })),
+          }
+        : {}),
     };
 
     const res = await fetch('/api/products', {
@@ -259,16 +359,7 @@ export default function ProductsPage() {
     setFormError('');
     setFormLoading(true);
 
-    const body = {
-      name: formName,
-      barcode: formBarcode,
-      price: parseFloat(formPrice),
-      cost: formCost ? parseFloat(formCost) : 0,
-      stock: parseInt(formStock || '0'),
-      minStock: parseInt(formMinStock || '5'),
-      departmentId: formDepartmentId !== 'all' ? parseInt(formDepartmentId) : null,
-      supplierId: formSupplierId !== 'all' ? parseInt(formSupplierId) : null,
-    };
+    const body = buildProductBody();
 
     const res = await fetch(`/api/products/${selectedProduct.id}`, {
       method: 'PUT',
@@ -326,7 +417,27 @@ export default function ProductsPage() {
     setFormStock(String(product.stock));
     setFormMinStock(String(product.minStock));
     setFormDepartmentId(product.departmentId ? String(product.departmentId) : 'all');
-    setFormSupplierId(product.supplierId ? String(product.supplierId) : 'all');
+
+    // Populate productLines from product data
+    if (product.productLines && product.productLines.length > 0) {
+      setFormProductLines(
+        product.productLines.map(pl => ({
+          supplierId: String(pl.supplierId),
+          supplierPrice: pl.supplierPrice ? String(pl.supplierPrice) : '',
+          isPrimary: pl.isPrimary,
+        }))
+      );
+    } else if (product.supplier) {
+      // Fallback: if no productLines but supplier is set, create a line from it
+      setFormProductLines([{
+        supplierId: String(product.supplier.id),
+        supplierPrice: product.cost ? String(product.cost) : '',
+        isPrimary: true,
+      }]);
+    } else {
+      setFormProductLines([]);
+    }
+
     setEditOpen(true);
   };
 
@@ -334,6 +445,102 @@ export default function ProductsPage() {
     resetForm();
     setQuickAddOpen(true);
   };
+
+  // Helper to get display supplier text for a product
+  const getSupplierDisplay = (product: Product): string => {
+    if (product.productLines && product.productLines.length > 0) {
+      const primary = product.productLines.find(pl => pl.isPrimary);
+      if (primary) return primary.supplier?.name || '—';
+      if (product.productLines.length === 1) {
+        return product.productLines[0].supplier?.name || '—';
+      }
+      return 'Múltiples';
+    }
+    return product.supplier?.name || '—';
+  };
+
+  // Render a suppliers section for a form (used in Create, Edit, and Quick-add)
+  const renderSuppliersSection = (isQuickAdd: boolean = false) => (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <Label>Proveedores</Label>
+        <Button type="button" variant="outline" size="sm" onClick={addProductLine} className="h-7 text-xs border-dashed">
+          <Plus className="h-3 w-3 mr-1" />
+          Añadir proveedor
+        </Button>
+      </div>
+
+      {formProductLines.length === 0 ? (
+        <p className="text-xs text-slate-500 italic">Sin proveedores asignados</p>
+      ) : (
+        <div className="space-y-2">
+          {formProductLines.map((pl, index) => {
+            const available = getAvailableSuppliers(index, formProductLines);
+            return (
+              <div key={index} className="flex items-start gap-2 rounded-md border border-slate-700 bg-slate-800/50 p-2">
+                <div className="flex-1 space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <Label className="text-xs text-slate-400">Proveedor</Label>
+                      <Select
+                        value={pl.supplierId}
+                        onValueChange={(v) => updateProductLine(index, 'supplierId', v)}
+                      >
+                        <SelectTrigger className="h-8 text-xs">
+                          <SelectValue placeholder="Seleccionar" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">Seleccionar...</SelectItem>
+                          {available.map((s) => (
+                            <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs text-slate-400">Precio proveedor</Label>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={pl.supplierPrice}
+                        onChange={(e) => updateProductLine(index, 'supplierPrice', e.target.value)}
+                        placeholder="0.00"
+                        className="h-8 text-xs"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <Checkbox
+                        checked={pl.isPrimary}
+                        onCheckedChange={(checked) => updateProductLine(index, 'isPrimary', checked === true)}
+                      />
+                      <span className="text-xs text-slate-400">Principal</span>
+                    </label>
+                    {!isQuickAdd && (
+                      <button
+                        type="button"
+                        onClick={() => removeProductLine(index)}
+                        className="ml-auto text-red-400 hover:text-red-300 transition-colors"
+                        title="Eliminar proveedor"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {formProductLines.some(pl => pl.supplierId === 'all') && (
+        <p className="text-xs text-amber-400">Selecciona un proveedor para cada línea</p>
+      )}
+    </div>
+  );
 
   return (
     <div className="space-y-6">
@@ -412,21 +619,8 @@ export default function ProductsPage() {
                         </SelectContent>
                       </Select>
                     </div>
-                    <div className="space-y-2">
-                      <Label>Proveedor</Label>
-                      <Select value={formSupplierId} onValueChange={setFormSupplierId}>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Seleccionar" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="all">Ninguno</SelectItem>
-                          {suppliers.map((s) => (
-                            <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
                   </div>
+                  {renderSuppliersSection()}
                 </div>
                 <DialogFooter>
                   <Button type="submit" disabled={formLoading}>
@@ -523,7 +717,7 @@ export default function ProductsPage() {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-slate-300">{product.department?.name || '—'}</TableCell>
-                    <TableCell className="text-slate-300">{product.supplier?.name || '—'}</TableCell>
+                    <TableCell className="text-slate-300">{getSupplierDisplay(product)}</TableCell>
                     <TableCell>
                       <Badge variant={product.active ? 'default' : 'secondary'}>
                         {product.active ? 'Activo' : 'Inactivo'}
@@ -628,6 +822,7 @@ export default function ProductsPage() {
                   </Select>
                 </div>
               </div>
+              {renderSuppliersSection(true)}
             </div>
             <DialogFooter>
               <DialogClose asChild>
@@ -698,21 +893,8 @@ export default function ProductsPage() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-2">
-                  <Label>Proveedor</Label>
-                  <Select value={formSupplierId} onValueChange={setFormSupplierId}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Seleccionar" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Ninguno</SelectItem>
-                      {suppliers.map((s) => (
-                        <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
               </div>
+              {renderSuppliersSection()}
             </div>
             <DialogFooter>
               <Button type="submit" disabled={formLoading}>
