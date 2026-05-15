@@ -28,6 +28,13 @@ export async function GET(
         user: {
           select: { name: true },
         },
+        refunds: {
+          include: {
+            product: { select: { id: true, name: true } },
+            user: { select: { id: true, name: true } },
+          },
+          orderBy: { createdAt: "desc" },
+        },
       },
     });
 

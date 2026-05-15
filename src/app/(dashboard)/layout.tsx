@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import SessionProvider from '@/components/SessionProvider';
 import Sidebar from '@/components/layout/Sidebar';
@@ -11,13 +11,24 @@ import { Skeleton } from '@/components/ui/skeleton';
 function DashboardLayoutContent({ children }: { children: React.ReactNode }) {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const pathname = usePathname();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
     if (status === 'unauthenticated') {
       router.push('/login');
+      return;
     }
-  }, [status, router]);
+
+    // Route protection: CASHIER cannot access /users or /importar
+    if (
+      status === 'authenticated' &&
+      session?.user?.role === 'CASHIER' &&
+      (pathname.startsWith('/users') || pathname.startsWith('/importar'))
+    ) {
+      router.push('/');
+    }
+  }, [status, router, session, pathname]);
 
   if (status === 'loading') {
     return (

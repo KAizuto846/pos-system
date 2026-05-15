@@ -18,6 +18,9 @@ export async function GET() {
         user: {
           select: { name: true },
         },
+        refunds: {
+          select: { id: true, quantity: true, amount: true, reason: true, createdAt: true },
+        },
       },
       orderBy: { createdAt: "desc" },
     });

@@ -23,13 +23,14 @@ export async function GET(request: Request) {
       return Response.json({ error: "supplierId inválido" }, { status: 400 });
     }
 
-    // Obtener órdenes recibidas del proveedor con todos sus items
+    // Obtener órdenes del proveedor (no canceladas) con todos sus items
     const orders = await prisma.supplierOrder.findMany({
       where: {
         supplierId: sid,
-        status: "received",
+        status: { not: "cancelled" },
       },
       include: {
+        supplier: true,
         items: {
           include: {
             product: {
@@ -85,8 +86,15 @@ export async function GET(request: Request) {
       (a, b) => b.pendingQuantity - a.pendingQuantity
     );
 
+    // Orden con más items pendientes (contexto del proveedor)
+    const supplierName = orders.length > 0 ? orders[0].supplier?.name || null : null;
+
     return Response.json({
       supplierId: sid,
+      supplierName,
+      totalOrdersWithPending: orders.filter(o =>
+        o.items.some(i => i.quantity > i.receivedQuantity)
+      ).length,
       products,
     });
   } catch (error) {

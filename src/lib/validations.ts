@@ -87,4 +87,13 @@ export type SupplierInput = z.infer<typeof supplierSchema>;
 export type DepartmentInput = z.infer<typeof departmentSchema>;
 export type PaymentMethodInput = z.infer<typeof paymentMethodSchema>;
 export type SaleInput = z.infer<typeof saleSchema>;
+export const refundSchema = z.object({
+  saleId: z.number(),
+  productId: z.number(),
+  quantity: z.number().int().min(1, "Cantidad debe ser al menos 1"),
+  amount: z.number().min(0, "Monto debe ser mayor o igual a 0"),
+  reason: z.string().default(""),
+});
+
+export type RefundInput = z.infer<typeof refundSchema>;
 export type OrderInput = z.infer<typeof orderSchema>;

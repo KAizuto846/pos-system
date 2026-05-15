@@ -1,7 +1,8 @@
 'use client';
 
+import { useState } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import {
   LayoutDashboard,
   ShoppingCart,
@@ -17,10 +18,21 @@ import {
   Upload,
   LogOut,
   X,
+  ClipboardCheck,
 } from 'lucide-react';
 import { signOut, useSession } from 'next-auth/react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+  DialogTrigger,
+  DialogClose,
+} from '@/components/ui/dialog';
 
 interface SidebarProps {
   open: boolean;
@@ -31,7 +43,6 @@ const navLinks = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/pos', label: 'POS (Punto de Venta)', icon: ShoppingCart },
   { href: '/products', label: 'Productos', icon: Package },
-  { href: '/users', label: 'Usuarios', icon: Users },
   { href: '/suppliers', label: 'Proveedores', icon: Truck },
   { href: '/departments', label: 'Departamentos', icon: Building2 },
   { href: '/payment-methods', label: 'Métodos de Pago', icon: Wallet },
@@ -40,6 +51,7 @@ const navLinks = [
 
 const adminLinks = [
   { href: '/finance', label: 'Finanzas', icon: DollarSign },
+  { href: '/users', label: 'Usuarios', icon: Users },
 ];
 
 const extraLinks = [
@@ -50,8 +62,12 @@ const extraLinks = [
 
 export default function Sidebar({ open, onClose }: SidebarProps) {
   const pathname = usePathname();
+  const router = useRouter();
   const { data: session } = useSession();
   const isAdmin = session?.user?.role === 'ADMIN';
+  const canCloseShift = session?.user?.role === 'CASHIER' || isAdmin;
+  const [closingShift, setClosingShift] = useState(false);
+  const [dialogOpen, setDialogOpen] = useState(false);
 
   const isActive = (href: string) => {
     if (href === '/') return pathname === '/';
@@ -122,11 +138,75 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
               {adminLinks.map(renderLink)}
             </>
           )}
-          {extraLinks.map(renderLink)}
+          {extraLinks
+            .filter((link) => link.href !== '/importar' || isAdmin)
+            .map(renderLink)}
         </nav>
 
-        {/* Logout */}
-        <div className="border-t border-slate-700 p-3">
+        {/* Bottom Actions */}
+        <div className="border-t border-slate-700 p-3 space-y-2">
+          {canCloseShift && (
+            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+              <DialogTrigger asChild>
+                <Button
+                  variant="ghost"
+                  className="w-full justify-start gap-3 text-slate-300 hover:bg-slate-700/50 hover:text-emerald-400"
+                >
+                  <ClipboardCheck className="h-5 w-5" />
+                  <span>Cerrar Turno</span>
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-md">
+                <DialogHeader>
+                  <DialogTitle>Cerrar Turno</DialogTitle>
+                  <DialogDescription>
+                    Se generará un reporte con las ventas de tu turno (desde las 00:00 hrs hasta ahora).
+                    ¿Estás seguro de que deseas cerrar tu turno?
+                  </DialogDescription>
+                </DialogHeader>
+                <DialogFooter className="gap-2 sm:gap-0">
+                  <DialogClose asChild>
+                    <Button variant="outline">Cancelar</Button>
+                  </DialogClose>
+                  <Button
+                    onClick={async () => {
+                      setClosingShift(true);
+                      try {
+                        const now = new Date();
+                        const startOfDay = new Date(now);
+                        startOfDay.setHours(0, 0, 0, 0);
+
+                        const res = await fetch('/api/shift-reports', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            startDate: startOfDay.toISOString(),
+                            endDate: now.toISOString(),
+                          }),
+                        });
+
+                        if (!res.ok) {
+                          const err = await res.json();
+                          console.error('Error closing shift:', err);
+                          return;
+                        }
+
+                        setDialogOpen(false);
+                        router.push('/reports');
+                      } catch (error) {
+                        console.error('Error closing shift:', error);
+                      } finally {
+                        setClosingShift(false);
+                      }
+                    }}
+                    disabled={closingShift}
+                  >
+                    {closingShift ? 'Generando...' : 'Confirmar'}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          )}
           <Button
             variant="ghost"
             className="w-full justify-start gap-3 text-slate-300 hover:bg-slate-700/50 hover:text-red-400"

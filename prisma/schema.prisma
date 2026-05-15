@@ -21,6 +21,8 @@ model User {
   sessions  Session[]
   sales     Sale[]
   cashEntries CashEntry[]
+  shiftReports ShiftReport[]
+  refunds   Refund[]
 
   @@map("users")
 }
@@ -130,6 +132,7 @@ model Product {
   productLines    ProductLine[]
   saleItems       SaleItem[]
   orderItems      SupplierOrderItem[]
+  refunds         Refund[]
 
   @@index([barcode])
   @@index([departmentId])
@@ -164,6 +167,7 @@ model Sale {
   createdAt       DateTime      @default(now()) @map("created_at")
 
   items SaleItem[]
+  refunds Refund[]
 
   cashEntries CashEntry[]
 
@@ -243,4 +247,43 @@ model CashEntry {
   @@index([paymentMethodId])
   @@index([userId])
   @@map("cash_entries")
+}
+
+model Refund {
+  id        Int      @id @default(autoincrement())
+  saleId    Int      @map("sale_id")
+  sale      Sale     @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  productId Int      @map("product_id")
+  product   Product  @relation(fields: [productId], references: [id])
+  quantity  Int
+  amount    Float
+  reason    String   @default("")
+  userId    Int      @map("user_id")
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([saleId])
+  @@index([productId])
+  @@index([createdAt])
+  @@map("refunds")
+}
+
+model ShiftReport {
+  id              Int      @id @default(autoincrement())
+  userId          Int      @map("user_id")
+  user            User     @relation(fields: [userId], references: [id])
+  startDate       DateTime @map("start_date")
+  endDate         DateTime @map("end_date")
+  totalSales      Int      @default(0) @map("total_sales")
+  totalAmount     Float    @default(0) @map("total_amount")
+  totalRefunds    Int      @default(0) @map("total_refunds")
+  refundAmount    Float    @default(0) @map("refund_amount")
+  netAmount       Float    @default(0) @map("net_amount")
+  byPaymentMethod String   @default("{}") @map("by_payment_method")
+  notes           String   @default("")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([createdAt])
+  @@map("shift_reports")
 }

@@ -81,6 +81,7 @@ const EXTRA_COLUMN_OPTIONS: { label: string; key: string }[] = [
   { label: 'Stock Mínimo', key: 'minStock' },
   { label: 'Precio Proveedor', key: 'supplierPrice' },
   { label: 'Departamento', key: 'department' },
+  { label: 'Texto personalizado', key: 'custom_text' },
 ];
 
 // ─── Helpers ───
@@ -150,6 +151,8 @@ export default function OrdersPage() {
   const [extraColumns, setExtraColumns] = useState<ExtraColumn[]>([]);
   const [showAddColumn, setShowAddColumn] = useState(false);
   const [newColumnKey, setNewColumnKey] = useState('price');
+  const [customColumnName, setCustomColumnName] = useState('');
+  const [manualColumns, setManualColumns] = useState<Record<string, Record<string, string>>>({});
   const [pendingItems, setPendingItems] = useState<SoldProduct[] | null>(null);
   const [loadingPending, setLoadingPending] = useState(false);
 
@@ -176,6 +179,7 @@ export default function OrdersPage() {
     setDateTo(todayStr()); setTimeFrom('06:00'); setTimeTo('22:00');
     setSoldProducts([]); setQuantities({}); setHiddenRows(new Set());
     setSalesInfo(null); setFormError(''); setExtraColumns([]); setPendingItems(null);
+    setManualColumns({}); setCustomColumnName('');
   };
 
   // ── Calculate sales ──
@@ -222,12 +226,23 @@ export default function OrdersPage() {
 
   // ── Extra columns ──
   const addExtraColumn = () => {
-    const opt = EXTRA_COLUMN_OPTIONS.find(o => o.key === newColumnKey);
-    if (!opt) return;
-    setExtraColumns(prev => [...prev, { id: `col_${Date.now()}`, name: opt.label, key: opt.key }]);
+    if (newColumnKey === 'custom_text') {
+      const name = customColumnName.trim() || 'Texto personalizado';
+      const colId = `col_${Date.now()}`;
+      setExtraColumns(prev => [...prev, { id: colId, name, key: 'custom_text' }]);
+      setManualColumns(prev => ({ ...prev, [colId]: {} }));
+      setCustomColumnName('');
+    } else {
+      const opt = EXTRA_COLUMN_OPTIONS.find(o => o.key === newColumnKey);
+      if (!opt) return;
+      setExtraColumns(prev => [...prev, { id: `col_${Date.now()}`, name: opt.label, key: opt.key }]);
+    }
     setShowAddColumn(false);
   };
-  const removeExtraColumn = (id: string) => setExtraColumns(prev => prev.filter(c => c.id !== id));
+  const removeExtraColumn = (id: string) => {
+    setExtraColumns(prev => prev.filter(c => c.id !== id));
+    setManualColumns(prev => { const n = { ...prev }; delete n[id]; return n; });
+  };
 
   // ── Toggle row visibility ──
   const toggleRow = (productId: number) => {
@@ -326,27 +341,103 @@ export default function OrdersPage() {
 
   // ── Export (PNG or PDF) ──
   const handleExport = async (format: 'png' | 'pdf') => {
-    if (!selectedOrder || !exportRef.current) return;
+    if (!selectedOrder) return;
     setExporting(true);
     try {
-      const html2canvas = (await import('html2canvas')).default;
-      const canvas = await html2canvas(exportRef.current, {
-        backgroundColor: '#1e293b',
-        scale: 2,
+      const { items, supplier, id, createdAt, notes } = selectedOrder;
+      const dateStr = new Date(createdAt).toLocaleDateString('es-MX', {
+        year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
       });
+
+      // Build a standalone HTML document for export
+      const rowsHtml = items.map((item, idx) => {
+        const pending = Math.max(0, item.quantity - item.receivedQuantity);
+        return `<tr>
+          <td style="padding:6px 8px;border-bottom:1px solid #334155;text-align:center;font-family:monospace;font-size:12px;color:#94a3b8">${idx + 1}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid #334155;font-family:monospace;font-size:12px;color:#94a3b8">${item.product?.barcode || '—'}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid #334155;font-size:14px;color:#e2e8f0">${item.product?.name || `#${item.productId}`}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid #334155;text-align:center;font-size:14px;color:#e2e8f0">${item.quantity}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid #334155;text-align:center;font-size:14px;color:#94a3b8">${item.receivedQuantity}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid #334155;text-align:center;font-size:14px;color:${pending > 0 ? '#fbbf24' : '#34d399'}">${pending > 0 ? pending : '✓'}</td>
+        </tr>`;
+      }).join('');
+
+      const htmlContent = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Pedido #${id}</title>
+<style>
+  body { margin:0; padding:20px; background:#0f172a; color:#e2e8f0; font-family:-apple-system,system-ui,sans-serif; }
+  .container { max-width:800px; margin:0 auto; }
+  h1 { font-size:20px; text-align:center; margin-bottom:4px; }
+  .meta { text-align:center; font-size:12px; color:#94a3b8; margin-bottom:16px; }
+  .supplier { text-align:center; font-size:14px; margin-bottom:20px; }
+  .supplier span { font-weight:600; }
+  .notes { text-align:center; font-size:12px; color:#94a3b8; margin-bottom:16px; }
+  table { width:100%; border-collapse:collapse; }
+  th { padding:8px; background:#1e293b; font-size:12px; text-align:left; color:#94a3b8; border-bottom:2px solid #334155; }
+  th.center { text-align:center; }
+  .footer { text-align:center; font-size:10px; color:#64748b; margin-top:16px; }
+  @media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }
+</style></head><body>
+<div class="container">
+  <h1>Pedido #${id}</h1>
+  <div class="meta">${dateStr}</div>
+  <div class="supplier">Proveedor: <span>${supplier?.name || '—'}</span></div>
+  ${notes ? `<div class="notes">Notas: ${notes}</div>` : ''}
+  <table>
+    <thead><tr>
+      <th class="center">#</th><th>Código</th><th>Nombre</th><th class="center">Cantidad</th><th class="center">Recibido</th><th class="center">Pendiente</th>
+    </tr></thead>
+    <tbody>${rowsHtml}</tbody>
+  </table>
+  <div class="footer">Generado por POS System — ${new Date().toLocaleString('es-MX')}</div>
+</div>
+</body></html>`;
+
       if (format === 'png') {
+        // PNG: render HTML to a temporary element and capture with html2canvas
+        const container = document.createElement('div');
+        container.style.cssText = 'position:fixed;left:-9999px;top:0;width:800px;background:#0f172a;padding:20px;z-index:-1';
+        container.innerHTML = htmlContent;
+        document.body.appendChild(container);
+
+        const html2canvas = (await import('html2canvas')).default;
+        // Wait for rendering
+        await new Promise(r => setTimeout(r, 100));
+        const canvas = await html2canvas(container, {
+          backgroundColor: '#0f172a',
+          scale: 2,
+        });
+        document.body.removeChild(container);
         const link = document.createElement('a');
-        link.download = `pedido_${selectedOrder.id}.png`;
+        link.download = `pedido_${id}.png`;
         link.href = canvas.toDataURL('image/png');
         link.click();
       } else {
-        const { jsPDF } = await import('jspdf');
-        const imgData = canvas.toDataURL('image/png');
-        const pdf = new jsPDF('p', 'mm', 'a4');
-        const pdfW = pdf.internal.pageSize.getWidth();
-        const pdfH = (canvas.height * pdfW) / canvas.width;
-        pdf.addImage(imgData, 'PNG', 0, 0, pdfW, pdfH);
-        pdf.save(`pedido_${selectedOrder.id}.pdf`);
+        // PDF: open in new window, use built-in print -> Save as PDF
+        const printWin = window.open('', '_blank');
+        if (!printWin) {
+          // Fallback: use html2canvas + jsPDF if popup blocked
+          const { jsPDF } = await import('jspdf');
+          const container = document.createElement('div');
+          container.style.cssText = 'position:fixed;left:-9999px;top:0;width:800px;background:#0f172a;padding:20px;z-index:-1';
+          container.innerHTML = htmlContent;
+          document.body.appendChild(container);
+          const html2canvas = (await import('html2canvas')).default;
+          await new Promise(r => setTimeout(r, 100));
+          const canvas = await html2canvas(container, { backgroundColor: '#0f172a', scale: 2 });
+          document.body.removeChild(container);
+          const imgData = canvas.toDataURL('image/png');
+          const pdf = new jsPDF('p', 'mm', 'a4');
+          const pdfW = pdf.internal.pageSize.getWidth();
+          const pdfH = (canvas.height * pdfW) / canvas.width;
+          pdf.addImage(imgData, 'PNG', 0, 0, pdfW, pdfH);
+          pdf.save(`pedido_${id}.pdf`);
+        } else {
+          printWin.document.write(htmlContent);
+          printWin.document.close();
+          // Wait for content to render then print
+          setTimeout(() => { printWin.focus(); printWin.print(); }, 250);
+        }
       }
     } catch (err) {
       console.error('Export error:', err);
@@ -463,9 +554,9 @@ export default function OrdersPage() {
                     </div>
 
                     {showAddColumn && (
-                      <div className="flex items-center gap-2 p-2 bg-slate-700/30 rounded-md">
+                      <div className="flex items-center gap-2 p-2 bg-slate-700/30 rounded-md flex-wrap">
                         <span className="text-xs text-slate-400">Añadir columna:</span>
-                        <Select value={newColumnKey} onValueChange={setNewColumnKey}>
+                        <Select value={newColumnKey} onValueChange={v => { setNewColumnKey(v); setCustomColumnName(''); }}>
                           <SelectTrigger className="w-48 h-8 text-xs"><SelectValue /></SelectTrigger>
                           <SelectContent>
                             {EXTRA_COLUMN_OPTIONS.filter(o => !extraColumns.find(ec => ec.key === o.key)).map(o => (
@@ -473,6 +564,14 @@ export default function OrdersPage() {
                             ))}
                           </SelectContent>
                         </Select>
+                        {newColumnKey === 'custom_text' && (
+                          <Input
+                            value={customColumnName}
+                            onChange={e => setCustomColumnName(e.target.value)}
+                            placeholder="Nombre de la columna..."
+                            className="w-44 h-8 text-xs"
+                          />
+                        )}
                         <Button type="button" size="sm" variant="outline" className="h-8" onClick={addExtraColumn}><PlusCircle className="h-3 w-3 mr-1" />Agregar</Button>
                       </div>
                     )}
@@ -515,7 +614,25 @@ export default function OrdersPage() {
                                     className="w-20 h-8 text-center text-sm" />
                                 </TableCell>
                                 {extraColumns.map(col => (
-                                  <TableCell key={col.id} className="text-right text-sm text-slate-300 font-mono">{fmtSold(product, col.key)}</TableCell>
+                                  <TableCell key={col.id} className="text-right text-sm text-slate-300">
+                                    {col.key === 'custom_text' ? (
+                                      <Input
+                                        type="text"
+                                        value={manualColumns[col.id]?.[String(product.productId)] || ''}
+                                        onChange={e => {
+                                          const val = e.target.value;
+                                          setManualColumns(prev => ({
+                                            ...prev,
+                                            [col.id]: { ...(prev[col.id] || {}), [String(product.productId)]: val },
+                                          }));
+                                        }}
+                                        placeholder="—"
+                                        className="w-full h-7 text-xs text-center"
+                                      />
+                                    ) : (
+                                      <span className="font-mono">{fmtSold(product, col.key)}</span>
+                                    )}
+                                  </TableCell>
                                 ))}
                               </TableRow>
                             );
