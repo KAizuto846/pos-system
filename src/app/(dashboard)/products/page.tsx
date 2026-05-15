@@ -304,9 +304,9 @@ export default function ProductsPage() {
     if (!selectedProduct) return;
     setFormLoading(true);
     const res = await fetch(`/api/products/${selectedProduct.id}/stock`, {
-      method: 'PUT',
+      method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ adjustment: parseInt(stockAdjust) }),
+      body: JSON.stringify({ quantity: parseInt(stockAdjust) }),
     });
     setFormLoading(false);
     if (res.ok) {
