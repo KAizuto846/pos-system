@@ -86,7 +86,7 @@ export async function POST(request: Request) {
 
     const userId = parseInt(session.user.id, 10);
     if (isNaN(userId)) {
-      return Response.json({ error: "Usuario inválido" }, { status: 400 });
+      return Response.json({ error: "ID de usuario inválido: " + session.user.id }, { status: 400 });
     }
 
     const body = await request.json();
@@ -104,7 +104,7 @@ export async function POST(request: Request) {
 
     if (isNaN(start.getTime()) || isNaN(end.getTime())) {
       return Response.json(
-        { error: "Fechas inválidas" },
+        { error: "Fechas inválidas: " + startDate + " - " + endDate },
         { status: 400 }
       );
     }

@@ -253,7 +253,7 @@ export default function SalesPage() {
       </div>
 
       <Card className="border-slate-700 bg-slate-800">
-        <CardContent className="p-0">
+        <CardContent className="p-0 overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow>
@@ -320,11 +320,13 @@ export default function SalesPage() {
                           </Button>
                           <Button
                             variant="ghost"
-                            size="icon"
+                            size="sm"
                             onClick={() => openRefundDialog(sale)}
-                            title="Reembolsar"
+                            title="Reembolsar producto de esta venta"
+                            className="text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 gap-1"
                           >
-                            <RotateCcw className="h-4 w-4 text-amber-400" />
+                            <RotateCcw className="h-4 w-4" />
+                            <span className="text-xs hidden sm:inline">Reemb.</span>
                           </Button>
                         </div>
                       </TableCell>
