@@ -14,15 +14,25 @@ export async function GET(request: Request) {
     const page = Math.max(1, parseInt(searchParams.get("page") || "1"));
     const limit = Math.min(200, Math.max(1, parseInt(searchParams.get("limit") || "50")));
     const skip = (page - 1) * limit;
+    const departmentId = searchParams.get("departmentId");
+    const supplierId = searchParams.get("supplierId");
 
-    const where = q
-      ? {
-          OR: [
-            { name: { contains: q } },
-            { barcode: { contains: q } },
-          ],
-        }
-      : {};
+    const where: Record<string, unknown> = {};
+
+    if (q) {
+      where.OR = [
+        { name: { contains: q } },
+        { barcode: { contains: q } },
+      ];
+    }
+
+    if (departmentId) {
+      where.departmentId = parseInt(departmentId);
+    }
+
+    if (supplierId) {
+      where.supplierId = parseInt(supplierId);
+    }
 
     const [products, total] = await Promise.all([
       prisma.product.findMany({

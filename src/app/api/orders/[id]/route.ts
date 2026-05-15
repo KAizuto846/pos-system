@@ -21,8 +21,35 @@ export async function PUT(
     }
 
     const body = await request.json();
-    const { status } = body;
+    const { status, items, notes } = body;
 
+    // If items are provided, update them (editing quantities/notes)
+    if (items && Array.isArray(items)) {
+      await prisma.$transaction(async (tx) => {
+        for (const item of items) {
+          await tx.supplierOrderItem.update({
+            where: { id: item.id },
+            data: {
+              quantity: item.quantity ?? undefined,
+              receivedQuantity: item.receivedQuantity ?? undefined,
+              notes: item.notes ?? undefined,
+            },
+          });
+        }
+      });
+
+      const order = await prisma.supplierOrder.findUnique({
+        where: { id: orderId },
+        include: {
+          supplier: true,
+          items: { include: { product: true } },
+        },
+      });
+
+      return Response.json(order);
+    }
+
+    // Otherwise update status
     if (!status || !VALID_STATUSES.includes(status)) {
       return Response.json(
         {

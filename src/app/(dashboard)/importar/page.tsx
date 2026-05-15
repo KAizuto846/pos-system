@@ -74,16 +74,13 @@ const ASPEL_AUTO_MAP: Record<string, Record<string, string>> = {
   costo_promedio: { name: 'cost', note: '' },
   costo_ultimo: { name: 'cost', note: '' },
   costo: { name: 'cost', note: '' },
-  existencia: { name: 'stock', note: '' },
   stock: { name: 'stock', note: '' },
   minimo: { name: 'minStock', note: '' },
   min: { name: 'minStock', note: '' },
-  departamento: { name: 'department', note: '' },
   // INVE_PROV.DBF typical columns
   precio_proveedor: { name: 'supplierPrice', note: '' },
   cve_proveedor: { name: 'supplier', note: 'Código, no nombre' },
   // PROV01.DBF typical columns
-  nombre: { name: 'name', note: '' },
   proveedor: { name: 'name', note: '' },
   contacto: { name: 'contact', note: '' },
   telefono: { name: 'phone', note: '' },

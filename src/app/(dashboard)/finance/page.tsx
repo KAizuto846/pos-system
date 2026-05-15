@@ -31,6 +31,13 @@ interface FinanceSummary {
     count: number; revenue: number; totalCost: number;
     profit: number; profitMargin: string;
     availableProfit: number; combinedAvailable: number;
+    grossProfit: number;
+    withdrawn: {
+      total: number;
+      profitOnly: number;
+      profitFromCombined: number;
+      costFromCombined: number;
+    };
   };
   cash: {
     balance: number;
@@ -181,7 +188,7 @@ export default function FinancePage() {
   useEffect(() => {
     Promise.all([
       fetch('/api/payment-methods').then(r => r.json()).then((data: PaymentMethod[]) => {
-        if (Array.isArray(data)) setPaymentMethods(data.filter(pm => pm.active));
+        if (Array.isArray(data)) setPaymentMethods(data);
       }),
       fetch('/api/departments').then(r => r.json()).then((data: { id: number; name: string }[]) => {
         if (Array.isArray(data)) setDepartments(data.filter(d => d));
