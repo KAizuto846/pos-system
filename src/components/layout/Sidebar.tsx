@@ -187,13 +187,14 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
 
                         if (!res.ok) {
                           const err = await res.json();
-                          console.error('Error closing shift:', err);
+                          alert('Error al cerrar turno: ' + (err.error || 'Error desconocido'));
                           return;
                         }
 
                         setDialogOpen(false);
                         router.push('/reports');
                       } catch (error) {
+                        alert('Error de conexión al cerrar turno');
                         console.error('Error closing shift:', error);
                       } finally {
                         setClosingShift(false);

@@ -156,6 +156,12 @@ export default function OrdersPage() {
   const [pendingItems, setPendingItems] = useState<SoldProduct[] | null>(null);
   const [loadingPending, setLoadingPending] = useState(false);
 
+  // ── Manual product search state ──
+  const [showManualAdd, setShowManualAdd] = useState(false);
+  const [manualSearch, setManualSearch] = useState('');
+  const [manualResults, setManualResults] = useState<SoldProduct[]>([]);
+  const [manualSearching, setManualSearching] = useState(false);
+
   // ── Fetchers ──
   const fetchOrders = useCallback(() => {
     setLoading(true);
@@ -222,6 +228,52 @@ export default function OrdersPage() {
       }
     } catch {}
     finally { setLoadingPending(false); }
+  };
+
+  // ── Manual product search ──
+  const searchProducts = async (q: string) => {
+    if (!q || q.length < 2) { setManualResults([]); return; }
+    setManualSearching(true);
+    try {
+      const res = await fetch(`/api/products?q=${encodeURIComponent(q)}&limit=20`);
+      const data = await res.json();
+      if (data.products) {
+        setManualResults(data.products.map((p: any) => ({
+          productId: p.id,
+          name: p.name,
+          barcode: p.barcode,
+          price: p.price,
+          cost: p.cost,
+          stock: p.stock,
+          minStock: p.minStock,
+          department: p.department || null,
+          supplierPrice: null,
+          totalSold: 0,
+        })));
+      }
+    } catch {}
+    setManualSearching(false);
+  };
+
+  const addManualProduct = (product: SoldProduct) => {
+    // Check if already in the list
+    if (soldProducts.some(p => p.productId === product.productId)) {
+      // Just increase quantity
+      setQuantities(prev => ({
+        ...prev,
+        [String(product.productId)]: (prev[String(product.productId)] || 0) + 1,
+      }));
+      setShowManualAdd(false);
+      setManualSearch('');
+      setManualResults([]);
+      return;
+    }
+    // Add to sold products list
+    setSoldProducts(prev => [...prev, product]);
+    setQuantities(prev => ({ ...prev, [String(product.productId)]: 1 }));
+    setShowManualAdd(false);
+    setManualSearch('');
+    setManualResults([]);
   };
 
   // ── Extra columns ──
@@ -522,6 +574,9 @@ export default function OrdersPage() {
                       <History className="mr-2 h-4 w-4" />{loadingPending ? 'Cargando...' : 'Pendientes de recibir'}
                     </Button>
                   )}
+                  <Button type="button" variant="outline" size="sm" onClick={() => { setShowManualAdd(true); setManualSearch(''); setManualResults([]); }}>
+                    <PlusCircle className="mr-2 h-4 w-4" />Agregar producto
+                  </Button>
                   <div className="flex-1 min-w-[200px] space-y-2">
                     <Label>Notas del pedido</Label>
                     <Input value={formNotes} onChange={e => setFormNotes(e.target.value)} placeholder="Opcional" />
@@ -659,6 +714,57 @@ export default function OrdersPage() {
                   </div>
                 )}
               </div>
+
+              {/* ── Manual Product Search Dialog ── */}
+              <Dialog open={showManualAdd} onOpenChange={setShowManualAdd}>
+                <DialogContent className="max-w-lg">
+                  <DialogHeader>
+                    <DialogTitle>Agregar Producto Manualmente</DialogTitle>
+                    <DialogDescription>
+                      Busca un producto por nombre o código para agregarlo al pedido
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="space-y-4 py-2">
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                      <Input
+                        placeholder="Buscar producto..."
+                        value={manualSearch}
+                        onChange={e => { setManualSearch(e.target.value); searchProducts(e.target.value); }}
+                        className="pl-10"
+                        autoFocus
+                      />
+                    </div>
+                    <div className="max-h-60 overflow-y-auto space-y-1">
+                      {manualSearching ? (
+                        <div className="text-center py-4 text-sm text-slate-400">Buscando...</div>
+                      ) : manualResults.length === 0 && manualSearch.length >= 2 ? (
+                        <div className="text-center py-4 text-sm text-slate-500">Sin resultados</div>
+                      ) : manualResults.length === 0 ? (
+                        <div className="text-center py-4 text-sm text-slate-500">Escribe al menos 2 caracteres</div>
+                      ) : (
+                        manualResults.map(p => (
+                          <button
+                            key={p.productId}
+                            type="button"
+                            onClick={() => addManualProduct(p)}
+                            className="w-full text-left px-3 py-2 rounded-md hover:bg-slate-700/60 transition-colors flex items-center justify-between"
+                          >
+                            <div>
+                              <div className="text-sm text-slate-200">{p.name}</div>
+                              <div className="text-xs text-slate-500 font-mono">{p.barcode || '—'} · Stock: {p.stock} · ${p.price.toFixed(2)}</div>
+                            </div>
+                            <PlusCircle className="h-4 w-4 text-emerald-400 flex-shrink-0" />
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                  <DialogFooter>
+                    <DialogClose asChild><Button type="button" variant="secondary">Cancelar</Button></DialogClose>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
 
               <DialogFooter className="border-t border-slate-700 pt-4">
                 <DialogClose asChild><Button type="button" variant="secondary">Cancelar</Button></DialogClose>
