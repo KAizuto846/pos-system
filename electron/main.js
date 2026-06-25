@@ -1,9 +1,10 @@
 const { app, BrowserWindow, Tray, Menu, dialog, shell, Notification } = require('electron');
 const path = require('path');
-const { spawn } = require('child_process');
+const { fork, spawn } = require('child_process');
 const dgram = require('dgram');
 const os = require('os');
 const fs = require('fs');
+const http = require('http');
 
 // ─── Simple JSON config ─────────────────────────────────────
 const CONFIG_PATH = path.join(app.getPath('userData'), 'config.json');
@@ -70,23 +71,61 @@ function announceServer(port) {
 }
 
 // ─── Server management ───────────────────────────────────────
-function startServer() {
+async function startServer() {
   if (serverProcess) return;
   if (!fs.existsSync(SERVER_SCRIPT)) {
     dialog.showErrorBox('Error', 'No se encontro el servidor.\nReinstale la aplicacion.');
     app.quit();
     return;
   }
-  const env = { ...process.env, NODE_ENV: 'production', PORT: String(config.serverPort || 3000), HOSTNAME: '0.0.0.0' };
-  serverProcess = spawn('node', [SERVER_SCRIPT], { cwd: SERVER_DIR, env, stdio: ['ignore', 'pipe', 'pipe'] });
+
+  // ── Run prisma db push on first launch ──────────────────
+  const dbFile = path.join(SERVER_DIR, 'prisma', 'dev.db');
+  if (!fs.existsSync(dbFile)) {
+    console.log('[setup] Creando base de datos...');
+    try {
+      await new Promise((resolve, reject) => {
+        const prismaProc = spawn('npx', ['prisma', 'db', 'push', '--skip-generate'], {
+          cwd: SERVER_DIR,
+          env: { ...process.env, DATABASE_URL: 'file:./prisma/dev.db' },
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        let out = '';
+        prismaProc.stdout.on('data', (d) => { out += d.toString(); });
+        prismaProc.stderr.on('data', (d) => { out += d.toString(); });
+        prismaProc.on('close', (code) => {
+          console.log('[prisma]', out.trim());
+          code === 0 ? resolve() : reject(new Error('Prisma exit ' + code + ': ' + out));
+        });
+        setTimeout(() => reject(new Error('Prisma timeout')), 30000);
+      });
+      console.log('[setup] Base de datos lista');
+    } catch (e) {
+      console.error('[setup] Error BD:', e.message);
+      dialog.showErrorBox('Error de Base de Datos',
+        'No se pudo crear la base de datos.\n\n' + e.message + '\n\nVerifique que el directorio tenga permisos de escritura.');
+      // Continue anyway — maybe it's a transient error
+    }
+  }
+
+  // ── Start server ────────────────────────────────────────
+  const port = config.serverPort || 3000;
+  const env = { ...process.env, NODE_ENV: 'production', PORT: String(port), HOSTNAME: '0.0.0.0' };
+
+  serverProcess = fork(SERVER_SCRIPT, [], { cwd: SERVER_DIR, env, silent: true });
   serverProcess.stdout.on('data', (d) => console.log('[srv]', d.toString().trim()));
   serverProcess.stderr.on('data', (d) => console.error('[srv:err]', d.toString().trim()));
   serverProcess.on('close', (code) => {
     console.log('Server exit:', code);
     serverProcess = null;
-    if (!isQuitting) setTimeout(startServer, 2000);
+    if (!isQuitting) setTimeout(() => startServer(), 2000);
   });
-  announceServer(config.serverPort || 3000);
+  serverProcess.on('error', (err) => {
+    console.error('Server spawn error:', err.message);
+    dialog.showErrorBox('Error del Servidor', 'No se pudo iniciar el servidor:\n' + err.message);
+  });
+
+  announceServer(port);
 }
 
 function stopServer() {
@@ -133,20 +172,46 @@ function setMode(mode) { config.mode = mode; saveConfig(); }
 // ─── URL resolution ──────────────────────────────────────────
 async function getTargetURL() {
   if (config.mode === 'client' && config.serverIP) {
-    return `http://${config.serverIP}:${config.serverPort || 3000}`;
+    const url = `http://${config.serverIP}:${config.serverPort || 3000}`;
+    await waitForServer(url);
+    return url;
   }
   if (config.mode === 'auto') {
     startDiscovery();
     await new Promise(r => setTimeout(r, 2000));
     stopDiscovery();
     if (discoveredServers.length > 0) {
-      config.serverIP = discoveredServers[0].ip;
-      return `http://${discoveredServers[0].ip}:${discoveredServers[0].port}`;
+      const s = discoveredServers[0];
+      config.serverIP = s.ip;
+      const url = `http://${s.ip}:${s.port}`;
+      await waitForServer(url);
+      return url;
     }
   }
-  startServer();
-  await new Promise(r => setTimeout(r, 3000));
-  return `http://localhost:${config.serverPort || 3000}`;
+  await startServer();
+  const url = `http://localhost:${config.serverPort || 3000}`;
+  await waitForServer(url);
+  return url;
+}
+
+async function waitForServer(url, maxRetries = 30) {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      await new Promise((resolve, reject) => {
+        const req = http.get(url + '/api/sync', (res) => {
+          res.resume();
+          res.statusCode < 500 ? resolve() : reject(new Error('Status ' + res.statusCode));
+        });
+        req.on('error', (e) => reject(e));
+        req.setTimeout(1000, () => { req.destroy(); reject(new Error('timeout')); });
+      });
+      return; // Success
+    } catch (e) {
+      if (i === 0) console.log('[wait] Esperando servidor en', url, '...');
+      await new Promise(r => setTimeout(r, 1000));
+    }
+  }
+  console.error('[wait] Timeout esperando servidor');
 }
 
 // ─── App lifecycle ───────────────────────────────────────────
