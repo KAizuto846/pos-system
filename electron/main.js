@@ -1,6 +1,6 @@
 const { app, BrowserWindow, Tray, Menu, dialog, shell, Notification } = require('electron');
 const path = require('path');
-const { fork, spawn } = require('child_process');
+const { spawn } = require('child_process');
 const dgram = require('dgram');
 const os = require('os');
 const fs = require('fs');
@@ -87,24 +87,37 @@ async function startServer() {
       await new Promise((resolve, reject) => {
         const prismaProc = spawn('npx', ['prisma', 'db', 'push', '--skip-generate'], {
           cwd: SERVER_DIR,
+          shell: true,
           env: { ...process.env, DATABASE_URL: 'file:./prisma/dev.db' },
-          stdio: ['ignore', 'pipe', 'pipe'],
         });
         let out = '';
-        prismaProc.stdout.on('data', (d) => { out += d.toString(); });
-        prismaProc.stderr.on('data', (d) => { out += d.toString(); });
+        prismaProc.stdout.on('data', (d) => { out += d.toString(); process.stdout.write('[prisma] ' + d); });
+        prismaProc.stderr.on('data', (d) => { out += d.toString(); process.stderr.write('[prisma:err] ' + d); });
         prismaProc.on('close', (code) => {
-          console.log('[prisma]', out.trim());
-          code === 0 ? resolve() : reject(new Error('Prisma exit ' + code + ': ' + out));
+          code === 0 ? resolve() : reject(new Error('Prisma exit ' + code + ': ' + out.slice(-500)));
         });
-        setTimeout(() => reject(new Error('Prisma timeout')), 30000);
+        prismaProc.on('error', (err) => reject(err));
+        setTimeout(() => reject(new Error('Prisma timeout (30s)')), 30000);
       });
       console.log('[setup] Base de datos lista');
     } catch (e) {
       console.error('[setup] Error BD:', e.message);
-      dialog.showErrorBox('Error de Base de Datos',
-        'No se pudo crear la base de datos.\n\n' + e.message + '\n\nVerifique que el directorio tenga permisos de escritura.');
-      // Continue anyway — maybe it's a transient error
+      // Try with node directly as fallback
+      try {
+        await new Promise((resolve, reject) => {
+          const prismaProc = spawn('node', [path.join(SERVER_DIR, 'node_modules', '.bin', 'prisma'), 'db', 'push', '--skip-generate'], {
+            cwd: SERVER_DIR,
+            shell: true,
+            env: { ...process.env, DATABASE_URL: 'file:./prisma/dev.db' },
+          });
+          prismaProc.on('close', (code) => code === 0 ? resolve() : reject(new Error('exit ' + code)));
+          prismaProc.on('error', reject);
+          setTimeout(() => reject(new Error('timeout')), 30000);
+        });
+        console.log('[setup] BD creada con node directo');
+      } catch (e2) {
+        dialog.showErrorBox('Error BD', 'No se pudo crear la base de datos:\n' + e2.message);
+      }
     }
   }
 
@@ -112,7 +125,13 @@ async function startServer() {
   const port = config.serverPort || 3000;
   const env = { ...process.env, NODE_ENV: 'production', PORT: String(port), HOSTNAME: '0.0.0.0' };
 
-  serverProcess = fork(SERVER_SCRIPT, [], { cwd: SERVER_DIR, env, silent: true });
+  const nodePath = process.env.NODE_PATH || 'node';
+  serverProcess = spawn(nodePath, [SERVER_SCRIPT], {
+    cwd: SERVER_DIR,
+    env,
+    shell: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
   serverProcess.stdout.on('data', (d) => console.log('[srv]', d.toString().trim()));
   serverProcess.stderr.on('data', (d) => console.error('[srv:err]', d.toString().trim()));
   serverProcess.on('close', (code) => {
