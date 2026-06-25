@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Tray, Menu, dialog, shell, Notification } = require('electron');
+const { app, BrowserWindow, Tray, Menu, dialog, shell, Notification, ipcMain } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const dgram = require('dgram');
@@ -236,15 +236,40 @@ async function waitForServer(url, maxRetries = 30) {
 // ─── App lifecycle ───────────────────────────────────────────
 app.whenReady().then(async () => {
   createTray();
-  const url = await getTargetURL();
-  createWindow(url);
-  new Notification({ title: 'POS System', body: 'Servidor iniciado en ' + url }).show();
+
+  // Show loading screen IMMEDIATELY while server starts
+  const loadingPath = path.join(__dirname, 'loading.html');
+  mainWindow = new BrowserWindow({
+    width: 520, height: 450, resizable: false, frame: true,
+    title: 'POS System — Iniciando',
+    webPreferences: { contextIsolation: true, nodeIntegration: false },
+    show: false,
+  });
+  mainWindow.loadFile(loadingPath);
+  mainWindow.once('ready-to-show', () => mainWindow.show());
+
+  // Start server in background
+  startServer();
+
+  // The loading.html will auto-redirect when server is ready
+});
+
+// ─── Show main POS window (called via IPC from loading page) ──
+ipcMain.handle('server-ready', async () => {
+  const serverURL = `http://localhost:${config.serverPort || 3000}`;
+  if (mainWindow) {
+    mainWindow.setMinimumSize(900, 600);
+    mainWindow.setSize(1280, 800);
+    mainWindow.center();
+    mainWindow.loadURL(serverURL);
+    mainWindow.setTitle('POS System');
+  }
+  return serverURL;
 });
 
 app.on('before-quit', () => { isQuitting = true; stopServer(); stopDiscovery(); });
 
-// ─── IPC ─────────────────────────────────────────────────────
-const { ipcMain } = require('electron');
+// ─── IPC handlers ──────────────────────────────────────────
 ipcMain.handle('get-config', () => config);
 ipcMain.handle('set-config', (e, key, value) => { config[key] = value; saveConfig(); return true; });
 ipcMain.handle('get-discovered-servers', () => discoveredServers);
