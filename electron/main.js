@@ -234,40 +234,32 @@ async function waitForServer(url, maxRetries = 30) {
 }
 
 // ─── App lifecycle ───────────────────────────────────────────
-app.whenReady().then(async () => {
-  createTray();
-
-  // Show loading screen IMMEDIATELY while server starts
-  let loadingHTML;
+app.whenReady().then(() => {
+  // 1. CREATE WINDOW FIRST — always show something
   try {
-    loadingHTML = fs.readFileSync(path.join(__dirname, 'loading.html'), 'utf8');
+    mainWindow = new BrowserWindow({
+      width: 520, height: 450, resizable: false,
+      title: 'POS System',
+      webPreferences: { contextIsolation: true, nodeIntegration: false },
+    });
+    mainWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(
+      '<html><body style="background:#0f172a;color:#e2e8f0;font-family:Arial;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">' +
+      '<div style="text-align:center"><h1>🏪 POS System</h1><p>Iniciando servidor...</p>' +
+      '<p style="color:#94a3b8;font-size:12px" id="msg">Conectando a http://localhost:3000</p></div>' +
+      '<script>var n=0;setInterval(function(){n++;document.getElementById("msg").textContent="Intento "+n+"/30...";' +
+      'fetch("http://localhost:3000/api/sync").then(r=>{if(r.ok)location.href="http://localhost:3000"}).catch(e=>{})},1000)</script>' +
+      '</body></html>'
+    ));
   } catch (e) {
-    loadingHTML = '<html><body style="background:#0f172a;color:#e2e8f0;font-family:Arial;display:flex;align-items:center;justify-content:center;height:100vh"><div style="text-align:center"><h1>POS System</h1><p>Iniciando servidor en http://localhost:3000...</p><p style="color:#94a3b8;font-size:13px">Si esto no cambia, el servidor no arranco.</p></div></body></html>';
+    dialog.showErrorBox('Error', 'No se pudo crear la ventana: ' + e.message);
+    return;
   }
-  mainWindow = new BrowserWindow({
-    width: 520, height: 450, resizable: false,
-    title: 'POS System — Iniciando',
-    webPreferences: { contextIsolation: true, nodeIntegration: false },
-  });
-  mainWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(loadingHTML));
 
-  // Start server in background
+  // 2. Tray icon (optional — won't crash if fails)
+  try { createTray(); } catch (e) { console.error('Tray error:', e.message); }
+
+  // 3. Start server in background
   startServer();
-
-  // The loading.html will auto-redirect when server is ready
-});
-
-// ─── Show main POS window (called via IPC from loading page) ──
-ipcMain.handle('server-ready', async () => {
-  const serverURL = `http://localhost:${config.serverPort || 3000}`;
-  if (mainWindow) {
-    mainWindow.setMinimumSize(900, 600);
-    mainWindow.setSize(1280, 800);
-    mainWindow.center();
-    mainWindow.loadURL(serverURL);
-    mainWindow.setTitle('POS System');
-  }
-  return serverURL;
 });
 
 app.on('before-quit', () => { isQuitting = true; stopServer(); stopDiscovery(); });
