@@ -192,28 +192,36 @@ async function waitForServer(url, maxRetries = 30) {
 
 // ─── App lifecycle ───────────────────────────────────────────
 app.whenReady().then(() => {
-  // 1. CREATE WINDOW FIRST
   mainWindow = new BrowserWindow({
     width: 1280, height: 800, minWidth: 900, minHeight: 600,
     title: 'POS System',
     webPreferences: { contextIsolation: true, nodeIntegration: false },
   });
 
-  // 2. Show loading while server starts, then redirect
-  mainWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(
-    '<html><body style="background:#0f172a;color:#e2e8f0;font-family:Arial;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">' +
-    '<div style="text-align:center"><h1>POS System</h1><p>Iniciando servidor...</p>' +
-    '<p style="color:#94a3b8;font-size:12px" id="msg">Conectando a http://localhost:3000</p></div>' +
-    '<script>var n=0;setInterval(function(){n++;document.getElementById("msg").textContent="Intento "+n+"/30...";' +
-    'fetch("http://localhost:3000").then(r=>{if(r.ok||r.status===302)location.href="http://localhost:3000"}).catch(e=>{})},1000)</script>' +
-    '</body></html>'
-  ));
+  let retries = 0;
+  function loadPOS() {
+    mainWindow.loadURL('http://localhost:' + (config.serverPort || 3000));
+  }
 
-  // 3. Tray (safe)
+  mainWindow.webContents.on('did-fail-load', (event, code, desc, url, isMainFrame) => {
+    if (isMainFrame && retries < 30) {
+      retries++;
+      console.log('[load] Reintento ' + retries + '/30 — ' + desc);
+      setTimeout(loadPOS, 1000);
+    }
+  });
+
+  mainWindow.webContents.on('did-finish-load', () => {
+    mainWindow.setTitle('POS System');
+  });
+
+  // Show loading indicator
+  mainWindow.loadURL('data:text/html,<h1 style="text-align:center;margin-top:40vh;font-family:Arial;color:#666">Iniciando POS System...</h1>');
+
   try { createTray(); } catch (e) {}
-
-  // 4. Start server
   startServer();
+  // Try loading after server has time to start
+  setTimeout(loadPOS, 500);
 });
 
 app.on('before-quit', () => { isQuitting = true; stopServer(); stopDiscovery(); });
