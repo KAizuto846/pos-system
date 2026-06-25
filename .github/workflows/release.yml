@@ -1,0 +1,83 @@
+name: Build & Release POS System
+
+on:
+  push:
+    branches: [main, master]
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g., v1.0.1)'
+        required: true
+        default: 'v1.0.0'
+
+jobs:
+  build-and-release:
+    name: Build Windows EXE + Create Release
+    runs-on: windows-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Build Next.js
+        run: npm run build
+        env:
+          AUTH_SECRET: ${{ secrets.AUTH_SECRET || 'ci-build-secret-key' }}
+          DATABASE_URL: 'file:./prisma/dev.db'
+          AUTH_URL: 'http://localhost:3000'
+          NEXT_PUBLIC_APP_URL: 'http://localhost:3000'
+
+      - name: Build Electron app (Windows)
+        run: npm run electron:build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AUTH_SECRET: ${{ secrets.AUTH_SECRET || 'ci-build-secret-key' }}
+          DATABASE_URL: 'file:./prisma/dev.db'
+
+      - name: List built artifacts
+        run: Get-ChildItem -Recurse dist-electron/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.version || github.ref_name }}
+          name: 'POS System ${{ github.event.inputs.version || github.ref_name }}'
+          body: |
+            ## 🚀 POS System — Nueva versión
+
+            ### 📥 Instalación
+            1. Descarga `POS-System-Setup-*.exe`
+            2. Ejecuta el instalador
+            3. La app se actualizará automáticamente en futuras versiones
+
+            ### 🔄 Auto-updater activo
+            Las actualizaciones se descargan automáticamente desde esta página de releases.
+
+            ---
+            *Generado automáticamente por GitHub Actions*
+          files: |
+            dist-electron/*.exe
+            dist-electron/*.blockmap
+            dist-electron/latest.yml
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
