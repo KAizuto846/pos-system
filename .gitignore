@@ -7,3 +7,8 @@ node_modules/
 *.csv
 .env
 *.deb
+dist-electron/
+*.exe
+*.blockmap
+latest.yml
+builder-effective-config.yaml

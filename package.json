@@ -1,12 +1,19 @@
 {
   "name": "pos-system-new",
-  "version": "0.1.0",
+  "version": "1.0.0",
+  "description": "Sistema de Punto de Venta — POS System",
+  "author": "KAizuto846",
   "private": true,
+  "main": "electron/main.js",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "electron:dev": "concurrently \"next dev\" \"wait-on http://localhost:3000 && electron .\"",
+    "electron:build": "next build && cp -r prisma .next/standalone/prisma && cp .env .next/standalone/.env 2>/dev/null; electron-builder --win",
+    "electron:build:linux": "next build && cp -r prisma .next/standalone/prisma && cp .env .next/standalone/.env 2>/dev/null; electron-builder --linux",
+    "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
     "@auth/prisma-adapter": "^2.11.2",
@@ -26,6 +33,9 @@
     "cmdk": "^1.1.1",
     "date-fns": "^4.1.0",
     "dbffile": "^1.12.0",
+    "electron-log": "^5.3.4",
+    "electron-store": "^10.0.1",
+    "electron-updater": "^6.6.2",
     "html2canvas": "^1.4.1",
     "jspdf": "^4.2.1",
     "lucide-react": "^1.14.0",
@@ -48,9 +58,73 @@
     "@types/papaparse": "^5.5.2",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "concurrently": "^9.2.1",
+    "electron": "^35.6.1",
+    "electron-builder": "^25.1.8",
     "eslint": "^9",
     "eslint-config-next": "16.2.6",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "wait-on": "^8.0.4"
+  },
+  "build": {
+    "appId": "com.possystem.app",
+    "productName": "POS System",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "electron/**/*",
+      ".next/standalone/**/*",
+      ".next/static/**/*",
+      "public/**/*",
+      "prisma/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": ".next/standalone",
+        "to": "standalone"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "zip",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "public/icons/icon-512.png",
+      "sign": null,
+      "verifyUpdateCodeSignature": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "POS System",
+      "installerIcon": "public/icons/icon-512.png",
+      "uninstallerIcon": "public/icons/icon-512.png",
+      "installerHeader": "public/icons/icon-512.png",
+      "license": "LICENSE"
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "icon": "public/icons",
+      "category": "Office"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "KAizuto846",
+        "repo": "pos-system"
+      }
+    ]
   }
 }

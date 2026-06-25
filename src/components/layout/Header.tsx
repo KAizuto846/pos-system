@@ -4,6 +4,7 @@ import { useSession } from 'next-auth/react';
 import { Menu } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { SyncStatusBadge } from '@/components/SyncStatusBadge';
 
 interface HeaderProps {
   title: string;
@@ -26,6 +27,9 @@ export default function Header({ title, onMenuClick }: HeaderProps) {
           <Menu className="h-5 w-5" />
         </Button>
         <h1 className="text-lg font-semibold text-slate-100">{title}</h1>
+        <div className="hidden sm:block">
+          <SyncStatusBadge />
+        </div>
       </div>
 
       {user && (
