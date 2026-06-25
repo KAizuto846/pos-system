@@ -238,15 +238,18 @@ app.whenReady().then(async () => {
   createTray();
 
   // Show loading screen IMMEDIATELY while server starts
-  const loadingPath = path.join(__dirname, 'loading.html');
+  let loadingHTML;
+  try {
+    loadingHTML = fs.readFileSync(path.join(__dirname, 'loading.html'), 'utf8');
+  } catch (e) {
+    loadingHTML = '<html><body style="background:#0f172a;color:#e2e8f0;font-family:Arial;display:flex;align-items:center;justify-content:center;height:100vh"><div style="text-align:center"><h1>POS System</h1><p>Iniciando servidor en http://localhost:3000...</p><p style="color:#94a3b8;font-size:13px">Si esto no cambia, el servidor no arranco.</p></div></body></html>';
+  }
   mainWindow = new BrowserWindow({
-    width: 520, height: 450, resizable: false, frame: true,
+    width: 520, height: 450, resizable: false,
     title: 'POS System — Iniciando',
     webPreferences: { contextIsolation: true, nodeIntegration: false },
-    show: false,
   });
-  mainWindow.loadFile(loadingPath);
-  mainWindow.once('ready-to-show', () => mainWindow.show());
+  mainWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(loadingHTML));
 
   // Start server in background
   startServer();
