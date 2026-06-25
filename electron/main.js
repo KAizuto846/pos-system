@@ -83,8 +83,7 @@ async function startServer() {
   const port = config.serverPort || 3000;
   const env = { ...process.env, NODE_ENV: 'production', PORT: String(port), HOSTNAME: '0.0.0.0' };
 
-  const nodePath = process.env.NODE_PATH || 'node';
-  serverProcess = spawn(nodePath, [SERVER_SCRIPT], {
+  serverProcess = spawn('node', [SERVER_SCRIPT], {
     cwd: SERVER_DIR,
     env,
     shell: true,
@@ -193,32 +192,27 @@ async function waitForServer(url, maxRetries = 30) {
 
 // ─── App lifecycle ───────────────────────────────────────────
 app.whenReady().then(() => {
-  // 1. CREATE WINDOW FIRST — always show something
-  try {
-    mainWindow = new BrowserWindow({
-      width: 1280, height: 800, minWidth: 900, minHeight: 600,
-      title: 'POS System',
-      webPreferences: { contextIsolation: true, nodeIntegration: false },
-      show: false,
-    });
-    mainWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(
-      '<html><body style="background:#0f172a;color:#e2e8f0;font-family:Arial;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">' +
-      '<div style="text-align:center"><h1>🏪 POS System</h1><p>Iniciando servidor...</p>' +
-      '<p style="color:#94a3b8;font-size:12px" id="msg">Conectando a http://localhost:3000</p></div>' +
-      '<script>var n=0;setInterval(function(){n++;document.getElementById("msg").textContent="Intento "+n+"/30...";' +
-      'fetch("http://localhost:3000/api/sync").then(r=>{if(r.ok)location.href="http://localhost:3000"}).catch(e=>{})},1000)</script>' +
-      '</body></html>'
-    ));
-    mainWindow.once('ready-to-show', () => { mainWindow.show(); mainWindow.center(); });
-  } catch (e) {
-    dialog.showErrorBox('Error', 'No se pudo crear la ventana: ' + e.message);
-    return;
-  }
+  // 1. CREATE WINDOW FIRST
+  mainWindow = new BrowserWindow({
+    width: 1280, height: 800, minWidth: 900, minHeight: 600,
+    title: 'POS System',
+    webPreferences: { contextIsolation: true, nodeIntegration: false },
+  });
 
-  // 2. Tray icon (optional — won't crash if fails)
-  try { createTray(); } catch (e) { console.error('Tray error:', e.message); }
+  // 2. Show loading while server starts, then redirect
+  mainWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(
+    '<html><body style="background:#0f172a;color:#e2e8f0;font-family:Arial;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">' +
+    '<div style="text-align:center"><h1>POS System</h1><p>Iniciando servidor...</p>' +
+    '<p style="color:#94a3b8;font-size:12px" id="msg">Conectando a http://localhost:3000</p></div>' +
+    '<script>var n=0;setInterval(function(){n++;document.getElementById("msg").textContent="Intento "+n+"/30...";' +
+    'fetch("http://localhost:3000").then(r=>{if(r.ok||r.status===302)location.href="http://localhost:3000"}).catch(e=>{})},1000)</script>' +
+    '</body></html>'
+  ));
 
-  // 3. Start server in background
+  // 3. Tray (safe)
+  try { createTray(); } catch (e) {}
+
+  // 4. Start server
   startServer();
 });
 
