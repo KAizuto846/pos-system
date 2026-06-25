@@ -196,9 +196,10 @@ app.whenReady().then(() => {
   // 1. CREATE WINDOW FIRST — always show something
   try {
     mainWindow = new BrowserWindow({
-      width: 520, height: 450, resizable: false,
+      width: 1280, height: 800, minWidth: 900, minHeight: 600,
       title: 'POS System',
       webPreferences: { contextIsolation: true, nodeIntegration: false },
+      show: false,
     });
     mainWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(
       '<html><body style="background:#0f172a;color:#e2e8f0;font-family:Arial;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">' +
@@ -208,6 +209,7 @@ app.whenReady().then(() => {
       'fetch("http://localhost:3000/api/sync").then(r=>{if(r.ok)location.href="http://localhost:3000"}).catch(e=>{})},1000)</script>' +
       '</body></html>'
     ));
+    mainWindow.once('ready-to-show', () => { mainWindow.show(); mainWindow.center(); });
   } catch (e) {
     dialog.showErrorBox('Error', 'No se pudo crear la ventana: ' + e.message);
     return;
