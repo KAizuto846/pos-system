@@ -79,33 +79,6 @@ async function startServer() {
     return;
   }
 
-  // ── Run prisma db push on first launch ──────────────────
-  const dbFile = path.join(SERVER_DIR, 'prisma', 'dev.db');
-  if (!fs.existsSync(dbFile)) {
-    console.log('[setup] Creando base de datos...');
-    try {
-      await new Promise((resolve, reject) => {
-        const prismaCli = path.join(SERVER_DIR, 'node_modules', 'prisma', 'build', 'index.js');
-        const prismaProc = spawn('node', [prismaCli, 'db', 'push', '--skip-generate'], {
-          cwd: SERVER_DIR,
-          shell: true,
-          env: { ...process.env, DATABASE_URL: 'file:./prisma/dev.db' },
-        });
-        let out = '';
-        prismaProc.stdout.on('data', (d) => { out += d.toString(); process.stdout.write('[prisma] ' + d); });
-        prismaProc.stderr.on('data', (d) => { out += d.toString(); process.stderr.write('[prisma] ' + d); });
-        prismaProc.on('close', (code) => {
-          code === 0 ? resolve() : reject(new Error('Prisma exit ' + code + ': ' + out.slice(-300)));
-        });
-        prismaProc.on('error', reject);
-        setTimeout(() => reject(new Error('Timeout')), 30000);
-      });
-      console.log('[setup] BD lista');
-    } catch (e) {
-      dialog.showErrorBox('Error BD', 'No se pudo crear la base de datos:\n' + e.message);
-    }
-  }
-
   // ── Start server ────────────────────────────────────────
   const port = config.serverPort || 3000;
   const env = { ...process.env, NODE_ENV: 'production', PORT: String(port), HOSTNAME: '0.0.0.0' };
