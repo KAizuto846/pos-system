@@ -45,11 +45,15 @@ jobs:
           NEXT_PUBLIC_APP_URL: 'http://localhost:3000'
 
       - name: Build Electron app (Windows)
-        run: npm run electron:build
+        run: |
+          # Create .env for standalone server
+          echo "AUTH_SECRET=${{ secrets.AUTH_SECRET || 'pos-system-ci-secret-2026' }}" > .env
+          echo "DATABASE_URL=file:./prisma/dev.db" >> .env
+          echo "AUTH_URL=http://localhost:3000" >> .env
+          echo "NEXT_PUBLIC_APP_URL=http://localhost:3000" >> .env
+          npm run electron:build
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          AUTH_SECRET: ${{ secrets.AUTH_SECRET || 'ci-build-secret-key' }}
-          DATABASE_URL: 'file:./prisma/dev.db'
 
       - name: List built artifacts
         run: Get-ChildItem -Recurse dist-electron/
