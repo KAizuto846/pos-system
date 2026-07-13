@@ -62,6 +62,11 @@ if (fs.existsSync(prismaSrc)) {
 if (fs.existsSync(envSrc)) {
   fs.copyFileSync(envSrc, envDest);
   console.log('✓ .env copied');
+} else if (fs.existsSync(path.join(__dirname, '..', '.env.example'))) {
+  // Create .env from .env.example with relative DB path for build time
+  const envContent = `AUTH_SECRET="pos-system-build-secret"\nDATABASE_URL="file:./prisma/dev.db"\nAUTH_URL="http://localhost:3000"\nNEXT_PUBLIC_APP_URL="http://localhost:3000"\n`;
+  fs.writeFileSync(envDest, envContent, 'utf8');
+  console.log('✓ .env created from defaults');
 }
 
 // Copy .next/static into standalone (required for CSS/JS/assets)
@@ -80,6 +85,15 @@ if (fs.existsSync(publicSrc)) {
   if (fs.existsSync(publicDest)) fs.rmSync(publicDest, { recursive: true, force: true });
   fs.cpSync(publicSrc, publicDest, { recursive: true });
   console.log('✓ public/ copied');
+}
+
+// Copy prisma CLI into standalone (needed for runtime migrations)
+const prismaCliSrc = path.join(__dirname, '..', 'node_modules', 'prisma');
+const prismaCliDest = path.join(standaloneDir, 'node_modules', 'prisma');
+if (fs.existsSync(prismaCliSrc)) {
+  if (fs.existsSync(prismaCliDest)) fs.rmSync(prismaCliDest, { recursive: true, force: true });
+  fs.cpSync(prismaCliSrc, prismaCliDest, { recursive: true });
+  console.log('✓ node_modules/prisma copied');
 }
 
 // Step 3: Build with electron-builder

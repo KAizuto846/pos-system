@@ -74,6 +74,84 @@ function announceServer(port) {
 }
 
 // ─── Server management ───────────────────────────────────────
+const USER_DATA = app.getPath('userData');
+const DB_PATH = path.join(USER_DATA, 'pos.db');
+
+function ensureEnv() {
+  const userEnv = path.join(USER_DATA, '.env');
+  if (!fs.existsSync(userEnv)) {
+    const dbUrl = `file:${DB_PATH}`;
+    const envContent = [
+      `DATABASE_URL="${dbUrl}"`,
+      `AUTH_SECRET="pos-system-secret"`,
+      `AUTH_URL="http://localhost:${config.serverPort || 3000}"`,
+      `NEXT_PUBLIC_APP_URL="http://localhost:${config.serverPort || 3000}"`,
+    ].join('\n');
+    fs.writeFileSync(userEnv, envContent, 'utf8');
+    console.log('[env] Created default .env in userData');
+  }
+  return userEnv;
+}
+
+function getServerEnv() {
+  const port = config.serverPort || 3000;
+  const env = {
+    ...process.env,
+    NODE_ENV: 'production',
+    PORT: String(port),
+    HOSTNAME: '0.0.0.0',
+    DATABASE_URL: `file:${DB_PATH}`,
+    AUTH_SECRET: 'pos-system-secret',
+    AUTH_URL: `http://localhost:${port}`,
+    NEXT_PUBLIC_APP_URL: `http://localhost:${port}`,
+  };
+
+  try {
+    const userEnv = path.join(USER_DATA, '.env');
+    const envContent = fs.readFileSync(userEnv, 'utf8');
+    envContent.split('\n').forEach(line => {
+      const match = line.match(/^([^#=]+)=(.+)/);
+      if (match) {
+        env[match[1].trim()] = match[2].trim().replace(/^["']|["']$/g, '');
+      }
+    });
+  } catch (e) {}
+
+  // Always force absolute DB path so SQLite works in packaged app
+  env.DATABASE_URL = `file:${DB_PATH}`;
+  return env;
+}
+
+function runPrismaMigrate() {
+  return new Promise((resolve) => {
+    const initDbPath = isPackaged
+      ? path.join(process.resourcesPath, 'standalone', 'electron', 'init-db.js')
+      : path.join(__dirname, 'init-db.js');
+    const dbUrl = `file:${DB_PATH}`;
+    const env = getServerEnv();
+    const child = spawn('node', [initDbPath, dbUrl], {
+      cwd: SERVER_DIR,
+      env,
+      shell: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let out = '';
+    let err = '';
+    child.stdout.on('data', d => { out += d.toString(); });
+    child.stderr.on('data', d => { err += d.toString(); });
+    child.on('close', (code) => {
+      console.log('[db] init-db exit:', code);
+      if (err) console.error('[db]', err.trim());
+      if (out) console.log('[db]', out.trim());
+      resolve(code === 0);
+    });
+    child.on('error', (e) => {
+      console.error('[db] init-db error:', e.message);
+      resolve(false);
+    });
+  });
+}
+
 async function startServer() {
   if (serverProcess) return;
   if (!fs.existsSync(SERVER_SCRIPT)) {
@@ -82,9 +160,16 @@ async function startServer() {
     return;
   }
 
-  // ── Start server ────────────────────────────────────────
+  ensureEnv();
+
+  // Ensure DB exists and schema is up to date
+  console.log('[db] Running prisma migrate deploy...');
+  await runPrismaMigrate();
+
+  const env = getServerEnv();
   const port = config.serverPort || 3000;
-  const env = { ...process.env, NODE_ENV: 'production', PORT: String(port), HOSTNAME: '0.0.0.0' };
+
+  console.log('[srv] Starting server on port', port, '- DB:', env.DATABASE_URL);
 
   serverProcess = spawn('node', [SERVER_SCRIPT], {
     cwd: SERVER_DIR,
@@ -174,18 +259,19 @@ async function getTargetURL() {
   return url;
 }
 
-async function waitForServer(url, maxRetries = 30) {
+async function waitForServer(url, maxRetries = 60) {
   for (let i = 0; i < maxRetries; i++) {
     try {
       await new Promise((resolve, reject) => {
-        const req = http.get(url + '/api/sync', (res) => {
+        const req = http.get(url, (res) => {
           res.resume();
-          res.statusCode < 500 ? resolve() : reject(new Error('Status ' + res.statusCode));
+          // Any response (even redirects) means server is up
+          resolve();
         });
         req.on('error', (e) => reject(e));
-        req.setTimeout(1000, () => { req.destroy(); reject(new Error('timeout')); });
+        req.setTimeout(2000, () => { req.destroy(); reject(new Error('timeout')); });
       });
-      return; // Success
+      return;
     } catch (e) {
       if (i === 0) console.log('[wait] Esperando servidor en', url, '...');
       await new Promise(r => setTimeout(r, 1000));
