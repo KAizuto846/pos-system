@@ -32,6 +32,15 @@ function run(cmd, args, options = {}) {
   return result;
 }
 
+// Step 0: Generate icon files if needed
+console.log('\n📦 Paso 0: Generating icon files...');
+const icoPath = path.join(__dirname, '..', 'public', 'icons', 'icon-512.ico');
+if (!fs.existsSync(icoPath)) {
+  run('node', ['scripts/create-icon.js']);
+} else {
+  console.log('✓ Icon files already exist, skipping generation');
+}
+
 // Step 1: Build Next.js standalone
 console.log('\n📦 Paso 1: Building Next.js standalone...');
 run('npm', ['run', 'build']);

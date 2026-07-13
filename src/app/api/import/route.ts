@@ -48,7 +48,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const result = await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx: any) => {
       const departmentMap = new Map<string, number>();
       let departmentsCreated = 0;
       let departmentsSkipped = 0;

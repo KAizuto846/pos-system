@@ -45,7 +45,7 @@ export async function POST(
       );
     }
 
-    const updatedOrder = await prisma.$transaction(async (tx) => {
+    const updatedOrder = await prisma.$transaction(async (tx: any) => {
       for (const item of items) {
         const { orderItemId, receivedQuantity } = item;
 
@@ -53,7 +53,7 @@ export async function POST(
           throw new Error(`Cantidad recibida inválida para el item ${orderItemId}`);
         }
 
-        const orderItem = order.items.find((oi) => oi.id === orderItemId);
+        const orderItem = order.items.find((oi: any) => oi.id === orderItemId);
         if (!orderItem) {
           throw new Error(`Item de orden ${orderItemId} no encontrado`);
         }
@@ -87,8 +87,8 @@ export async function POST(
         where: { supplierOrderId: orderId },
       });
 
-      const totalOrdered = updatedItems.reduce((sum, i) => sum + i.quantity, 0);
-      const totalReceived = updatedItems.reduce((sum, i) => sum + i.receivedQuantity, 0);
+      const totalOrdered = updatedItems.reduce((sum: number, i: any) => sum + i.quantity, 0);
+      const totalReceived = updatedItems.reduce((sum: number, i: any) => sum + i.receivedQuantity, 0);
 
       let newStatus: string;
       if (totalReceived === 0) {

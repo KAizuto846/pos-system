@@ -36,7 +36,7 @@ export async function GET(
     });
 
     // Formatear respuesta con precio de proveedor si existe
-    const result = products.map((p) => ({
+    const result = products.map((p: any) => ({
       id: p.id,
       name: p.name,
       barcode: p.barcode,

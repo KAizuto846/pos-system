@@ -25,7 +25,7 @@ export async function PUT(
 
     // If items are provided, update them (editing quantities/notes)
     if (items && Array.isArray(items)) {
-      await prisma.$transaction(async (tx) => {
+      await prisma.$transaction(async (tx: any) => {
         for (const item of items) {
           await tx.supplierOrderItem.update({
             where: { id: item.id },

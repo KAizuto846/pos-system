@@ -45,7 +45,7 @@ export async function POST(request: Request) {
 
     const data = parsed.data;
 
-    const order = await prisma.$transaction(async (tx) => {
+    const order = await prisma.$transaction(async (tx: any) => {
       const newOrder = await tx.supplierOrder.create({
         data: {
           supplierId: data.supplierId,

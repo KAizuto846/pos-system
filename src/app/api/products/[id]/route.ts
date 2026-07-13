@@ -46,7 +46,7 @@ export async function PUT(
     const productLinesData = body.productLines;
 
     // Use a transaction: update product + replace productLines
-    const product = await prisma.$transaction(async (tx) => {
+    const product = await prisma.$transaction(async (tx: any) => {
       // Update product fields
       const updated = await tx.product.update({
         where: { id: productId },

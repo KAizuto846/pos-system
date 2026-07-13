@@ -69,14 +69,14 @@ export async function GET() {
     ]);
 
     // Get user names for cashier breakdown
-    const userIds = todayCashiers.map((c) => c.userId);
+    const userIds = todayCashiers.map((c: any) => c.userId);
     const users = await prisma.user.findMany({
       where: { id: { in: userIds } },
       select: { id: true, name: true },
     });
-    const userMap = new Map(users.map((u) => [u.id, u.name]));
+    const userMap = new Map(users.map((u: any) => [u.id, u.name]));
 
-    const salesByCashier = todayCashiers.map((c) => ({
+    const salesByCashier = todayCashiers.map((c: any) => ({
       userId: c.userId,
       name: userMap.get(c.userId) || "Desconocido",
       total: c._sum.total || 0,
@@ -91,7 +91,7 @@ export async function GET() {
       totalRevenue: totalRevenueResult._sum.total || 0,
       todayRevenue: todayRevenueResult._sum.total || 0,
       cashInDrawer: cashInDrawerResult._sum.total || 0,
-      lowStockProducts: lowStockProducts.map((p) => ({
+      lowStockProducts: lowStockProducts.map((p: any) => ({
         id: p.id,
         name: p.name,
         stock: p.stock,

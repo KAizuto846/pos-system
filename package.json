@@ -116,10 +116,7 @@
       "shortcutName": "POS System",
       "installerIcon": "public/icons/icon-512.ico",
       "uninstallerIcon": "public/icons/icon-512.ico",
-      "installerHeader": "public/icons/installer-header.bmp",
-      "license": "LICENSE",
-      "include": "electron/nsis/installer.nsi",
-      "deleteAppDataOnUninstall": false
+      "license": "LICENSE"
     },
     "linux": {
       "target": ["AppImage", "deb"],

@@ -45,7 +45,7 @@ export async function POST(request: Request) {
     });
 
     const salesCount = salesInRange.length;
-    const totalRevenue = salesInRange.reduce((sum, s) => sum + s.total, 0);
+    const totalRevenue = salesInRange.reduce((sum: number, s: any) => sum + s.total, 0);
 
     // Top products
     const productSales: Record<number, { name: string; quantity: number; revenue: number }> = {};

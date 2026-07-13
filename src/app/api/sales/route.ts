@@ -53,7 +53,7 @@ export async function POST(request: Request) {
     const data = parsed.data;
     const userId = parseInt(session.user.id, 10);
 
-    const sale = await prisma.$transaction(async (tx) => {
+    const sale = await prisma.$transaction(async (tx: any) => {
       // Atomic stock check + decrement using raw SQL
       // This prevents race conditions between concurrent sales
       for (const item of data.items) {

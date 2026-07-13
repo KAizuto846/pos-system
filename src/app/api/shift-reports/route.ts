@@ -122,7 +122,7 @@ export async function POST(request: Request) {
     });
 
     const totalSales = sales.length;
-    const totalAmount = sales.reduce((sum, s) => sum + s.total, 0);
+    const totalAmount = sales.reduce((sum: number, s: any) => sum + s.total, 0);
 
     // Calculate refunds for this user in the date range
     const refunds = await prisma.refund.findMany({
@@ -133,7 +133,7 @@ export async function POST(request: Request) {
     });
 
     const totalRefunds = refunds.length;
-    const refundAmount = refunds.reduce((sum, r) => sum + r.amount, 0);
+    const refundAmount = refunds.reduce((sum: number, r: any) => sum + r.amount, 0);
     const netAmount = totalAmount - refundAmount;
 
     // Build payment method breakdown

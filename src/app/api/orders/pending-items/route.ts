@@ -92,8 +92,8 @@ export async function GET(request: Request) {
     return Response.json({
       supplierId: sid,
       supplierName,
-      totalOrdersWithPending: orders.filter(o =>
-        o.items.some(i => i.quantity > i.receivedQuantity)
+      totalOrdersWithPending: orders.filter((o: any) =>
+        o.items.some((i: any) => i.quantity > i.receivedQuantity)
       ).length,
       products,
     });

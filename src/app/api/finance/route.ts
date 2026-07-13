@@ -143,7 +143,7 @@ export async function GET(request: Request) {
           prisma.product.count({ where }),
         ]);
 
-        const items = products.map((p) => ({
+        const items = products.map((p: any) => ({
           id: p.id,
           name: p.name,
           barcode: p.barcode,
