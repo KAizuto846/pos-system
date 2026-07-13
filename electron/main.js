@@ -206,34 +206,36 @@ app.whenReady().then(() => {
     },
   });
 
-  // Setup auto-updater after window is created
   setupAutoUpdater(mainWindow);
 
-  let retries = 0;
-  function loadPOS() {
+  try { createTray(); } catch (e) {}
+
+  // Show loading screen immediately
+  mainWindow.loadURL('data:text/html,<html><body style="display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#0a0a0a;color:#e5e5e5;font-family:Arial,sans-serif"><div style="text-align:center"><h2 style="font-size:24px">POS System</h2><p style="color:#a3a3a3">Iniciando servidor...</p></div></body></html>');
+
+  startServer();
+
+  // Wait for server, then load the app
+  (async () => {
     const port = config.serverPort || 3000;
-    mainWindow.loadURL(`http://localhost:${port}`);
-  }
+    const url = `http://localhost:${port}`;
+    await waitForServer(url);
+    mainWindow.loadURL(url);
+  })();
 
   mainWindow.webContents.on('did-fail-load', (event, code, desc, url, isMainFrame) => {
-    if (isMainFrame && retries < 30) {
-      retries++;
-      console.log('[load] Reintento ' + retries + '/30 — ' + desc);
-      setTimeout(loadPOS, 1000);
+    if (isMainFrame) {
+      console.log('[load] Failed:', desc, '— retrying in 2s');
+      setTimeout(() => {
+        const port = config.serverPort || 3000;
+        mainWindow.loadURL(`http://localhost:${port}`);
+      }, 2000);
     }
   });
 
   mainWindow.webContents.on('did-finish-load', () => {
     mainWindow.setTitle('POS System');
   });
-
-  // Show loading indicator
-  mainWindow.loadURL('data:text/html,<h1 style="text-align:center;margin-top:40vh;font-family:Arial;color:#666">Iniciando POS System...</h1>');
-
-  try { createTray(); } catch (e) {}
-  startServer();
-  // Try loading after server has time to start
-  setTimeout(loadPOS, 500);
 });
 
 app.on('before-quit', () => { isQuitting = true; stopServer(); stopDiscovery(); });

@@ -64,6 +64,24 @@ if (fs.existsSync(envSrc)) {
   console.log('✓ .env copied');
 }
 
+// Copy .next/static into standalone (required for CSS/JS/assets)
+const staticSrc = path.join(__dirname, '..', '.next', 'static');
+const staticDest = path.join(standaloneDir, '.next', 'static');
+if (fs.existsSync(staticSrc)) {
+  if (fs.existsSync(staticDest)) fs.rmSync(staticDest, { recursive: true, force: true });
+  fs.cpSync(staticSrc, staticDest, { recursive: true });
+  console.log('✓ .next/static copied');
+}
+
+// Copy public into standalone (required for images/icons)
+const publicSrc = path.join(__dirname, '..', 'public');
+const publicDest = path.join(standaloneDir, 'public');
+if (fs.existsSync(publicSrc)) {
+  if (fs.existsSync(publicDest)) fs.rmSync(publicDest, { recursive: true, force: true });
+  fs.cpSync(publicSrc, publicDest, { recursive: true });
+  console.log('✓ public/ copied');
+}
+
 // Step 3: Build with electron-builder
 console.log('\n📦 Paso 3: Building with electron-builder...');
 
