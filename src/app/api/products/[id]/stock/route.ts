@@ -1,5 +1,6 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { broadcast } from "@/lib/broadcast";
 
 export async function POST(
   request: Request,
@@ -28,29 +29,46 @@ export async function POST(
       );
     }
 
-    const product = await prisma.product.findUnique({
-      where: { id: productId },
-    });
-
-    if (!product) {
-      return Response.json({ error: "Producto no encontrado" }, { status: 404 });
+    // Atomic stock update using raw SQL
+    // This prevents race conditions between concurrent adjustments
+    let result: number;
+    if (quantity < 0) {
+      // Decreasing stock: only succeed if there's enough
+      result = await prisma.$executeRaw`
+        UPDATE products SET stock = stock + ${quantity}
+        WHERE id = ${productId} AND stock >= ${-quantity}
+      `;
+    } else {
+      // Increasing stock: always succeeds
+      result = await prisma.$executeRaw`
+        UPDATE products SET stock = stock + ${quantity}
+        WHERE id = ${productId}
+      `;
     }
 
-    const newStock = product.stock + quantity;
+    if (result === 0) {
+      // Check if product exists
+      const product = await prisma.product.findUnique({
+        where: { id: productId },
+        select: { name: true, stock: true },
+      });
 
-    if (newStock < 0) {
+      if (!product) {
+        return Response.json({ error: "Producto no encontrado" }, { status: 404 });
+      }
+
       return Response.json(
         { error: "Stock insuficiente. El stock no puede ser negativo." },
         { status: 400 }
       );
     }
 
-    const updated = await prisma.product.update({
+    const updated = await prisma.product.findUnique({
       where: { id: productId },
-      data: { stock: newStock },
       include: { department: true, supplier: true },
     });
 
+    broadcast("product:stock", { id: productId, stock: updated!.stock });
     return Response.json(updated);
   } catch (error) {
     console.error("Error adjusting stock:", error);

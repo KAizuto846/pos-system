@@ -1,5 +1,6 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { broadcast } from "@/lib/broadcast";
 
 export async function POST(
   request: Request,
@@ -112,6 +113,7 @@ export async function POST(
       return updatedOrder;
     });
 
+    broadcast("order:receive", { id: orderId });
     return Response.json(updatedOrder);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Error al recibir orden";

@@ -1,6 +1,7 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { paymentMethodSchema } from "@/lib/validations";
+import { broadcast } from "@/lib/broadcast";
 
 export async function PUT(
   request: Request,
@@ -41,6 +42,7 @@ export async function PUT(
       data: updateData,
     });
 
+    broadcast("payment:change", { id: paymentMethodId });
     return Response.json(paymentMethod);
   } catch (error) {
     console.error("Error updating payment method:", error);
@@ -69,6 +71,7 @@ export async function DELETE(
       where: { id: paymentMethodId },
     });
 
+    broadcast("payment:change", { id: paymentMethodId });
     return Response.json({ success: true });
   } catch (error) {
     console.error("Error deleting payment method:", error);

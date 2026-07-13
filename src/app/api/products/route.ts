@@ -1,6 +1,7 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { productSchema } from "@/lib/validations";
+import { broadcast } from "@/lib/broadcast";
 
 export async function GET(request: Request) {
   try {
@@ -118,6 +119,7 @@ export async function POST(request: Request) {
       include: { department: true, supplier: true, productLines: { include: { supplier: true } } },
     });
 
+    broadcast("product:create", { id: product.id });
     return Response.json(product, { status: 201 });
   } catch (error) {
     console.error("Error creating product:", error);

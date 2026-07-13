@@ -2,6 +2,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { userSchema } from "@/lib/validations";
 import { hash } from "bcrypt-ts";
+import { broadcast } from "@/lib/broadcast";
 
 export async function GET() {
   try {
@@ -86,6 +87,7 @@ export async function POST(request: Request) {
       },
     });
 
+    broadcast("user:change", { id: user.id });
     return Response.json(user, { status: 201 });
   } catch (error) {
     console.error("Error creating user:", error);

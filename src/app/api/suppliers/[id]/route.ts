@@ -1,6 +1,7 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { supplierSchema } from "@/lib/validations";
+import { broadcast } from "@/lib/broadcast";
 
 export async function PUT(
   request: Request,
@@ -44,6 +45,7 @@ export async function PUT(
       data: updateData,
     });
 
+    broadcast("supplier:change", { id: supplierId });
     return Response.json(supplier);
   } catch (error) {
     console.error("Error updating supplier:", error);
@@ -72,6 +74,7 @@ export async function DELETE(
       where: { id: supplierId },
     });
 
+    broadcast("supplier:change", { id: supplierId });
     return Response.json({ success: true });
   } catch (error) {
     console.error("Error deleting supplier:", error);

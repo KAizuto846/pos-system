@@ -2,6 +2,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { userSchema } from "@/lib/validations";
 import { hash } from "bcrypt-ts";
+import { broadcast } from "@/lib/broadcast";
 
 export async function PUT(
   request: Request,
@@ -55,6 +56,7 @@ export async function PUT(
       },
     });
 
+    broadcast("user:change", { id: userId });
     return Response.json(user);
   } catch (error) {
     console.error("Error updating user:", error);
@@ -90,6 +92,7 @@ export async function DELETE(
       where: { id: userId },
     });
 
+    broadcast("user:change", { id: userId });
     return Response.json({ success: true });
   } catch (error) {
     console.error("Error deleting user:", error);

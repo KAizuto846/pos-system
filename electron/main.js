@@ -31,6 +31,9 @@ const SERVER_DIR = isPackaged
 
 const SERVER_SCRIPT = path.join(SERVER_DIR, 'server.js');
 
+// ─── Updater ────────────────────────────────────────────────
+const { setupAutoUpdater, checkForUpdates, installUpdate } = require('./updater');
+
 // ─── UDP Discovery ───────────────────────────────────────────
 const DISCOVERY_PORT = 9876;
 const DISCOVERY_MULTICAST = '230.185.192.108';
@@ -135,6 +138,7 @@ function createTray() {
     { label: 'Automatico', type: 'radio', checked: config.mode === 'auto', click: () => setMode('auto') },
     { type: 'separator' },
     { label: 'Reiniciar Servidor', click: () => { stopServer(); setTimeout(startServer, 1000); } },
+    { label: 'Buscar actualizaciones', click: () => { checkForUpdates(); } },
     { type: 'separator' },
     { label: 'Salir', click: () => { isQuitting = true; stopServer(); stopDiscovery(); app.quit(); } },
   ]);
@@ -195,12 +199,20 @@ app.whenReady().then(() => {
   mainWindow = new BrowserWindow({
     width: 1280, height: 800, minWidth: 900, minHeight: 600,
     title: 'POS System',
-    webPreferences: { contextIsolation: true, nodeIntegration: false },
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
   });
+
+  // Setup auto-updater after window is created
+  setupAutoUpdater(mainWindow);
 
   let retries = 0;
   function loadPOS() {
-    mainWindow.loadURL('http://localhost:' + (config.serverPort || 3000));
+    const port = config.serverPort || 3000;
+    mainWindow.loadURL(`http://localhost:${port}`);
   }
 
   mainWindow.webContents.on('did-fail-load', (event, code, desc, url, isMainFrame) => {
@@ -232,3 +244,5 @@ ipcMain.handle('set-config', (e, key, value) => { config[key] = value; saveConfi
 ipcMain.handle('get-discovered-servers', () => discoveredServers);
 ipcMain.handle('get-app-version', () => app.getVersion());
 ipcMain.handle('restart-server', () => { stopServer(); setTimeout(startServer, 1000); return true; });
+ipcMain.handle('check-for-updates', () => { checkForUpdates(); return true; });
+ipcMain.handle('install-update', () => { installUpdate(); return true; });

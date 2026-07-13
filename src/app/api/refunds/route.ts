@@ -1,6 +1,7 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { refundSchema } from "@/lib/validations";
+import { broadcast } from "@/lib/broadcast";
 
 export async function POST(request: Request) {
   try {
@@ -43,18 +44,15 @@ export async function POST(request: Request) {
         throw new Error("El producto no pertenece a esta venta");
       }
 
-      // Calculate already refunded quantity for this product in this sale
-      const existingRefunds = await tx.refund.findMany({
-        where: {
-          saleId: data.saleId,
-          productId: data.productId,
-        },
-      });
+      // Calculate already refunded quantity using atomic SQL
+      // This prevents race conditions between concurrent refunds
+      const alreadyRefundedResult = await tx.$queryRaw<{ total: number }[]>`
+        SELECT COALESCE(SUM(quantity), 0) as total
+        FROM refunds
+        WHERE sale_id = ${data.saleId} AND product_id = ${data.productId}
+      `;
 
-      const alreadyRefunded = existingRefunds.reduce(
-        (sum, r) => sum + r.quantity,
-        0
-      );
+      const alreadyRefunded = Number(alreadyRefundedResult[0]?.total || 0);
       const availableToRefund = saleItem.quantity - alreadyRefunded;
 
       if (data.quantity > availableToRefund) {
@@ -63,7 +61,7 @@ export async function POST(request: Request) {
         );
       }
 
-      // Verify the product exists and get its current stock
+      // Verify the product exists
       const product = await tx.product.findUnique({
         where: { id: data.productId },
       });
@@ -95,11 +93,11 @@ export async function POST(request: Request) {
         },
       });
 
-      // Restore product stock
-      await tx.product.update({
-        where: { id: data.productId },
-        data: { stock: { increment: data.quantity } },
-      });
+      // Restore product stock atomically
+      await tx.$executeRaw`
+        UPDATE products SET stock = stock + ${data.quantity}
+        WHERE id = ${data.productId}
+      `;
 
       // Create cash entry for the refund (expense)
       await tx.cashEntry.create({
@@ -116,6 +114,7 @@ export async function POST(request: Request) {
       return newRefund;
     });
 
+    broadcast("refund:create", { id: refund.id, saleId: refund.saleId });
     return Response.json(refund, { status: 201 });
   } catch (error) {
     const message =

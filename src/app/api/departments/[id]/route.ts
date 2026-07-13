@@ -1,6 +1,7 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { departmentSchema } from "@/lib/validations";
+import { broadcast } from "@/lib/broadcast";
 
 export async function PUT(
   request: Request,
@@ -41,6 +42,7 @@ export async function PUT(
       data: updateData,
     });
 
+    broadcast("department:change", { id: departmentId });
     return Response.json(department);
   } catch (error) {
     console.error("Error updating department:", error);
@@ -69,6 +71,7 @@ export async function DELETE(
       where: { id: departmentId },
     });
 
+    broadcast("department:change", { id: departmentId });
     return Response.json({ success: true });
   } catch (error) {
     console.error("Error deleting department:", error);

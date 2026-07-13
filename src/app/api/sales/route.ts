@@ -1,6 +1,7 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { saleSchema } from "@/lib/validations";
+import { broadcast } from "@/lib/broadcast";
 
 export async function GET() {
   try {
@@ -53,17 +54,25 @@ export async function POST(request: Request) {
     const userId = parseInt(session.user.id, 10);
 
     const sale = await prisma.$transaction(async (tx) => {
-      // Verify stock for all products
+      // Atomic stock check + decrement using raw SQL
+      // This prevents race conditions between concurrent sales
       for (const item of data.items) {
-        const product = await tx.product.findUnique({
-          where: { id: item.productId },
-        });
+        const result = await tx.$executeRaw`
+          UPDATE products SET stock = stock - ${item.quantity}
+          WHERE id = ${item.productId} AND stock >= ${item.quantity}
+        `;
 
-        if (!product) {
-          throw new Error(`Producto con ID ${item.productId} no encontrado`);
-        }
+        if (result === 0) {
+          // Check if product exists to give a better error message
+          const product = await tx.product.findUnique({
+            where: { id: item.productId },
+            select: { name: true, stock: true },
+          });
 
-        if (product.stock < item.quantity) {
+          if (!product) {
+            throw new Error(`Producto con ID ${item.productId} no encontrado`);
+          }
+
           throw new Error(
             `Stock insuficiente para ${product.name}. Disponible: ${product.stock}, requerido: ${item.quantity}`
           );
@@ -95,14 +104,6 @@ export async function POST(request: Request) {
         },
       });
 
-      // Decrement stock for each product
-      for (const item of data.items) {
-        await tx.product.update({
-          where: { id: item.productId },
-          data: { stock: { decrement: item.quantity } },
-        });
-      }
-
       // Auto-create cash entry for this sale
       await tx.cashEntry.create({
         data: {
@@ -119,6 +120,7 @@ export async function POST(request: Request) {
       return newSale;
     });
 
+    broadcast("sale:create", { id: sale.id, total: sale.total });
     return Response.json(sale, { status: 201 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Error al crear venta";

@@ -1,6 +1,7 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { productSchema } from "@/lib/validations";
+import { broadcast } from "@/lib/broadcast";
 
 export async function PUT(
   request: Request,
@@ -91,6 +92,7 @@ export async function PUT(
       });
     });
 
+    broadcast("product:update", { id: productId });
     return Response.json(product);
   } catch (error) {
     console.error("Error updating product:", error);
@@ -119,6 +121,7 @@ export async function DELETE(
       where: { id: productId },
     });
 
+    broadcast("product:delete", { id: productId });
     return Response.json({ success: true });
   } catch (error) {
     console.error("Error deleting product:", error);

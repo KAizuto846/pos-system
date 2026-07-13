@@ -1,61 +1,50 @@
 @echo off
 chcp 65001 >nul
-title POS System - Instalador
+title POS System - Instalador Windows
 
 echo.
 echo  ╔══════════════════════════════════════════╗
-echo  ║   🏪 POS System — Instalacion Windows   ║
+echo  ║   POS System - Instalador Windows        ║
+echo  ║   Sistema de Punto de Venta              ║
 echo  ╚══════════════════════════════════════════╝
 echo.
 
-:: ── Check Node.js ──────────────────────────────
-where node >nul 2>nul
-if %errorlevel% neq 0 (
-    echo [ERROR] Node.js no esta instalado.
-    echo Descargalo de: https://nodejs.org (version 20+)
+:: Check if running as Administrator
+net session >nul 2>&1
+if %errorLevel% neq 0 (
+    echo [ERROR] Este instalador requiere permisos de Administrador.
+    echo.
+    echo Por favor:
+    echo   1. Haga clic derecho en este archivo
+    echo   2. Seleccione "Ejecutar como administrador"
+    echo.
     pause
     exit /b 1
 )
 
-echo [✓] Node.js encontrado
-node --version
-
-:: ── Install dependencies ───────────────────────
-echo.
-echo [1/3] Instalando dependencias...
-call npm ci --production
-if %errorlevel% neq 0 (
-    echo [!] npm ci fallo, intentando npm install...
-    call npm install --production
+:: Check if PowerShell is available
+where powershell >nul 2>nul
+if %errorLevel% neq 0 (
+    echo [ERROR] PowerShell no encontrado.
+    pause
+    exit /b 1
 )
 
-:: ── Setup database ─────────────────────────────
+:: Get the directory of this script
+set "SCRIPT_DIR=%~dp0"
+
+echo [INFO] Iniciando instalador PowerShell...
 echo.
-echo [2/3] Configurando base de datos...
-if not exist .env (
-    copy .env.example .env >nul
-    echo [✓] Archivo .env creado
+
+powershell -ExecutionPolicy Bypass -File "%SCRIPT_DIR%install.ps1"
+
+if %errorLevel% neq 0 (
+    echo.
+    echo [ERROR] La instalacion fallo. Revise los mensajes anteriores.
+    pause
+    exit /b 1
 )
-call npx prisma db push
-
-:: ── Create startup script ──────────────────────
-echo.
-echo [3/3] Creando acceso directo...
-
-:: Build standalone server
-call npm run build
-
-:: Create startup VBS (hidden window)
-(
-echo Set WshShell = CreateObject^("WScript.Shell"^)
-echo WshShell.Run "node ""%~dp0.next\standalone\server.js""", 0, False
-) > "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\POS-System.vbs"
 
 echo.
-echo  ╔══════════════════════════════════════════╗
-echo  ║   ✅ Instalacion completada!            ║
-echo  ║   El servidor iniciara con Windows.     ║
-echo  ║   Abre: http://localhost:3000           ║
-echo  ╚══════════════════════════════════════════╝
-echo.
+echo [EXITO] Instalacion completada correctamente.
 pause

@@ -1,6 +1,7 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { departmentSchema } from "@/lib/validations";
+import { broadcast } from "@/lib/broadcast";
 
 export async function GET() {
   try {
@@ -47,6 +48,7 @@ export async function POST(request: Request) {
       },
     });
 
+    broadcast("department:change", { id: department.id });
     return Response.json(department, { status: 201 });
   } catch (error) {
     console.error("Error creating department:", error);

@@ -1,6 +1,7 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { paymentMethodSchema } from "@/lib/validations";
+import { broadcast } from "@/lib/broadcast";
 
 export async function GET() {
   try {
@@ -47,6 +48,7 @@ export async function POST(request: Request) {
       },
     });
 
+    broadcast("payment:change", { id: paymentMethod.id });
     return Response.json(paymentMethod, { status: 201 });
   } catch (error) {
     console.error("Error creating payment method:", error);

@@ -11,9 +11,12 @@
     "start": "next start",
     "lint": "eslint",
     "electron:dev": "concurrently \"next dev\" \"wait-on http://localhost:3000 && electron .\"",
-    "electron:build": "next build && cp -r prisma .next/standalone/prisma && cp .env .next/standalone/.env 2>/dev/null; electron-builder --win",
-    "electron:build:linux": "next build && cp -r prisma .next/standalone/prisma && cp .env .next/standalone/.env 2>/dev/null; electron-builder --linux",
-    "postinstall": "electron-builder install-app-deps"
+    "electron:build": "node scripts/build-electron.js --win",
+    "electron:build:linux": "node scripts/build-electron.js --linux",
+    "electron:build:all": "node scripts/build-electron.js --all",
+    "postinstall": "electron-builder install-app-deps",
+    "install:win": "powershell -ExecutionPolicy Bypass -File install.ps1",
+    "install:win:bat": "install.bat"
   },
   "dependencies": {
     "@auth/prisma-adapter": "^2.11.2",
@@ -111,10 +114,12 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "POS System",
-      "installerIcon": "public/icons/icon-512.png",
-      "uninstallerIcon": "public/icons/icon-512.png",
-      "installerHeader": "public/icons/icon-512.png",
-      "license": "LICENSE"
+      "installerIcon": "public/icons/icon-512.ico",
+      "uninstallerIcon": "public/icons/icon-512.ico",
+      "installerHeader": "public/icons/installer-header.bmp",
+      "license": "LICENSE",
+      "include": "electron/nsis/installer.nsi",
+      "deleteAppDataOnUninstall": false
     },
     "linux": {
       "target": ["AppImage", "deb"],

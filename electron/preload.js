@@ -14,16 +14,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Server
   restartServer: () => ipcRenderer.invoke('restart-server'),
 
+  // Updates
+  checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+  installUpdate: () => ipcRenderer.invoke('install-update'),
+  onUpdateStatus: (callback) => {
+    ipcRenderer.on('update-status', (event, status) => callback(status));
+  },
+
   // Events from main process
-  onUpdateAvailable: (callback) => {
-    ipcRenderer.on('update-available', (event, info) => callback(info));
-  },
-  onUpdateDownloaded: (callback) => {
-    ipcRenderer.on('update-downloaded', (event, info) => callback(info));
-  },
-  onUpdateError: (callback) => {
-    ipcRenderer.on('update-error', (event, error) => callback(error));
-  },
   onDeepLink: (callback) => {
     ipcRenderer.on('deep-link', (event, url) => callback(url));
   },

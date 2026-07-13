@@ -1,6 +1,7 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { supplierSchema } from "@/lib/validations";
+import { broadcast } from "@/lib/broadcast";
 
 export async function GET() {
   try {
@@ -50,6 +51,7 @@ export async function POST(request: Request) {
       },
     });
 
+    broadcast("supplier:change", { id: supplier.id });
     return Response.json(supplier, { status: 201 });
   } catch (error) {
     console.error("Error creating supplier:", error);
