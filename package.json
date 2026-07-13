@@ -80,11 +80,7 @@
       "electron/**/*",
       "public/**/*",
       "prisma/**/*",
-      "package.json",
-      "!**/node_modules/**/*",
-      "node_modules/electron-log/**/*",
-      "node_modules/electron-store/**/*",
-      "node_modules/electron-updater/**/*"
+      "package.json"
     ],
     "extraResources": [
       {
