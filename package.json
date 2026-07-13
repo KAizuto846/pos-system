@@ -82,6 +82,9 @@
       "prisma/**/*",
       "package.json"
     ],
+    "asarUnpack": [
+      "electron/init-db.js"
+    ],
     "extraResources": [
       {
         "from": ".next/standalone",

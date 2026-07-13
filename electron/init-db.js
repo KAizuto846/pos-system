@@ -6,7 +6,30 @@
 const path = require('path');
 const fs = require('fs');
 
-const SERVER_DIR = path.join(__dirname, '..', 'standalone');
+// Resolve standalone dir: in packaged app, it's at resources/standalone
+// In dev, it's at .next/standalone
+function findServerDir() {
+  const candidates = [
+    path.join(__dirname, '..', 'standalone'),        // packaged: resources/app/electron/../standalone
+    path.join(__dirname, '..', '..', 'standalone'),  // packaged alt
+    path.join(__dirname, '..', '.next', 'standalone'), // dev
+    path.join(process.resourcesPath || '', 'standalone'), // packaged via resourcesPath (Electron only)
+  ];
+  for (const c of candidates) {
+    if (c && fs.existsSync(path.join(c, 'server.js'))) {
+      return c;
+    }
+  }
+  return candidates[0]; // fallback to first candidate
+}
+
+// If SERVER_DIR passed as 3rd arg (from main.js spawn), use it
+const SERVER_DIR = process.argv[3] || findServerDir();
+
+if (!fs.existsSync(path.join(SERVER_DIR, 'server.js'))) {
+  console.error('[init-db] Could not find standalone server dir. Tried:', SERVER_DIR);
+  process.exit(1);
+}
 
 async function initDB(dbUrl) {
   // Dynamically require Prisma Client from standalone

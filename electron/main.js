@@ -118,18 +118,30 @@ function getServerEnv() {
   } catch (e) {}
 
   // Always force absolute DB path so SQLite works in packaged app
-  env.DATABASE_URL = `file:${DB_PATH}`;
+  // Use forward slashes for cross-platform SQLite compatibility
+  const dbUrlPath = DB_PATH.replace(/\\/g, '/');
+  env.DATABASE_URL = `file:${dbUrlPath}`;
   return env;
+}
+
+function findInitDbPath() {
+  const candidates = [
+    path.join(__dirname, 'init-db.js'),
+    path.join(app.getAppPath().replace('app.asar', 'app.asar.unpacked'), 'electron', 'init-db.js'),
+    path.join(process.resourcesPath, 'app.asar.unpacked', 'electron', 'init-db.js'),
+  ];
+  for (const c of candidates) {
+    if (c && fs.existsSync(c)) return c;
+  }
+  return candidates[0];
 }
 
 function runPrismaMigrate() {
   return new Promise((resolve) => {
-    const initDbPath = isPackaged
-      ? path.join(process.resourcesPath, 'standalone', 'electron', 'init-db.js')
-      : path.join(__dirname, 'init-db.js');
-    const dbUrl = `file:${DB_PATH}`;
+    const initDbPath = findInitDbPath();
+    const dbUrl = `file:${DB_PATH.replace(/\\/g, '/')}`;
     const env = getServerEnv();
-    const child = spawn('node', [initDbPath, dbUrl], {
+    const child = spawn('node', [initDbPath, dbUrl, SERVER_DIR], {
       cwd: SERVER_DIR,
       env,
       shell: true,
@@ -140,7 +152,7 @@ function runPrismaMigrate() {
     child.stdout.on('data', d => { out += d.toString(); });
     child.stderr.on('data', d => { err += d.toString(); });
     child.on('close', (code) => {
-      console.log('[db] init-db exit:', code);
+      console.log('[db] init-db exit:', code, 'path:', initDbPath);
       if (err) console.error('[db]', err.trim());
       if (out) console.log('[db]', out.trim());
       resolve(code === 0);
