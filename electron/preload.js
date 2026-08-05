@@ -25,4 +25,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onDeepLink: (callback) => {
     ipcRenderer.on('deep-link', (event, url) => callback(url));
   },
+
+  // First run setup
+  saveFirstRunConfig: (mode) => ipcRenderer.send('first-run-config', mode),
 });
