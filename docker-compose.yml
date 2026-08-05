@@ -1,0 +1,22 @@
+version: "3.9"
+
+services:
+  pos-system:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pos-system
+    ports:
+      - "3000:3000"
+    environment:
+      - AUTH_SECRET=${AUTH_SECRET:-change-me-to-a-random-secret}
+      - DATABASE_URL=${DATABASE_URL:-file:./prisma/dev.db}
+      - AUTH_URL=${AUTH_URL:-http://localhost:3000}
+      - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+    volumes:
+      # Persist SQLite database outside the container
+      - pos-system-data:/app/prisma
+    restart: unless-stopped
+
+volumes:
+  pos-system-data:

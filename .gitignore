@@ -1,0 +1,14 @@
+prisma/**/*.db
+prisma/**/*.db-shm
+prisma/**/*.db-wal
+pos-system/
+.next/
+node_modules/
+*.csv
+.env
+*.deb
+dist-electron/
+*.exe
+*.blockmap
+latest.yml
+builder-effective-config.yaml

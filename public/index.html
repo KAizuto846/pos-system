@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>POS System - Inicio de Sesi\u00f3n</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="login-container">
+        <div class="login-box">
+            <div class="logo">
+                <svg width="60" height="60" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M3 3h18v18H3z" stroke="currentColor" stroke-width="2" fill="none"/>
+                    <path d="M9 9h6v6H9z" fill="currentColor"/>
+                </svg>
+            </div>
+            <h1 id="form-title">Sistema POS</h1>
+            <p id="form-subtitle" class="subtitle">Cargando...</p>
+            
+            <form id="auth-form">
+                <div class="input-group">
+                    <label for="username">Usuario</label>
+                    <input 
+                        type="text" 
+                        id="username" 
+                        name="username" 
+                        required 
+                        autocomplete="username"
+                        placeholder="Ingresa tu usuario"
+                    >
+                </div>
+                
+                <div class="input-group">
+                    <label for="password">Contrase\u00f1a</label>
+                    <input 
+                        type="password" 
+                        id="password" 
+                        name="password" 
+                        required 
+                        autocomplete="current-password"
+                        placeholder="Ingresa tu contrase\u00f1a"
+                    >
+                </div>
+                
+                <div id="password-requirements" class="password-requirements" style="display: none;">
+                    <small>La contrase\u00f1a debe tener al menos 6 caracteres</small>
+                </div>
+                
+                <div id="error-message" class="error-message"></div>
+                
+                <button type="submit" id="submit-btn" class="btn-primary">
+                    Iniciar Sesi\u00f3n
+                </button>
+            </form>
+            
+            <div class="footer">
+                <small>POS System v1.0 - Sistema Local</small>
+            </div>
+        </div>
+    </div>
+    
+    <script src="login.js"></script>
+</body>
+</html>
