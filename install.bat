@@ -1,12 +1,11 @@
 @echo off
-chcp 65001 >nul
 title POS System - Instalador Windows
 
 echo.
-echo  ╔══════════════════════════════════════════╗
-echo  ║   POS System - Instalador Windows        ║
-echo  ║   Sistema de Punto de Venta              ║
-echo  ╚══════════════════════════════════════════╝
+echo ==============================================
+echo   POS System - Instalador Windows
+echo   Sistema de Punto de Venta
+echo ==============================================
 echo.
 
 :: Check if running as Administrator

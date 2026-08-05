@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>POS System — Iniciando...</title>
+<title>POS System - Iniciando...</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { background: #0f172a; color: #e2e8f0; font-family: 'Segoe UI', Arial, sans-serif;
@@ -22,39 +22,46 @@
 </head>
 <body>
 <div class="box">
-  <h1>🏪 POS System</h1>
+  <h1>POS System</h1>
   <p>Iniciando servidor...</p>
   <div class="spinner"></div>
   <div id="log"></div>
 </div>
 <script>
-const logEl = document.getElementById('log');
+var logEl = document.getElementById('log');
 function log(msg, cls) {
-  const line = document.createElement('div');
+  var line = document.createElement('div');
   line.className = cls || '';
   line.textContent = new Date().toLocaleTimeString() + ' ' + msg;
   logEl.appendChild(line);
   logEl.scrollTop = logEl.scrollHeight;
 }
 
-log('⏳ Verificando servidor en http://localhost:3000 ...', 'warn');
+var params = new URLSearchParams(window.location.search);
+var port = params.get('port') || '3000';
+var targetUrl = 'http://localhost:' + port;
 
-let attempts = 0;
+log('Verificando servidor en ' + targetUrl + ' ...', 'warn');
+
+var attempts = 0;
+var maxAttempts = 60;
 function check() {
   attempts++;
-  fetch('http://localhost:3000/api/sync')
-    .then(r => {
-      if (r.ok) {
-        log('✅ Servidor listo! Redirigiendo...', 'ok');
-        setTimeout(() => location.href = 'http://localhost:3000', 500);
-        return;
-      }
-      throw new Error('Status ' + r.status);
+  fetch(targetUrl, { mode: 'no-cors' })
+    .then(function() {
+      log('Servidor listo. Redirigiendo...', 'ok');
+      setTimeout(function() {
+        window.location.href = targetUrl;
+      }, 500);
     })
-    .catch(e => {
-      log('⏳ Intento ' + attempts + '/30 — ' + e.message);
-      if (attempts < 30) setTimeout(check, 1000);
-      else log('❌ No se pudo conectar. Revisa si el servidor arrancó.', 'err');
+    .catch(function(e) {
+      if (attempts < maxAttempts) {
+        log('Intento ' + attempts + '/' + maxAttempts);
+        setTimeout(check, 1000);
+      } else {
+        log('No se pudo conectar a ' + targetUrl, 'err');
+        log('Verifica que el firewall no este bloqueando el puerto ' + port, 'err');
+      }
     });
 }
 setTimeout(check, 1500);

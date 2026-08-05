@@ -44,88 +44,16 @@ function showFirstRunSetup(callback) {
     show: false,
   });
 
-  const html = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0a0a0a; color: #e5e5e5; min-height: 100vh; display: flex; flex-direction: column; }
-    .container { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 32px; }
-    .logo { width: 64px; height: 64px; background: #10b981; border-radius: 16px; display: flex; align-items: center; justify-content: center; margin-bottom: 24px; }
-    .logo svg { width: 32px; height: 32px; }
-    h1 { font-size: 24px; font-weight: 600; margin-bottom: 8px; text-align: center; }
-    .subtitle { color: #a3a3a3; font-size: 14px; text-align: center; margin-bottom: 32px; }
-    .options { display: flex; flex-direction: column; gap: 12px; width: 100%; max-width: 360px; }
-    .option { background: #1a1a1a; border: 1px solid #333; border-radius: 12px; padding: 20px; cursor: pointer; transition: all 0.2s; display: flex; align-items: flex-start; gap: 16px; }
-    .option:hover { border-color: #10b981; background: #141414; }
-    .option.selected { border-color: #10b981; background: #064e3b; }
-    .option-icon { width: 48px; height: 48px; background: #1f2937; border-radius: 10px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-    .option-icon svg { width: 24px; height: 24px; color: #10b981; }
-    .option-content { flex: 1; }
-    .option-title { font-size: 16px; font-weight: 500; margin-bottom: 4px; }
-    .option-desc { font-size: 13px; color: #a3a3a3; line-height: 1.4; }
-    .btn { width: 100%; max-width: 360px; margin-top: 24px; padding: 14px; background: #10b981; color: white; border: none; border-radius: 8px; font-size: 15px; font-weight: 500; cursor: pointer; opacity: 0.5; transition: opacity 0.2s; }
-    .btn.enabled { opacity: 1; }
-    .btn:hover.enabled { background: #059669; }
-    .footer { padding: 20px; text-align: center; color: #6b7280; font-size: 12px; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="logo">
-      <svg fill="white" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
-    </div>
-    <h1>Bienvenido a POS System</h1>
-    <p class="subtitle">¿Como quieres empezar?</p>
-    <div class="options">
-      <div class="option" data-mode="server" onclick="selectOption(this)">
-        <div class="option-icon">
-          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M12 5l7 7-7 7"/></svg>
-        </div>
-        <div class="option-content">
-          <div class="option-title">Empezar en local</div>
-          <div class="option-desc">Este dispositivo sera el servidor principal. Ejecuta la base de datos y otros dispositivos se conectaran a el.</div>
-        </div>
-      </div>
-      <div class="option" data-mode="client" onclick="selectOption(this)">
-        <div class="option-icon">
-          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
-        </div>
-        <div class="option-content">
-          <div class="option-title">Punto de venta compartido</div>
-          <div class="option-desc">Conectarse a un servidor existente en la red. Buscara automaticamente servidores disponibles.</div>
-        </div>
-      </div>
-    </div>
-    <button class="btn" id="continueBtn" onclick="continueSetup()" disabled>Continuar</button>
-  </div>
-  <div class="footer">Podras cambiar esta configuracion luego desde el menu del sistema</div>
-  <script>
-    let selectedMode = null;
-    function selectOption(el) {
-      document.querySelectorAll('.option').forEach(o => o.classList.remove('selected'));
-      el.classList.add('selected');
-      selectedMode = el.dataset.mode;
-      document.getElementById('continueBtn').classList.add('enabled');
-      document.getElementById('continueBtn').disabled = false;
-    }
-    function continueSetup() {
-      if (selectedMode) {
-        window.electronAPI.saveFirstRunConfig(selectedMode);
-      }
-    }
-  </script>
-</body>
-</html>
-  `;
+  const setupHtml = path.join(__dirname, 'setup.html');
+  if (fs.existsSync(setupHtml)) {
+    setupWindow.loadFile(setupHtml);
+  } else {
+    // Fallback: inline HTML
+    setupWindow.loadURL('data:text/html,' + encodeURIComponent('<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{background:#0a0a0a;color:#e5e5e5;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;text-align:center}</style></head><body><div><h1>POS System</h1><p>Error cargando configuracion</p></div></body></html>'));
+  }
 
-  setupWindow.loadURL(`data:text/html,${encodeURIComponent(html)}`);
   setupWindow.once('ready-to-show', () => setupWindow.show());
-  setupWindow.on('closed', () => {});
 
-  // IPC handler for first run config
   ipcMain.once('first-run-config', (event, mode) => {
     config.mode = mode;
     config.businessName = 'Mi Negocio';
@@ -222,6 +150,7 @@ function getServerEnv() {
     AUTH_SECRET: 'pos-system-secret',
     AUTH_URL: `http://localhost:${port}`,
     NEXT_PUBLIC_APP_URL: `http://localhost:${port}`,
+    ELECTRON_RUN_AS_NODE: '1',
   };
 
   try {
@@ -259,7 +188,7 @@ function runPrismaMigrate() {
     const initDbPath = findInitDbPath();
     const dbUrl = `file:${DB_PATH.replace(/\\/g, '/')}`;
     const env = getServerEnv();
-    const child = spawn('node', [initDbPath, dbUrl, SERVER_DIR], {
+    const child = spawn(process.execPath, [initDbPath, dbUrl, SERVER_DIR], {
       cwd: SERVER_DIR,
       env,
       shell: true,
@@ -301,7 +230,7 @@ async function startServer() {
 
   console.log('[srv] Starting server on port', port, '- DB:', env.DATABASE_URL);
 
-  serverProcess = spawn('node', [SERVER_SCRIPT], {
+  serverProcess = spawn(process.execPath, [SERVER_SCRIPT], {
     cwd: SERVER_DIR,
     env,
     shell: true,
@@ -438,8 +367,14 @@ function initializeApp(mode) {
 
   try { createTray(); } catch (e) {}
 
-  // Show loading screen immediately
-  mainWindow.loadURL('data:text/html,<html><body style="display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#0a0a0a;color:#e5e5e5;font-family:Arial,sans-serif"><div style="text-align:center"><h2 style="font-size:24px">POS System</h2><p style="color:#a3a3a3">Iniciando servidor...</p></div></body></html>');
+  // Show loading screen
+  const port = config.serverPort || 3000;
+  const loadingHtml = path.join(__dirname, 'loading.html');
+  if (fs.existsSync(loadingHtml)) {
+    mainWindow.loadFile(loadingHtml, { query: { port: String(port) } });
+  } else {
+    mainWindow.loadURL(`data:text/html,<html><body style="display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#0a0a0a;color:#e5e5e5;font-family:Arial,sans-serif"><div style="text-align:center"><h2 style="font-size:24px">POS System</h2><p style="color:#a3a3a3">Iniciando servidor en puerto ${port}...</p></div></body></html>`);
+  }
 
   // Start server based on mode
   (async () => {
@@ -468,7 +403,6 @@ function initializeApp(mode) {
       await startServer();
     }
 
-    const port = config.serverPort || 3000;
     let url;
     if (config.mode === 'client' && config.serverIP) {
       url = `http://${config.serverIP}:${config.serverPort || 3000}`;
