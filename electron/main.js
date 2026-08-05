@@ -68,6 +68,7 @@ function showFirstRunSetup(callback) {
 let mainWindow = null;
 let tray = null;
 let serverProcess = null;
+let serverRestartCount = 0;
 let isQuitting = false;
 const isPackaged = app.isPackaged;
 
@@ -122,6 +123,7 @@ function announceServer(port) {
 // ─── Server management ───────────────────────────────────────
 const USER_DATA = app.getPath('userData');
 const DB_PATH = path.join(USER_DATA, 'pos.db');
+const LOG_PATH = path.join(USER_DATA, 'server.log');
 
 function ensureEnv() {
   const userEnv = path.join(USER_DATA, '.env');
@@ -191,13 +193,14 @@ function runPrismaMigrate() {
     const child = spawn(process.execPath, [initDbPath, dbUrl, SERVER_DIR], {
       cwd: SERVER_DIR,
       env,
-      shell: true,
+      shell: false,
+      windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let out = '';
     let err = '';
-    child.stdout.on('data', d => { out += d.toString(); });
-    child.stderr.on('data', d => { err += d.toString(); });
+    child.stdout.on('data', d => { out += d.toString(); fs.appendFileSync(LOG_PATH, '[db:out] ' + d.toString()); });
+    child.stderr.on('data', d => { err += d.toString(); fs.appendFileSync(LOG_PATH, '[db:err] ' + d.toString()); });
     child.on('close', (code) => {
       console.log('[db] init-db exit:', code, 'path:', initDbPath);
       if (err) console.error('[db]', err.trim());
@@ -221,6 +224,9 @@ async function startServer() {
 
   ensureEnv();
 
+  // Reset restart counter on explicit start
+  serverRestartCount = 0;
+
   // Ensure DB exists and schema is up to date
   console.log('[db] Running prisma migrate deploy...');
   await runPrismaMigrate();
@@ -233,15 +239,34 @@ async function startServer() {
   serverProcess = spawn(process.execPath, [SERVER_SCRIPT], {
     cwd: SERVER_DIR,
     env,
-    shell: true,
+    shell: false,
+    windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  serverProcess.stdout.on('data', (d) => console.log('[srv]', d.toString().trim()));
-  serverProcess.stderr.on('data', (d) => console.error('[srv:err]', d.toString().trim()));
+  serverProcess.stdout.on('data', (d) => {
+    const s = d.toString();
+    console.log('[srv]', s.trim());
+    fs.appendFileSync(LOG_PATH, s);
+    try { if (mainWindow) mainWindow.webContents.send('server-log', s); } catch (e) {}
+  });
+  serverProcess.stderr.on('data', (d) => {
+    const s = d.toString();
+    console.error('[srv:err]', s.trim());
+    fs.appendFileSync(LOG_PATH, '[err] ' + s);
+    try { if (mainWindow) mainWindow.webContents.send('server-log', '[ERROR] ' + s); } catch (e) {}
+  });
   serverProcess.on('close', (code) => {
-    console.log('Server exit:', code);
+    const msg = `Servidor cerrado (codigo ${code})`;
+    console.log(msg);
+    fs.appendFileSync(LOG_PATH, msg + '\n');
     serverProcess = null;
-    if (!isQuitting) setTimeout(() => startServer(), 2000);
+    serverRestartCount++;
+    if (!isQuitting && serverRestartCount <= 3) {
+      try { if (mainWindow) mainWindow.webContents.send('server-log', `Reiniciando servidor (${serverRestartCount}/3)...`); } catch (e) {}
+      setTimeout(() => startServer(), 2000);
+    } else if (!isQuitting) {
+      try { if (mainWindow) mainWindow.webContents.send('server-error', 'El servidor fallo repetidamente. Reinicia la aplicacion.'); } catch (e) {}
+    }
   });
   serverProcess.on('error', (err) => {
     console.error('Server spawn error:', err.message);
@@ -324,19 +349,24 @@ async function waitForServer(url, maxRetries = 60) {
       await new Promise((resolve, reject) => {
         const req = http.get(url, (res) => {
           res.resume();
-          // Any response (even redirects) means server is up
           resolve();
         });
         req.on('error', (e) => reject(e));
         req.setTimeout(2000, () => { req.destroy(); reject(new Error('timeout')); });
       });
+      // Server is ready
+      try { if (mainWindow) mainWindow.webContents.send('server-ready'); } catch (e) {}
       return;
     } catch (e) {
       if (i === 0) console.log('[wait] Esperando servidor en', url, '...');
+      if (i % 5 === 0) {
+        try { if (mainWindow) mainWindow.webContents.send('server-log', `Intento ${i + 1}/${maxRetries}...`); } catch (e) {}
+      }
       await new Promise(r => setTimeout(r, 1000));
     }
   }
   console.error('[wait] Timeout esperando servidor');
+  try { if (mainWindow) mainWindow.webContents.send('server-error', 'No se pudo iniciar el servidor. Revisa el firewall o el puerto.'); } catch (e) {}
 }
 
 // ─── App lifecycle ───────────────────────────────────────────

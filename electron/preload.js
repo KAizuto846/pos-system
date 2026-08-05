@@ -21,6 +21,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('update-status', (event, status) => callback(status));
   },
 
+  // Server status (loading screen)
+  onServerLog: (callback) => {
+    ipcRenderer.on('server-log', (event, msg) => callback(msg));
+  },
+  onServerReady: (callback) => {
+    ipcRenderer.on('server-ready', () => callback());
+  },
+  onServerError: (callback) => {
+    ipcRenderer.on('server-error', (event, msg) => callback(msg));
+  },
+
   // Events from main process
   onDeepLink: (callback) => {
     ipcRenderer.on('deep-link', (event, url) => callback(url));

@@ -15,9 +15,13 @@
              border-radius: 50%; animation: spin 0.8s linear infinite; margin: 20px auto; }
   @keyframes spin { to { transform: rotate(360deg); } }
   #log { background: #0f172a; border-radius: 8px; padding: 12px; margin-top: 16px;
-         text-align: left; font-size: 13px; font-family: 'Consolas', monospace;
-         max-height: 200px; overflow-y: auto; color: #94a3b8; }
+         text-align: left; font-size: 12px; font-family: 'Consolas', monospace;
+         max-height: 150px; overflow-y: auto; color: #94a3b8; }
   .ok { color: #22c55e; } .err { color: #ef4444; } .warn { color: #f59e0b; }
+  .retry-btn { display: none; margin-top: 16px; padding: 10px 24px; background: #10b981;
+               color: white; border: none; border-radius: 8px; font-size: 14px; cursor: pointer; }
+  .retry-btn:hover { background: #059669; }
+  .retry-btn.show { display: inline-block; }
 </style>
 </head>
 <body>
@@ -25,10 +29,17 @@
   <h1>POS System</h1>
   <p>Iniciando servidor...</p>
   <div class="spinner"></div>
-  <div id="log"></div>
+  <div id="log">
+    <div class="warn">Iniciando servidor en puerto <span id="portLabel">3000</span>...</div>
+  </div>
+  <button class="retry-btn" id="retryBtn" onclick="retry()">Reintentar</button>
 </div>
 <script>
 var logEl = document.getElementById('log');
+var spinner = document.querySelector('.spinner');
+var retryBtn = document.getElementById('retryBtn');
+var started = false;
+
 function log(msg, cls) {
   var line = document.createElement('div');
   line.className = cls || '';
@@ -37,34 +48,43 @@ function log(msg, cls) {
   logEl.scrollTop = logEl.scrollHeight;
 }
 
+function retry() {
+  retryBtn.classList.remove('show');
+  spinner.style.display = 'block';
+  log('Reintentando...', 'warn');
+  window.electronAPI.restartServer();
+}
+
+// Listen for logs from main process
+if (window.electronAPI && window.electronAPI.onServerLog) {
+  window.electronAPI.onServerLog(function(msg) {
+    if (started) return;
+    var cls = msg.indexOf('[ERROR]') >= 0 || msg.indexOf('Error') >= 0 ? 'err' : '';
+    log(msg.trim(), cls);
+  });
+}
+
+// Listen for server ready from main process
+if (window.electronAPI && window.electronAPI.onServerReady) {
+  window.electronAPI.onServerReady(function() {
+    started = true;
+    log('Servidor listo. Redirigiendo...', 'ok');
+  });
+}
+
+// Listen for server error
+if (window.electronAPI && window.electronAPI.onServerError) {
+  window.electronAPI.onServerError(function(msg) {
+    spinner.style.display = 'none';
+    log(msg, 'err');
+    retryBtn.classList.add('show');
+  });
+}
+
+// Parse port from URL
 var params = new URLSearchParams(window.location.search);
 var port = params.get('port') || '3000';
-var targetUrl = 'http://localhost:' + port;
-
-log('Verificando servidor en ' + targetUrl + ' ...', 'warn');
-
-var attempts = 0;
-var maxAttempts = 60;
-function check() {
-  attempts++;
-  fetch(targetUrl, { mode: 'no-cors' })
-    .then(function() {
-      log('Servidor listo. Redirigiendo...', 'ok');
-      setTimeout(function() {
-        window.location.href = targetUrl;
-      }, 500);
-    })
-    .catch(function(e) {
-      if (attempts < maxAttempts) {
-        log('Intento ' + attempts + '/' + maxAttempts);
-        setTimeout(check, 1000);
-      } else {
-        log('No se pudo conectar a ' + targetUrl, 'err');
-        log('Verifica que el firewall no este bloqueando el puerto ' + port, 'err');
-      }
-    });
-}
-setTimeout(check, 1500);
+document.getElementById('portLabel').textContent = port;
 </script>
 </body>
 </html>
