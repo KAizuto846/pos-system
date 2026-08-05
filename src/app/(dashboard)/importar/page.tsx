@@ -670,7 +670,6 @@ export default function ImportPage() {
           </CardContent>
         </Card>
       )}
-    </div>
 
       {/* Delete all inventory modal */}
       <Dialog open={showDeleteModal} onOpenChange={setShowDeleteModal}>
