@@ -12,3 +12,4 @@ dist-electron/
 *.blockmap
 latest.yml
 builder-effective-config.yaml
+prisma/prisma/
