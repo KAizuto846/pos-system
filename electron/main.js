@@ -276,6 +276,71 @@ async function startServer() {
   announceServer(port);
 }
 
+// ─── P2P Sync ────────────────────────────────────────────────
+let syncInterval = null;
+
+async function syncWithPeer(peerUrl) {
+  const myDeviceId = config.deviceName || os.hostname();
+  try {
+    // Pull changes from peer
+    const pullRes = await fetch(`http://${peerUrl}/api/sync/pull`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deviceId: myDeviceId }),
+    });
+    if (pullRes.ok) {
+      const pullData = await pullRes.json();
+      if (pullData.changes && pullData.changes.length > 0) {
+        // Push received changes to our local server
+        await fetch(`http://localhost:${config.serverPort}/api/sync/push`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ deviceId: pullData.deviceId, changes: pullData.changes }),
+        });
+        console.log(`[p2p] Synced ${pullData.changes.length} changes from ${peerUrl}`);
+      }
+    }
+
+    // Push our changes to peer
+    const pushRes = await fetch(`http://localhost:${config.serverPort}/api/sync/pull`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deviceId: myDeviceId }),
+    });
+    if (pushRes.ok) {
+      const pushData = await pushRes.json();
+      if (pushData.changes && pushData.changes.length > 0) {
+        await fetch(`http://${peerUrl}/api/sync/push`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ deviceId: myDeviceId, changes: pushData.changes }),
+        });
+        console.log(`[p2p] Pushed ${pushData.changes.length} changes to ${peerUrl}`);
+      }
+    }
+  } catch (e) {
+    // Silently ignore sync errors (peer might be offline)
+  }
+}
+
+function startP2PSync() {
+  if (syncInterval) clearInterval(syncInterval);
+  syncInterval = setInterval(async () => {
+    // Sync with discovered servers
+    for (const server of discoveredServers) {
+      const peerUrl = `${server.ip}:${server.port}`;
+      if (peerUrl !== `localhost:${config.serverPort}`) {
+        await syncWithPeer(peerUrl);
+      }
+    }
+  }, 30000); // Every 30 seconds
+  console.log('[p2p] Sync started (30s interval)');
+}
+
+function stopP2PSync() {
+  if (syncInterval) { clearInterval(syncInterval); syncInterval = null; }
+}
+
 function stopServer() {
   if (serverProcess) { serverProcess.kill('SIGTERM'); serverProcess = null; }
 }
@@ -433,6 +498,12 @@ function initializeApp(mode) {
       await startServer();
     }
 
+    // Start P2P sync after server is ready
+    startDiscovery();
+    setTimeout(() => {
+      startP2PSync();
+    }, 5000);
+
     let url;
     if (config.mode === 'client' && config.serverIP) {
       url = `http://${config.serverIP}:${config.serverPort || 3000}`;
@@ -458,7 +529,7 @@ function initializeApp(mode) {
   });
 }
 
-app.on('before-quit', () => { isQuitting = true; stopServer(); stopDiscovery(); });
+app.on('before-quit', () => { isQuitting = true; stopServer(); stopDiscovery(); stopP2PSync(); });
 
 // ─── IPC handlers ──────────────────────────────────────────
 ipcMain.handle('get-config', () => config);

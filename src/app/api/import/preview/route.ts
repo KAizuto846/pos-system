@@ -14,41 +14,36 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No se envió ningún archivo' }, { status: 400 });
     }
 
-    // Detect file type
     const fileName = file.name.toLowerCase();
     const isDBF = fileName.endsWith('.dbf');
     const isCSV = fileName.endsWith('.csv');
+    const isXLSX = fileName.endsWith('.xlsx') || fileName.endsWith('.xls');
 
-    if (!isDBF && !isCSV) {
+    if (!isDBF && !isCSV && !isXLSX) {
       return NextResponse.json(
-        { error: 'Formato no soportado. Solo se aceptan archivos .dbf o .csv' },
+        { error: 'Formato no soportado. Solo se aceptan archivos .dbf, .csv, .xlsx o .xls' },
         { status: 400 }
       );
     }
 
     let columns: string[] = [];
     let rows: Record<string, unknown>[] = [];
+    let fileType: 'dbf' | 'csv' | 'xlsx' = 'csv';
 
     if (isDBF) {
-      // Save to temp file for dbffile parsing
+      fileType = 'dbf';
       const buffer = Buffer.from(await file.arrayBuffer());
       const tempPath = path.join(os.tmpdir(), `import_${Date.now()}_${file.name}`);
       fs.writeFileSync(tempPath, buffer);
 
       try {
-        // Dynamically import dbffile (ESM module)
         const { DBFFile } = await import('dbffile');
         const dbf = await DBFFile.open(tempPath);
-
-        // Get columns
         columns = dbf.fields.map((f: { name: string }) => f.name);
-
-        // Read all records (limit to 2000 for preview)
         const records = await dbf.readRecords(2000);
         rows = records.map((r: Record<string, unknown>) => {
           const cleaned: Record<string, unknown> = {};
           for (const [key, val] of Object.entries(r)) {
-            // Convert buffers and dates to strings
             if (Buffer.isBuffer(val)) {
               cleaned[key] = val.toString('utf8').trim();
             } else if (val instanceof Date) {
@@ -62,14 +57,22 @@ export async function POST(request: NextRequest) {
           return cleaned;
         });
       } finally {
-        // Clean up temp file
         try { fs.unlinkSync(tempPath); } catch { /* ignore */ }
       }
+    } else if (isXLSX) {
+      fileType = 'xlsx';
+      const buffer = Buffer.from(await file.arrayBuffer());
+      const XLSX = await import('xlsx');
+      const workbook = XLSX.read(buffer, { type: 'buffer' });
+      const sheetName = workbook.SheetNames[0];
+      const sheet = workbook.Sheets[sheetName];
+      const data = XLSX.utils.sheet_to_json(sheet);
+      columns = Object.keys(data[0] || {});
+      rows = data as Record<string, unknown>[];
     } else {
-      // CSV parsing
+      fileType = 'csv';
       const text = await file.text();
       const Papa = await import('papaparse');
-      // Auto-detect delimiter but prefer pipe for Aspel-exported files
       const detectDelimiter = (content: string): string => {
         const firstLine = content.split('\n')[0];
         const pipeCount = (firstLine.match(/\|/g) || []).length;
@@ -84,7 +87,6 @@ export async function POST(request: NextRequest) {
       });
 
       if (result.errors.length > 0) {
-        // Non-critical parse warnings
         console.warn('CSV parse warnings:', result.errors.filter(e => (e as { type?: string }).type === 'warning'));
       }
 
@@ -92,7 +94,6 @@ export async function POST(request: NextRequest) {
       rows = result.data as Record<string, unknown>[];
     }
 
-    // Limit preview rows
     const previewRows = rows.slice(0, 50);
 
     return NextResponse.json({
@@ -100,7 +101,7 @@ export async function POST(request: NextRequest) {
       totalRows: rows.length,
       previewRows,
       fileName: file.name,
-      fileType: isDBF ? 'dbf' : 'csv',
+      fileType,
     });
   } catch (error) {
     console.error('Preview error:', error);

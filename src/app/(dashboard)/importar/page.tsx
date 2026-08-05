@@ -3,7 +3,7 @@
 import { useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
-import { Upload, FileSpreadsheet, Database, Check, AlertCircle, Loader2, ArrowLeft, Table2, Settings2, Play } from 'lucide-react';
+import { Upload, FileSpreadsheet, Database, Check, AlertCircle, Loader2, ArrowLeft, Table2, Settings2, Play, Download, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -11,6 +11,8 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 
 interface PreviewData {
@@ -18,7 +20,7 @@ interface PreviewData {
   totalRows: number;
   previewRows: Record<string, unknown>[];
   fileName: string;
-  fileType: 'dbf' | 'csv';
+  fileType: 'dbf' | 'csv' | 'xlsx';
 }
 
 interface FieldMapping {
@@ -116,13 +118,17 @@ export default function ImportPage() {
     errorDetails: string[];
   } | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deletePassword, setDeletePassword] = useState('');
+  const [deleting, setDeleting] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   const handleFileSelect = useCallback(async (selectedFile: File | null) => {
     if (!selectedFile) return;
 
     const ext = selectedFile.name.split('.').pop()?.toLowerCase();
-    if (ext !== 'dbf' && ext !== 'csv') {
-      toast.error('Solo se aceptan archivos .dbf o .csv');
+    if (ext !== 'dbf' && ext !== 'csv' && ext !== 'xlsx' && ext !== 'xls') {
+      toast.error('Solo se aceptan archivos .dbf, .csv, .xlsx o .xls');
       return;
     }
 
@@ -186,6 +192,52 @@ export default function ImportPage() {
     e.preventDefault();
     setDragOver(false);
   }, []);
+
+  const handleExport = useCallback(async () => {
+    setExporting(true);
+    try {
+      const res = await fetch('/api/products/export');
+      if (!res.ok) throw new Error('Error al exportar');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `inventario-${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast.success('Inventario exportado correctamente');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al exportar');
+    } finally {
+      setExporting(false);
+    }
+  }, []);
+
+  const handleDeleteAll = useCallback(async () => {
+    if (!deletePassword) {
+      toast.error('Ingresa la contrasena');
+      return;
+    }
+    setDeleting(true);
+    try {
+      const res = await fetch('/api/products/delete-all', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: deletePassword }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Error');
+      toast.success(data.message || 'Inventario eliminado');
+      setShowDeleteModal(false);
+      setDeletePassword('');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al eliminar');
+    } finally {
+      setDeleting(false);
+    }
+  }, [deletePassword]);
 
   const updateMapping = useCallback((sourceField: string, targetField: string) => {
     setFieldMappings(prev => {
@@ -265,15 +317,25 @@ export default function ImportPage() {
         <div>
           <h1 className="text-2xl font-bold text-slate-100">Importar Datos</h1>
           <p className="mt-1 text-sm text-slate-400">
-            Importa productos, proveedores y departamentos desde archivos DBF (Aspel) o CSV
+            Importa productos, proveedores y departamentos desde archivos DBF (Aspel), CSV o Excel
           </p>
         </div>
-        {importResult && (
-          <Button variant="outline" onClick={resetAll} className="border-slate-700 text-slate-300">
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            Nueva importación
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={handleExport} disabled={exporting} className="border-slate-700 text-slate-300">
+            <Download className="mr-2 h-4 w-4" />
+            {exporting ? 'Exportando...' : 'Exportar'}
           </Button>
-        )}
+          <Button variant="outline" onClick={() => setShowDeleteModal(true)} className="border-red-800 text-red-400 hover:bg-red-900/30">
+            <Trash2 className="mr-2 h-4 w-4" />
+            Eliminar todo
+          </Button>
+          {importResult && (
+            <Button variant="outline" onClick={resetAll} className="border-slate-700 text-slate-300">
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Nueva importacion
+            </Button>
+          )}
+        </div>
       </div>
 
       {!importResult ? (
@@ -285,9 +347,9 @@ export default function ImportPage() {
                 <Upload className="h-5 w-5 text-emerald-400" />
                 1. Selecciona el archivo
               </CardTitle>
-              <CardDescription className="text-slate-400">
-                Arrastra un archivo .DBF (Aspel) o .CSV, o haz clic para seleccionarlo
-              </CardDescription>
+                <CardDescription className="text-slate-400">
+                    Arrastra un archivo .DBF (Aspel), .CSV o .XLSX, o haz clic para seleccionarlo
+                  </CardDescription>
             </CardHeader>
             <CardContent>
               <div
@@ -306,7 +368,7 @@ export default function ImportPage() {
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".dbf,.csv"
+                  accept=".dbf,.csv,.xlsx,.xls"
                   className="hidden"
                   onChange={(e) => handleFileSelect(e.target.files?.[0] ?? null)}
                 />
@@ -333,7 +395,7 @@ export default function ImportPage() {
                     <p className="mt-3 text-sm font-medium text-slate-400">
                       Arrastra o haz clic para subir
                     </p>
-                    <p className="mt-1 text-xs text-slate-600">DBF (Aspel SAE/INVENTARIOS) o CSV</p>
+                        <p className="mt-1 text-xs text-slate-600">DBF (Aspel SAE/INVENTARIOS), CSV o Excel</p>
                   </>
                 )}
               </div>
@@ -608,6 +670,52 @@ export default function ImportPage() {
           </CardContent>
         </Card>
       )}
+    </div>
+
+      {/* Delete all inventory modal */}
+      <Dialog open={showDeleteModal} onOpenChange={setShowDeleteModal}>
+        <DialogContent className="border-slate-700 bg-slate-800 text-slate-200">
+          <DialogHeader>
+            <DialogTitle className="text-red-400 flex items-center gap-2">
+              <Trash2 className="h-5 w-5" />
+              Eliminar todo el inventario
+            </DialogTitle>
+            <DialogDescription className="text-slate-400">
+              Esta accion eliminara TODOS los productos, ventas relacionadas, lineas de productos y pedidos.
+              Esta operacion NO se puede deshacer.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-4">
+            <div className="rounded-lg border border-red-800/50 bg-red-900/20 p-3 text-sm text-red-400">
+              Se requiere la contrasena de un administrador para confirmar.
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="deletePassword">Contrasena de administrador</Label>
+              <Input
+                id="deletePassword"
+                type="password"
+                placeholder="Ingresa tu contrasena"
+                value={deletePassword}
+                onChange={(e) => setDeletePassword(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleDeleteAll(); }}
+                className="border-slate-600 bg-slate-700 text-slate-200"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setShowDeleteModal(false); setDeletePassword(''); }} className="border-slate-600 text-slate-300">
+              Cancelar
+            </Button>
+            <Button onClick={handleDeleteAll} disabled={deleting || !deletePassword} className="bg-red-600 text-white hover:bg-red-500">
+              {deleting ? (
+                <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Eliminando...</>
+              ) : (
+                'Confirmar eliminacion'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

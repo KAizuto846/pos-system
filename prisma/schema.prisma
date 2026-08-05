@@ -287,3 +287,20 @@ model ShiftReport {
   @@index([createdAt])
   @@map("shift_reports")
 }
+
+model SyncLog {
+  id          Int      @id @default(autoincrement())
+  deviceId    String   @map("device_id")
+  operation   String
+  entity      String
+  entityId    Int      @map("entity_id")
+  data        String
+  timestamp   DateTime @default(now())
+  synced      Boolean  @default(false)
+  syncVersion Int      @default(0) @map("sync_version")
+
+  @@index([deviceId, synced])
+  @@index([entity, entityId])
+  @@index([timestamp])
+  @@map("sync_log")
+}

@@ -38,19 +38,18 @@ export async function POST(request: NextRequest) {
       const optionsRaw = formData.get('options') as string;
       if (optionsRaw) options = JSON.parse(optionsRaw);
     } catch {
-      return NextResponse.json({ error: 'Configuración inválida' }, { status: 400 });
+      return NextResponse.json({ error: 'Configuracion invalida' }, { status: 400 });
     }
 
     if (!file) {
-      return NextResponse.json({ error: 'No se envió ningún archivo' }, { status: 400 });
+      return NextResponse.json({ error: 'No se envio ningun archivo' }, { status: 400 });
     }
 
     const validEntities = Object.keys(FIELD_TARGETS);
     if (!validEntities.includes(entityType)) {
-      return NextResponse.json({ error: `Tipo de entidad no válido: ${entityType}` }, { status: 400 });
+      return NextResponse.json({ error: `Tipo de entidad no valido: ${entityType}` }, { status: 400 });
     }
 
-    // Build source->target mapping
     const mapping = new Map<string, string>();
     for (const m of fieldMappings) {
       if (m.sourceField && m.targetField) {
@@ -58,12 +57,12 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Parse the file
     const fileName = file.name.toLowerCase();
     const isDBF = fileName.endsWith('.dbf');
     const isCSV = fileName.endsWith('.csv');
+    const isXLSX = fileName.endsWith('.xlsx') || fileName.endsWith('.xls');
 
-    if (!isDBF && !isCSV) {
+    if (!isDBF && !isCSV && !isXLSX) {
       return NextResponse.json({ error: 'Formato no soportado' }, { status: 400 });
     }
 
@@ -79,7 +78,6 @@ export async function POST(request: NextRequest) {
         const dbf = await DBFFile.open(tempPath);
         allRows = await dbf.readRecords(20000);
 
-        // Clean data
         allRows = allRows.map((r: Record<string, unknown>) => {
           const cleaned: Record<string, unknown> = {};
           for (const [key, val] of Object.entries(r)) {
@@ -98,10 +96,17 @@ export async function POST(request: NextRequest) {
       } finally {
         try { fs.unlinkSync(tempPath); } catch { /* ignore */ }
       }
+    } else if (isXLSX) {
+      const buffer = Buffer.from(await file.arrayBuffer());
+      const XLSX = await import('xlsx');
+      const workbook = XLSX.read(buffer, { type: 'buffer' });
+      const sheetName = workbook.SheetNames[0];
+      const sheet = workbook.Sheets[sheetName];
+      const data = XLSX.utils.sheet_to_json(sheet);
+      allRows = data as Record<string, unknown>[];
     } else {
       const text = await file.text();
       const Papa = await import('papaparse');
-      // Auto-detect delimiter but prefer pipe for Aspel-exported files
       const detectDelimiter = (content: string): string => {
         const firstLine = content.split('\n')[0];
         const pipeCount = (firstLine.match(/\|/g) || []).length;
@@ -116,7 +121,6 @@ export async function POST(request: NextRequest) {
       allRows = result.data as Record<string, unknown>[];
     }
 
-    // Process rows
     const results = { imported: 0, updated: 0, skipped: 0, errors: 0, errorDetails: [] as string[] };
 
     for (let i = 0; i < allRows.length; i++) {
@@ -124,7 +128,6 @@ export async function POST(request: NextRequest) {
       const rowNum = i + 2;
 
       try {
-        // Map fields
         const mapped: Record<string, unknown> = {};
         for (const [sourceField, targetField] of mapping) {
           let value = row[sourceField];
@@ -166,7 +169,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('Import error:', error);
     return NextResponse.json(
-      { error: `Error de importación: ${error instanceof Error ? error.message : 'Error desconocido'}` },
+      { error: `Error de importacion: ${error instanceof Error ? error.message : 'Error desconocido'}` },
       { status: 500 }
     );
   }
@@ -180,26 +183,20 @@ async function processProduct(
   const name = String(mapped.name || '').trim();
   if (!name) { results.skipped++; return; }
 
-  // Resolve department by name
   let departmentId: number | null = null;
   if (mapped.department) {
     const deptName = String(mapped.department).trim();
-    let dept = await prisma.department.findFirst({
-      where: { name: { contains: deptName } },
-    });
+    let dept = await prisma.department.findFirst({ where: { name: { contains: deptName } } });
     if (!dept && opts.createMissingDepartments) {
       dept = await prisma.department.create({ data: { name: deptName } });
     }
     if (dept) departmentId = dept.id;
   }
 
-  // Resolve supplier by name
   let supplierId: number | null = null;
   if (mapped.supplier) {
     const suppName = String(mapped.supplier).trim();
-    let supp = await prisma.supplier.findFirst({
-      where: { name: { contains: suppName } },
-    });
+    let supp = await prisma.supplier.findFirst({ where: { name: { contains: suppName } } });
     if (!supp && opts.createMissingSuppliers) {
       supp = await prisma.supplier.create({ data: { name: suppName } });
     }
@@ -207,9 +204,7 @@ async function processProduct(
   }
 
   let barcode = String(mapped.barcode || '').trim();
-  // Sanitize barcode: remove non-ASCII, non-printable, and problematic chars
   barcode = barcode.replace(/[^\x20-\x7E]/g, '').trim();
-  // If barcode looks like a name (mostly letters/spaces/punctuation, too long, or contains ñ/áéíóú)
   if (barcode && (
     barcode.length > 25 ||
     barcode.length > 3 && /^[A-Za-zÁÉÍÓÚÑáéíóúñ\s\.\,\-]+$/.test(barcode) ||
@@ -218,7 +213,6 @@ async function processProduct(
     barcode = '';
   }
 
-  // Find existing
   let existing = barcode
     ? await prisma.product.findFirst({ where: { barcode } })
     : null;
@@ -235,19 +229,13 @@ async function processProduct(
     await prisma.product.update({
       where: { id: existing.id },
       data: {
-        name,
-        barcode: barcode || existing.barcode,
-        price,
-        cost,
-        stock,
-        minStock,
+        name, barcode: barcode || existing.barcode, price, cost, stock, minStock,
         departmentId: departmentId ?? existing.departmentId,
         supplierId: supplierId ?? existing.supplierId,
       },
     });
     results.updated++;
 
-    // Update supplier price if provided and supplier exists
     if (supplierId && mapped.supplierPrice) {
       const sp = parseFloat(String(mapped.supplierPrice));
       if (!isNaN(sp) && sp > 0) {
@@ -264,7 +252,6 @@ async function processProduct(
     });
     results.imported++;
 
-    // Create ProductLine with supplier price
     if (supplierId && mapped.supplierPrice) {
       const sp = parseFloat(String(mapped.supplierPrice));
       if (!isNaN(sp) && sp > 0) {
