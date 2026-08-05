@@ -73,18 +73,16 @@ jobs:
             ### Instalacion
             1. Descarga `POS-System-Setup-*.exe`
             2. Ejecuta el instalador
-            3. Sigue el wizard de configuracion
-            4. La app se actualizara automaticamente en futuras versiones
+            3. En la primera ejecucion, elige entre "Empezar en local" o "Punto de venta compartido"
 
-            ### Auto-updater
-            Las actualizaciones se descargan automaticamente.
+            ### Modos de operacion
+            - **Local (Servidor):** Este dispositivo ejecuta la BD y otros se conectan a el
+            - **Compartido (Cliente):** Se conecta a un servidor existente en la red
 
             ---
             *Generado automaticamente por GitHub Actions*
           files: |
             dist-electron/*.exe
-            dist-electron/*.blockmap
-            dist-electron/latest.yml
           draft: false
           prerelease: false
           generate_release_notes: true

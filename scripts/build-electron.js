@@ -100,20 +100,8 @@ if (fs.existsSync(prismaCliSrc)) {
 console.log('\n📦 Paso 3: Building with electron-builder...');
 
 if (platform === 'win' || platform === 'all') {
-  console.log('\n📦 Building Windows unpacked directory...');
-  run('npx', ['electron-builder', '--win', '--x64', '--dir']);
-  
-  console.log('\n📦 Building NSIS installer with custom script...');
-  const nsisScript = path.join(__dirname, '..', 'electron', 'nsis', 'installer.nsi');
-  // Check if makensis is available (Windows only)
-  const makensisCheck = spawnSync('makensis', ['/VERSION'], { shell: true, encoding: 'utf8' });
-  if (makensisCheck.status === 0) {
-    run('makensis', [nsisScript]);
-  } else {
-    console.log('\n⚠ makensis not found. NSIS installer must be built on Windows.');
-    console.log('   Run this script on Windows, or use GitHub Actions for CI/CD.');
-    console.log('   The unpacked app is available at: dist-electron/win-unpacked/');
-  }
+  console.log('\n📦 Building Windows NSIS installer...');
+  run('npx', ['electron-builder', '--win', '--x64']);
 }
 
 if (platform === 'linux' || platform === 'all') {
