@@ -16,13 +16,13 @@ export default function VersionBadge() {
         fetch('/api/version')
           .then((r) => r.json())
           .then((d) => setVersion(d.version))
-          .catch(() => setVersion('0.3.6'));
+          .catch(() => setVersion('0.3.7'));
       });
     } else {
       fetch('/api/version')
         .then((r) => r.json())
         .then((d) => setVersion(d.version))
-        .catch(() => setVersion('0.3.6'));
+        .catch(() => setVersion('0.3.7'));
     }
   }, []);
 

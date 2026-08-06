@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getMyUnsyncedChanges } from "@/lib/sync-engine";
 import { isSyncAuthorized, readLimitedJson, SyncRequestError } from "@/lib/sync-request";
+import { resolveServerDeviceId } from "@/lib/sync-utils";
 
 interface PullBody {
   deviceId?: unknown;
@@ -32,7 +33,7 @@ export async function POST(request: NextRequest) {
       ? Math.min(500, Math.max(1, requestedLimit))
       : 500;
 
-    const myDeviceId = process.env.DEVICE_ID || "unknown";
+    const myDeviceId = await resolveServerDeviceId();
     const changes = await getMyUnsyncedChanges(myDeviceId, parsedSince, limit);
 
     return NextResponse.json({

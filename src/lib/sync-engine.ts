@@ -32,7 +32,7 @@ export async function logChange(
         entityId,
         data: JSON.stringify(data),
         synced: false,
-        syncVersion: Date.now(),
+        syncVersion: BigInt(Date.now()),
       },
     });
   } catch (e) {
@@ -48,13 +48,14 @@ export async function getUnsyncedChanges(
 ): Promise<SyncLogEntry[]> {
   const where: Prisma.SyncLogWhereInput = {
     deviceId: { not: excludeDeviceId },
-    syncVersion: { gt: since },
+    syncVersion: { gt: BigInt(since) },
   };
-  return prisma.syncLog.findMany({
+  const rows = await prisma.syncLog.findMany({
     where,
     orderBy: { timestamp: "asc" },
     take: Math.min(500, Math.max(1, limit)),
   });
+  return rows.map((r) => ({ ...r, syncVersion: Number(r.syncVersion) }));
 }
 
 // Get my changes to share with a peer.
@@ -66,14 +67,15 @@ export async function getMyUnsyncedChanges(
 ): Promise<SyncLogEntry[]> {
   const where: Prisma.SyncLogWhereInput = {
     deviceId,
-    syncVersion: { gt: since },
+    syncVersion: { gt: BigInt(since) },
   };
 
-  return prisma.syncLog.findMany({
+  const rows = await prisma.syncLog.findMany({
     where,
     orderBy: { timestamp: "asc" },
     take: Math.min(500, Math.max(1, limit)),
   });
+  return rows.map((r) => ({ ...r, syncVersion: Number(r.syncVersion) }));
 }
 
 // Mark changes as synced
@@ -284,7 +286,7 @@ export async function getLatestSyncVersion(): Promise<number> {
     orderBy: { syncVersion: "desc" },
     select: { syncVersion: true },
   });
-  return latest?.syncVersion || 0;
+  return latest ? Number(latest.syncVersion) : 0;
 }
 
 // Get device statistics

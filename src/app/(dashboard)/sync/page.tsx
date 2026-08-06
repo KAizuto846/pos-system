@@ -12,9 +12,14 @@ import {
   Loader2,
   Radio,
   Zap,
+  Cloud,
+  Plug,
+  Save,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 
@@ -24,6 +29,22 @@ interface SyncStats {
   lastChangeAt: string | null;
 }
 
+interface RelayState {
+  relayUrl?: string;
+  hasSecret?: boolean;
+  connected?: boolean;
+  lastTestError?: string | null;
+  relayStoredChanges?: number | null;
+}
+
+interface RelaySyncResult {
+  ok: boolean;
+  pulled: number;
+  pushed: number;
+  error: string | null;
+  at?: string;
+}
+
 export default function SyncPage() {
   const [stats, setStats] = useState<SyncStats | null>(null);
   const [peers, setPeers] = useState<DiscoveredServer[]>([]);
@@ -31,6 +52,14 @@ export default function SyncPage() {
   const [deviceInfo, setDeviceInfo] = useState<{ mode?: string; serverPort?: number; deviceName?: string; businessName?: string }>({});
   const [syncing, setSyncing] = useState(false);
   const [isElectron, setIsElectron] = useState(false);
+
+  // Relay state
+  const [relayState, setRelayState] = useState<RelayState>({});
+  const [relayUrl, setRelayUrl] = useState('');
+  const [relaySecret, setRelaySecret] = useState('');
+  const [relayTesting, setRelayTesting] = useState(false);
+  const [relaySaving, setRelaySaving] = useState(false);
+  const [relayLastSync, setRelayLastSync] = useState<RelaySyncResult | null>(null);
 
   const loadPeers = useCallback(async () => {
     const win = window as unknown as { electronAPI?: Window['electronAPI'] };
@@ -53,8 +82,21 @@ export default function SyncPage() {
     }
   }, []);
 
+  const loadRelayConfig = useCallback(async () => {
+    try {
+      const res = await fetch('/api/sync/relay/config');
+      if (res.ok) {
+        const data = await res.json();
+        setRelayState(data);
+        setRelayUrl(data.relayUrl || '');
+      }
+    } catch {
+      // Ignore, non-critical
+    }
+  }, []);
+
   const loadAll = useCallback(async () => {
-    await Promise.all([loadStats(), loadPeers()]);
+    await Promise.all([loadStats(), loadPeers(), loadRelayConfig()]);
     const win = window as unknown as { electronAPI?: Window['electronAPI'] };
     if (win.electronAPI?.getConfig) {
       win.electronAPI.getConfig().then((cfg) => {
@@ -64,7 +106,7 @@ export default function SyncPage() {
     if (win.electronAPI?.getLastSyncResult) {
       win.electronAPI.getLastSyncResult().then(setLastResult).catch(() => {});
     }
-  }, [loadStats, loadPeers]);
+  }, [loadStats, loadPeers, loadRelayConfig]);
 
   useEffect(() => {
     (async () => {
@@ -79,18 +121,38 @@ export default function SyncPage() {
 
   const handleSyncNow = async () => {
     const win = window as unknown as { electronAPI?: Window['electronAPI'] };
-    if (!win.electronAPI?.triggerSync) {
-      toast.error('La sincronizacion manual solo esta disponible en la aplicacion de escritorio');
-      return;
-    }
     setSyncing(true);
+    let electronDone = false;
     try {
-      const result = await win.electronAPI.triggerSync();
-      if (result && 'at' in result) {
-        setLastResult(result);
-        toast.success(`Sincronizacion completada (${result.peers} dispositivo${result.peers === 1 ? '' : 's'})`);
+      // 1) Relay sync (funciona en web y escritorio)
+      const relayRes = await fetch('/api/sync/relay/trigger', { method: 'POST' });
+      if (relayRes.ok) {
+        const relayResult: RelaySyncResult = await relayRes.json();
+        setRelayLastSync(relayResult);
+        if (relayResult.ok) {
+          toast.success(`Relay: +${relayResult.pulled} recibidos, +${relayResult.pushed} enviados`);
+        } else if (relayResult.error) {
+          toast.error(`Relay: ${relayResult.error}`);
+        }
       } else {
-        toast.error(result?.error || 'No se pudo sincronizar');
+        toast.error('No se pudo contactar el relay local');
+      }
+
+      // 2) Sync LAN (solo escritorio)
+      if (win.electronAPI?.triggerSync) {
+        const result = await win.electronAPI.triggerSync();
+        electronDone = true;
+        if (result && 'at' in result) {
+          setLastResult(result);
+          if (result.peers > 0) {
+            toast.success(`LAN: ${result.peers} dispositivo${result.peers === 1 ? '' : 's'} sincronizado${result.peers === 1 ? '' : 's'}`);
+          }
+        } else if (result?.error) {
+          toast.error(`LAN: ${result.error}`);
+        }
+      }
+      if (!electronDone && !win.electronAPI) {
+        toast.success('Sincronizacion completada');
       }
       await loadAll();
     } catch (error) {
@@ -101,16 +163,133 @@ export default function SyncPage() {
     }
   };
 
+  const handleTestRelay = async () => {
+    setRelayTesting(true);
+    try {
+      const res = await fetch('/api/sync/relay/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ relayUrl, syncSecret: relaySecret }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setRelayState((prev) => ({ ...prev, connected: true, lastTestError: null, relayStoredChanges: data.storedChanges }));
+        toast.success(`Conexion exitosa (${data.storedChanges ?? 0} cambios en el relay)`);
+      } else {
+        setRelayState((prev) => ({ ...prev, connected: false, lastTestError: data.error }));
+        toast.error(`Sin conexion: ${data.error || 'error desconocido'}`);
+      }
+    } catch {
+      toast.error('Error al probar la conexion');
+    } finally {
+      setRelayTesting(false);
+    }
+  };
+
+  const handleSaveRelay = async () => {
+    setRelaySaving(true);
+    try {
+      const res = await fetch('/api/sync/relay/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ relayUrl, syncSecret: relaySecret }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        toast.success('Relay configurado correctamente');
+        await loadRelayConfig();
+      } else {
+        toast.error(data.error || 'Error al guardar');
+      }
+    } catch {
+      toast.error('Error al guardar la configuracion');
+    } finally {
+      setRelaySaving(false);
+    }
+  };
+
   const selfUrl = `http://localhost:${deviceInfo.serverPort || 3000}`;
 
   return (
     <div className="space-y-6 p-6">
       <div>
-        <h1 className="text-2xl font-bold text-slate-100">Sincronizacion P2P</h1>
+        <h1 className="text-2xl font-bold text-slate-100">Sincronizacion</h1>
         <p className="text-slate-400 mt-1">
-          Todos los dispositivos son pares iguales: cada uno ejecuta su propia base de datos y se sincroniza automaticamente cada 30 segundos.
+          Sincronizacion P2P en la red local + sincronizacion por internet via relay.
         </p>
       </div>
+
+      {/* Relay (internet) */}
+      <Card className="border-slate-700 bg-slate-800">
+        <CardHeader>
+          <CardTitle className="text-lg text-slate-100 flex items-center gap-2">
+            <Cloud className="h-5 w-5 text-sky-500" />
+            Sincronizacion por internet (Relay)
+          </CardTitle>
+          <CardDescription>
+            Conecta este equipo a un relay en la nube para sincronizar con dispositivos fuera de tu red local. Todos los equipos deben usar el mismo relay y el mismo secret.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="relayUrl">URL del relay</Label>
+              <Input
+                id="relayUrl"
+                type="text"
+                placeholder="https://sync.tudominio.com"
+                value={relayUrl}
+                onChange={(e) => setRelayUrl(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="relaySecret">Secret compartido (SYNC_SECRET)</Label>
+              <Input
+                id="relaySecret"
+                type="password"
+                placeholder="El mismo en todos los equipos"
+                value={relaySecret}
+                onChange={(e) => setRelaySecret(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <Button variant="outline" onClick={handleTestRelay} disabled={relayTesting || !relayUrl.trim()} className="gap-2">
+              {relayTesting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plug className="h-4 w-4" />}
+              Probar conexion
+            </Button>
+            <Button onClick={handleSaveRelay} disabled={relaySaving || !relayUrl.trim()} className="gap-2">
+              {relaySaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              Guardar
+            </Button>
+            {relayState.relayUrl && (
+              <Badge variant="outline" className={cn(relayState.connected ? 'text-emerald-400 border-emerald-500/50' : 'text-red-400 border-red-500/50')}>
+                {relayState.connected ? (
+                  <>
+                    <CheckCircle2 className="h-3 w-3 mr-1" />
+                    Conectado{relayState.relayStoredChanges != null ? ` (${relayState.relayStoredChanges} cambios)` : ''}
+                  </>
+                ) : (
+                  <>
+                    <XCircle className="h-3 w-3 mr-1" />
+                    Sin conexion{relayState.lastTestError ? `: ${relayState.lastTestError}` : ''}
+                  </>
+                )}
+              </Badge>
+            )}
+          </div>
+
+          {relayLastSync && (
+            <div className="rounded-md bg-slate-700/50 px-4 py-3 text-sm text-slate-400">
+              Ultima sincronizacion por relay: {relayLastSync.at ? new Date(relayLastSync.at).toLocaleString() : '—'}
+              {relayLastSync.ok
+                ? ` — recibidos: ${relayLastSync.pulled}, enviados: ${relayLastSync.pushed}`
+                : relayLastSync.error ? ` — ${relayLastSync.error}` : ''}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <div className="grid gap-6 lg:grid-cols-3">
         <Card className="border-slate-700 bg-slate-800 lg:col-span-2">
@@ -120,7 +299,7 @@ export default function SyncPage() {
               Dispositivos detectados en la red
             </CardTitle>
             <CardDescription>
-              Equipos descubiertos mediante UDP (multicast/broadcast en el puerto 9876).
+              Equipos descubiertos mediante UDP (multicast/broadcast en el puerto 9876). Solo disponible en la aplicacion de escritorio.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -149,13 +328,15 @@ export default function SyncPage() {
                 <Wifi className="h-10 w-10 text-slate-600 mb-3" />
                 {isElectron ? (
                   <p className="text-sm text-slate-400">
-                    No se encontraron otros dispositivos.
+                    No se encontraron otros dispositivos en la red local.
                     <br />
-                    Asegurate de que otro equipo corra este POS en la misma red.
+                    Si los equipos estan en redes distintas, configura el relay de arriba.
                   </p>
                 ) : (
                   <p className="text-sm text-slate-400">
-                    Ejecuta la aplicacion de escritorio para descubrir otros equipos en la red.
+                    El descubrimiento LAN solo esta disponible en la aplicacion de escritorio.
+                    <br />
+                    Para sincronizar desde el navegador, configura el relay de arriba.
                   </p>
                 )}
               </div>
@@ -179,6 +360,9 @@ export default function SyncPage() {
               {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
               {syncing ? 'Sincronizando...' : 'Sincronizar ahora'}
             </Button>
+            <p className="text-xs text-slate-500">
+              Sincroniza con el relay (internet) y, si usas la version de escritorio, tambien con los equipos de la red local.
+            </p>
             <div className="rounded-md bg-slate-700/50 px-4 py-3 text-sm text-slate-400">
               Mi dispositivo: <span className="text-slate-200 font-mono">{selfUrl}</span>
             </div>
@@ -194,7 +378,7 @@ export default function SyncPage() {
           <CardHeader>
             <CardTitle className="text-lg text-slate-100 flex items-center gap-2">
               <Zap className="h-5 w-5 text-emerald-500" />
-              Ultima sincronizacion
+              Ultima sincronizacion LAN
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -227,7 +411,7 @@ export default function SyncPage() {
               </>
             ) : (
               <p className="text-sm text-slate-500">
-                Aun no se ha ejecutado una sincronizacion. Se sincronizara automaticamente cada 30 segundos o pulse &quot;Sincronizar ahora&quot;.
+                La sincronizacion LAN se ejecuta automaticamente cada 30 segundos en la version de escritorio.
               </p>
             )}
           </CardContent>
@@ -268,16 +452,17 @@ export default function SyncPage() {
           </CardHeader>
           <CardContent className="text-sm text-slate-400 space-y-2">
             <p>
-              <span className="text-slate-200 font-medium">P2P:</span> No hay un servidor central.
-              Cada equipo tiene su copia de la base de datos y comparte sus cambios con los demas.
+              <span className="text-slate-200 font-medium">P2P (red local):</span> Cada equipo
+              comparte sus cambios con los demas de la misma red, automaticamente cada 30 segundos.
+            </p>
+            <p>
+              <span className="text-slate-200 font-medium">Relay (internet):</span> Un servidor en
+              la nube guarda los cambios de todos los equipos y los retransmite, para sincronizar
+              sin importar la red en la que este cada uno.
             </p>
             <p>
               <span className="text-slate-200 font-medium">Resolucion de conflictos:</span> Cuando dos
               equipos modifican el mismo registro, gana el cambio mas reciente (Last-Write-Wins).
-            </p>
-            <p>
-              <span className="text-slate-200 font-medium">Descubrimiento:</span> Los equipos se encuentran
-              automaticamente al estar en la misma red. Se sincronizan cada 30 segundos.
             </p>
           </CardContent>
         </Card>

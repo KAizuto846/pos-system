@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { applyChanges, type SyncLogEntry } from "@/lib/sync-engine";
 import { isSyncAuthorized, readLimitedJson, SyncRequestError } from "@/lib/sync-request";
+import { resolveServerDeviceId } from "@/lib/sync-utils";
 
 interface PushBody {
   changes?: unknown;
@@ -47,7 +48,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "deviceId required" }, { status: 400 });
     }
 
-    const myDeviceId = process.env.DEVICE_ID || "unknown";
+    const myDeviceId = await resolveServerDeviceId();
     const result = await applyChanges(changes, myDeviceId);
 
     return NextResponse.json({

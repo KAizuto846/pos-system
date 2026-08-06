@@ -28,10 +28,14 @@ export default function LoginPage() {
     fetch('/api/auth/register')
       .then((res) => res.json())
       .then((data) => {
+        if (data.hasAdmin === false) {
+          router.push('/setup');
+          return;
+        }
         setHasAdmin(data.hasAdmin ?? true);
       })
       .catch(() => setHasAdmin(false));
-  }, []);
+  }, [router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -112,8 +116,8 @@ export default function LoginPage() {
           {hasAdmin === false && (
             <p className="text-sm text-slate-400">
               No admin account found.{' '}
-              <Link href="/register" className="text-emerald-400 hover:underline">
-                Create the first admin
+              <Link href="/setup" className="text-emerald-400 hover:underline">
+                Configure the system
               </Link>
             </p>
           )}

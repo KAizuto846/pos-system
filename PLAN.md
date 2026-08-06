@@ -538,7 +538,72 @@ Pagina de la barra lateral ("Sincronizacion"):
 
 ---
 
-### Fase 6: Offline Support
+### Fase 5b: Sync por Internet via Relay Central
+
+**Prioridad:** ALTA - Permite sincronizar equipos en redes distintas (sin depender de estar en la misma LAN).
+
+#### 5b.1 Servidor relay (VPS)
+
+**Directorio nuevo:** `relay/`
+
+Servidor independiente (express + better-sqlite3) que actua como buzon central:
+- `GET /health` - Health check, devuelve `storedChanges` y `time`
+- `POST /api/sync/pull` - Entrega cambios de otros dispositivos desde el cursor del equipo
+- `POST /api/sync/push` - Guarda cambios propios (`INSERT OR IGNORE` idempotente por `device_id + sync_version`)
+- Autenticacion: header `x-sync-secret` (secreto compartido via env `SYNC_SECRET`)
+- Tabla `device_cursors`: min cursor por device para limpieza de cambios viejos (hourly)
+- Requiere nodejs + npm, se despliega con systemd + Caddy/nginx (HTTPS)
+
+#### 5b.2 Cliente relay en la app
+
+**Archivo nuevo:** `src/lib/relay-sync.ts`
+
+- Config persistida en `AppSetting` (key/value): `relayUrl`, `relaySecret`, `relayPullSince`, `relayPushSince`
+- `testRelayConnection()` - prueba `GET /health` con timeout 10s
+- `runRelaySync()` - flujo completo:
+  1. `relayPull` (cambios de otros) -> `localPush` al engine local (con `synced: false`)
+  2. `localPull` (cambios propios) -> `relayPush`
+  3. Actualiza cursors `relayPullSince`/`relayPushSince` con el max `syncVersion`
+- Guarda `relaySyncInProgress` para evitar solapamiento del loop
+
+**Archivo nuevo:** `src/instrumentation.ts` + `src/lib/relay-loop.ts`
+
+- En `register()`: setInterval cada 30s -> `runRelaySync()` solo si hay relay configurado
+- Log: `[relay] Sync: +N recibidos, +M enviados`
+
+#### 5b.3 API routes
+
+- `POST /api/sync/relay/config` - GET/POST configuracion relay (guarda + prueba conexion)
+- `POST /api/sync/relay/test` - Prueba conexion sin guardar
+- `POST /api/sync/relay/trigger` - Ejecuta `runRelaySync()` manual (boton "Sincronizar ahora" en web)
+
+#### 5b.4 UI
+
+**Modificar:** `src/app/(dashboard)/sync/page.tsx`
+
+- Card "Relay por internet": inputs URL + secreto, botones "Probar conexion" y "Guardar"
+- Badge de estado (conectado/no configurado), ultimo resultado de sync relay
+- Boton "Sincronizar ahora" funciona tambien en web (fetch a `/api/sync/relay/trigger`)
+
+**Modificar:** `electron/setup.html` + `electron/main.js`
+
+- Seccion relay opcional en el wizard de primer arranque
+- `saveFirstRunConfig(mode, relayUrl, relaySecret)` guarda via `/api/setup/config` + `/api/sync/relay/config`
+
+#### 5b.5 DeviceId estable
+
+**Modificar:** `src/lib/sync-utils.ts`, `src/app/api/sync/pull/route.ts`, `src/app/api/sync/push/route.ts`
+
+- `resolveServerDeviceId()`: DEVICE_ID (Electron) -> AppSetting `deviceName` (setup web) -> hostname
+- Los routes pull/push usan `resolveServerDeviceId()` en vez de `process.env.DEVICE_ID || "unknown"`
+
+#### 5b.6 Nota sobre sync_version (BigInt)
+
+`syncVersion` usa `BigInt` en Prisma (columna SQLite BIGINT). Motivo: se escribe `Date.now()` (~1.78e12), que excede int32. Prisma valida los valores contra el tipo declarado de la columna y lanza P2023 ("does not fit in an INT column") si la columna es INTEGER (int32) - ver issue prisma/prisma#25920. La columna debe crearse como `BIGINT` (SQLite INTEGER es 64-bit, no requiere ALTER de datos; la migracion recrea la tabla con el tipo correcto).
+
+---
+
+
 
 **Prioridad:** BAJA - Funcionalidad futura.
 
@@ -839,6 +904,7 @@ try {
 | Fase 3: Auto-update | COMPLETADA | electron-updater integrado en main.js |
 | Fase 4: NSIS installer | COMPLETADA | Wizard con 8 paginas + create-icon.js |
 | Fase 5: Setup web | COMPLETADA | /setup wizard + pagina /sync en la barra lateral |
+| Fase 5b: Relay internet | COMPLETADA | relay/ standalone, relay-sync.ts, loop 30s, /api/sync/relay/*, sync_version BigInt |
 | Fase 6: Offline | PENDIENTE | Futuro |
 | Fase 7: Documentacion | COMPLETADA | INTERNET-ACCESS.md + DEBIAN-SETUP.md |
 

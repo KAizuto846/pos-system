@@ -26,7 +26,11 @@ export default function SetupPage() {
 
   // Business config
   const [businessName, setBusinessName] = useState('Mi Negocio');
-  const [deviceName, setDeviceName] = useState('');
+  const [deviceName, setDeviceName] = useState(() =>
+    typeof window !== 'undefined' && window.location.hostname && !['localhost', '127.0.0.1'].includes(window.location.hostname)
+      ? window.location.hostname
+      : 'Equipo-1'
+  );
 
   // Admin config
   const [adminUsername, setAdminUsername] = useState('');
@@ -48,10 +52,6 @@ export default function SetupPage() {
         }
       })
       .catch(() => {});
-
-    // Get device hostname
-    setDeviceName(window.navigator.userAgent.includes('Windows') ? 
-      window.location.hostname || 'PC-Caja' : 'Server');
   }, [router]);
 
   const handleBusinessSubmit = (e: React.FormEvent) => {
@@ -108,10 +108,23 @@ export default function SetupPage() {
         throw new Error(data.error || 'Error al crear usuario');
       }
 
-      // Save network config (if we had an API for it)
-      // For now, this is handled by the Electron config
+      // Persist business/device config in the database (works in web and desktop)
+      const cfgRes = await fetch('/api/setup/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          businessName,
+          deviceName: deviceName || window.location.hostname || 'Equipo-1',
+          serverPort,
+        }),
+      });
+      if (!cfgRes.ok) {
+        const data = await cfgRes.json().catch(() => null);
+        throw new Error(data?.error || 'Error al guardar la configuracion');
+      }
+
       localStorage.setItem('pos-business-name', businessName);
-      localStorage.setItem('pos-device-name', deviceName);
+      localStorage.setItem('pos-device-name', deviceName || window.location.hostname || 'Equipo-1');
       localStorage.setItem('pos-server-mode', 'server');
       localStorage.setItem('pos-server-port', serverPort);
 

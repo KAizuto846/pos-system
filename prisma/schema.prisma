@@ -329,11 +329,20 @@ model SyncLog {
   data        String
   timestamp   DateTime @default(now())
   synced      Boolean  @default(false)
-  syncVersion Int      @default(0) @map("sync_version")
+  syncVersion BigInt   @default(0) @map("sync_version")
 
   @@index([deviceId, synced])
   @@index([entity, entityId])
   @@index([timestamp])
   @@index([synced, timestamp])
   @@map("sync_log")
+}
+
+// Simple key/value store for app-level settings (relay config, cursors, business info)
+model AppSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+
+  @@map("app_settings")
 }

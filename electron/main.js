@@ -54,11 +54,21 @@ function showFirstRunSetup(callback) {
 
   setupWindow.once('ready-to-show', () => setupWindow.show());
 
-  ipcMain.once('first-run-config', (event, mode) => {
+  ipcMain.once('first-run-config', async (event, mode, relayUrl, relaySecret) => {
     config.mode = 'server';
     config.businessName = 'Mi Negocio';
     config.deviceName = os.hostname();
     saveConfig();
+    // Guardar relay config en la DB del servidor (via API local)
+    try {
+      if (relayUrl && relayUrl.trim()) {
+        await fetch(`http://localhost:${config.serverPort || 3000}/api/sync/relay/config`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ relayUrl, syncSecret: relaySecret || '' }),
+        });
+      }
+    } catch (e) {}
     setupWindow.close();
     callback(mode);
   });

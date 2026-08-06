@@ -98,9 +98,11 @@ Variables disponibles:
 
 ---
 
-## 🔄 Sincronización P2P
+## 🔄 Sincronización
 
 El sistema usa **sincronización entre pares (P2P mesh)** de igual a igual, sin servidor central ni "PC proveedora". Cada dispositivo (Electron o PWA) ejecuta su propia instancia de Next.js y su propia base de datos SQLite.
+
+### P2P en red local
 
 1. **Descubrimiento:** cada equipo anuncia su presencia por **UDP multicast/broadcast** en el puerto `9876` (mensaje `pos-server-announce` con nombre, puerto y `deviceId`).
 2. **Sync automatico:** cada **30 segundos** el proceso principalmente Electron recorre los pares descubiertos y hace `pull/push` bidireccional de cambios via HTTP (`/api/sync/pull` y `/api/sync/push`).
@@ -109,6 +111,58 @@ El sistema usa **sincronización entre pares (P2P mesh)** de igual a igual, sin 
 5. **Página de control:** en la barra lateral → **Sincronización** puedes ver los dispositivos detectados, forzar un sync manual (bandeja o botón), y consultar el registro de cambios.
 
 > 💡 Todos los equipos deben estar en la misma red local (o con UDP habilitado). La sincronización no requiere configuración manual: se detectan solos.
+
+### Relay por internet (equipos en redes distintas)
+
+Cuando los dispositivos **no** están en la misma red, la app usa un **relay central** (buzón de cambios en la nube) como puente:
+
+1. Cada equipo configura en **Sincronización → Relay** la URL del relay y el secreto compartido.
+2. Un loop automático (30s) y el botón **Sincronizar ahora** hacen `pull` (cambios de otros equipos) y `push` (cambios propios) contra el relay.
+3. El relay funciona como buzón: guarda los cambios con `INSERT OR IGNORE` (idempotente por `device_id + sync_version`) y solo entrega a otros equipos lo que no han visto aún.
+4. Cualquier instancia con relay configurado sincroniza con todas las demás a través del relay, incluso estando en redes separadas.
+
+#### Desplegar el relay en un VPS (Debian)
+
+```bash
+# En el VPS
+apt install -y nodejs npm sqlite3
+mkdir -p /opt/pos-relay && cd /opt/pos-relay
+cp -r relay/ ./
+npm install
+# Configuración
+export PORT=8099
+export SYNC_SECRET="un-secreto-largo-y-seguro"   # igual en todos los equipos
+export DB_PATH="/opt/pos-relay/relay.db"
+node server.js
+```
+
+Para producción se recomienda **systemd** (mantener corriendo) + **Caddy o nginx** (HTTPS):
+
+```ini
+# /etc/systemd/system/pos-relay.service
+[Unit]
+Description=POS Relay Server
+After=network.target
+
+[Service]
+Environment=PORT=8099
+Environment=SYNC_SECRET=un-secreto-largo-y-seguro
+Environment=DB_PATH=/opt/pos-relay/relay.db
+WorkingDirectory=/opt/pos-relay
+ExecStart=/usr/bin/node server.js
+Restart=always
+User=www-data
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+systemctl daemon-reload && systemctl enable --now pos-relay
+# En los equipos: URL del relay = https://tu-dominio.com (sin puerto si usas Caddy/nginx)
+```
+
+La URL que configuran los equipos debe ser `https://tu-dominio.com` (HTTPS obligatorio salvo en red de prueba). Endpoints del relay: `GET /health`, `POST /api/sync/pull`, `POST /api/sync/push` (autenticados con el header `x-sync-secret`).
 
 ---
 
@@ -172,8 +226,13 @@ pos-system/
 │       ├── auth.ts            # Configuración de NextAuth
 │       ├── prisma.ts / db.ts  # Cliente Prisma singleton (con PRAGMAs SQLite)
 │       ├── sync-engine.ts     # Log, pull/push, LWW, cursor
+│       ├── sync-utils.ts      # DeviceId estable, helpers de sync
+│       ├── relay-sync.ts      # Sync por internet via relay (config, pull/push, cursors)
+│       ├── relay-loop.ts      # Loop automático (30s) contra el relay
 │       ├── broadcast.ts       # SSE broadcaster
 │       └── utils.ts           # Utilidades
+├── relay/
+│   └── server.js              # Servidor relay independiente (buzón central, express + better-sqlite3)
 ├── .github/workflows/release.yml # CI: build + auto-release Windows
 ├── package.json
 └── deploy.sh                  # Script de deploy (build + tag)

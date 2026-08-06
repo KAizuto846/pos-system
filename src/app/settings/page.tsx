@@ -25,7 +25,7 @@ export default function SettingsPage() {
     fetch('/api/version')
       .then(r => r.json())
       .then(d => setVersion(d.version))
-      .catch(() => setVersion('0.3.6'));
+      .catch(() => setVersion('0.3.7'));
 
     fetch('/api/sync/stats')
       .then(r => r.json())
@@ -53,14 +53,27 @@ export default function SettingsPage() {
         });
       });
     } else {
-      setConfig({
-        mode: 'server',
-        serverPort: localStorage.getItem('pos-server-port') || '3000',
-        serverIP: localStorage.getItem('pos-server-ip') || '',
-        deviceName: localStorage.getItem('pos-device-name') || navigator.userAgent.includes('Windows')
-          ? window.location.hostname || 'PC-Caja'
-          : 'Server',
-      });
+      // Modo web: leer config persistida en la DB (setup web)
+      fetch('/api/setup/config')
+        .then(r => r.json())
+        .then((data) => {
+          if (data && typeof data === 'object') {
+            setConfig({
+              mode: 'server',
+              serverPort: String(data.serverPort || localStorage.getItem('pos-server-port') || '3000'),
+              serverIP: localStorage.getItem('pos-server-ip') || '',
+              deviceName: data.deviceName || localStorage.getItem('pos-device-name') || 'Equipo-1',
+            });
+          }
+        })
+        .catch(() => {
+          setConfig({
+            mode: 'server',
+            serverPort: localStorage.getItem('pos-server-port') || '3000',
+            serverIP: localStorage.getItem('pos-server-ip') || '',
+            deviceName: localStorage.getItem('pos-device-name') || 'Equipo-1',
+          });
+        });
     }
   }, []);
 

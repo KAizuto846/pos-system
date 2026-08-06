@@ -1,0 +1,16 @@
+{
+  "name": "pos-relay",
+  "version": "1.0.0",
+  "description": "Relay de sincronizacion central para POS System (buzon de cambios entre dispositivos en redes distintas)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.3.0",
+    "express": "^4.19.2"
+  }
+}
