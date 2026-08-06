@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Search, ShoppingCart, Plus, Minus, X, Trash2, Loader2 } from 'lucide-react';
+import { Search, ShoppingCart, Plus, Minus, X, Trash2, Loader2, User, Percent, Fingerprint } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -95,6 +95,13 @@ export default function PosPage() {
   const [selectedPaymentMethodId, setSelectedPaymentMethodId] = useState<string>('');
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [checkingOut, setCheckingOut] = useState(false);
+
+  // Loyalty/customer
+  const [customerSearch, setCustomerSearch] = useState('');
+  const [customerResults, setCustomerResults] = useState<any[]>([]);
+  const [selectedCustomer, setSelectedCustomer] = useState<any>(null);
+  const [searchingCustomer, setSearchingCustomer] = useState(false);
+  const [scanningFingerprint, setScanningFingerprint] = useState(false);
 
   const debouncedSearch = useDebounce(searchTerm, 300);
 
@@ -198,9 +205,62 @@ export default function PosPage() {
     });
   };
 
+  // Loyalty: search customers
+  const searchCustomers = useCallback(async (query: string) => {
+    if (!query || query.length < 2) { setCustomerResults([]); return; }
+    setSearchingCustomer(true);
+    try {
+      const res = await fetch(`/api/customers?q=${encodeURIComponent(query)}&limit=5`);
+      const data = await res.json();
+      setCustomerResults(data.customers || []);
+    } catch { setCustomerResults([]); }
+    finally { setSearchingCustomer(false); }
+  }, []);
+
+  // Loyalty: simulate fingerprint scan
+  const handleFingerprintScan = async () => {
+    setScanningFingerprint(true);
+    try {
+      const hash = 'simulado-' + Date.now();
+      const res = await fetch('/api/customers/fingerprint', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'verify', fingerprintData: hash }),
+      });
+      const data = await res.json();
+      if (data.found && data.customer) {
+        setSelectedCustomer(data.customer);
+        toast.success(`Cliente: ${data.customer.name} (${data.customer.tier})`);
+      } else {
+        toast.error('Huella no reconocida');
+      }
+    } catch { toast.error('Error al escanear huella'); }
+    finally { setScanningFingerprint(false); }
+  };
+
+  // Loyalty: calculate discounts per product
+  const getCustomerDiscount = useCallback((product: any): number => {
+    if (!selectedCustomer || !product.loyaltyDiscount) return 0;
+    const margin = product.price - (product.cost || 0);
+    if (margin <= 0) return 0;
+    const tierPct = selectedCustomer.tier === 'gold' ? 33.33 : selectedCustomer.tier === 'silver' ? 20 : 10;
+    const tierLimit = (margin * tierPct) / 100;
+    const absoluteLimit = margin / 3;
+    return Math.round((Math.min(tierLimit, absoluteLimit)) * 100) / 100;
+  }, [selectedCustomer]);
+
+  // Loyalty: calculate total discount
+  const loyaltyDiscount = cart.reduce((sum, item) => {
+    const product = products.find(p => p.id === item.productId);
+    if (!product) return sum;
+    return sum + getCustomerDiscount(product) * item.quantity;
+  }, 0);
+
+  const finalTotal = totalAmount - loyaltyDiscount;
+
   const handleCheckout = async () => {
     if (!selectedPaymentMethodId) {
-      toast.error('Selecciona un método de pago');
+      toast.error('Selecciona un metodo de pago');
       return;
     }
 
@@ -213,7 +273,9 @@ export default function PosPage() {
           price: item.price,
         })),
         paymentMethodId: parseInt(selectedPaymentMethodId, 10),
-        total: totalAmount,
+        total: finalTotal,
+        discountTotal: loyaltyDiscount,
+        customerId: selectedCustomer?.id || null,
       };
 
       const res = await fetch('/api/sales', {
@@ -227,8 +289,9 @@ export default function PosPage() {
         throw new Error(errData.error || 'Error al crear venta');
       }
 
-      toast.success('✅ Venta realizada con éxito');
+      toast.success('Venta realizada con exito');
       clearCart();
+      setSelectedCustomer(null);
       setCheckoutOpen(false);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Error al crear venta';
@@ -436,12 +499,68 @@ export default function PosPage() {
 
         {/* Bottom Section */}
         <div className="border-t border-slate-700 px-4 py-3">
+          {/* Customer loyalty section */}
+          <div className="mb-3 space-y-2">
+            <label className="text-xs font-medium text-slate-400">Cliente (fidelidad)</label>
+            {selectedCustomer ? (
+              <div className="flex items-center justify-between rounded-lg border border-emerald-700 bg-emerald-900/20 p-2">
+                <div>
+                  <p className="text-sm font-medium text-emerald-400">{selectedCustomer.name}</p>
+                  <p className="text-xs text-emerald-600">{selectedCustomer.tier} - {selectedCustomer.purchaseCount} visitas</p>
+                </div>
+                <Button variant="ghost" size="sm" onClick={() => setSelectedCustomer(null)} className="h-7 text-xs text-slate-400 hover:text-red-400">Quitar</Button>
+              </div>
+            ) : (
+              <div className="space-y-1">
+                <div className="flex gap-1">
+                  <Input
+                    placeholder="Buscar cliente..."
+                    value={customerSearch}
+                    onChange={(e) => { setCustomerSearch(e.target.value); searchCustomers(e.target.value); }}
+                    className="h-8 text-xs border-slate-600 bg-slate-900 text-slate-100"
+                  />
+                  <Button variant="outline" size="sm" onClick={handleFingerprintScan} disabled={scanningFingerprint} className="h-8 border-slate-600 text-slate-300" title="Escanear huella (F5)">
+                    <Fingerprint className={`h-4 w-4 ${scanningFingerprint ? 'animate-pulse text-emerald-400' : ''}`} />
+                  </Button>
+                </div>
+                {customerResults.length > 0 && customerSearch.length >= 2 && (
+                  <div className="max-h-32 overflow-y-auto rounded-lg border border-slate-700 bg-slate-900">
+                    {customerResults.map((c: any) => (
+                      <div key={c.id} onClick={() => { setSelectedCustomer(c); setCustomerSearch(''); setCustomerResults([]); }} className="cursor-pointer px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-700">
+                        {c.name} <Badge className="ml-1 text-[10px]">{c.tier || 'bronce'}</Badge>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
           <div className="flex items-center justify-between py-2">
             <span className="text-sm text-slate-400">Subtotal</span>
             <span className="text-lg font-bold text-slate-100">
               {formatCurrency(totalAmount)}
             </span>
           </div>
+
+          {loyaltyDiscount > 0 && (
+            <>
+              <div className="flex items-center justify-between py-1">
+                <span className="text-xs text-emerald-400 flex items-center gap-1">
+                  <Percent className="h-3 w-3" /> Descuento fidelidad
+                </span>
+                <span className="text-sm font-semibold text-emerald-400">
+                  -{formatCurrency(loyaltyDiscount)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between py-1">
+                <span className="text-sm font-semibold text-slate-200">Total</span>
+                <span className="text-lg font-bold text-emerald-400">
+                  {formatCurrency(finalTotal)}
+                </span>
+              </div>
+            </>
+          )}
           <Separator className="my-2" />
 
           <div className="py-2">
@@ -471,7 +590,7 @@ export default function PosPage() {
             onClick={() => setCheckoutOpen(true)}
             className="mt-2 w-full bg-emerald-600 py-6 text-base font-bold text-white hover:bg-emerald-500"
           >
-            Cobrar — {formatCurrency(totalAmount)}
+            Cobrar — {formatCurrency(finalTotal)}
           </Button>
         </div>
       </div>
@@ -489,6 +608,21 @@ export default function PosPage() {
           </DialogHeader>
 
           <div className="space-y-4">
+            {selectedCustomer && (
+              <div className="rounded-lg border border-emerald-700 bg-emerald-900/20 p-3">
+                <div className="flex items-center gap-2 text-sm text-emerald-400">
+                  <User className="h-4 w-4" />
+                  <span className="font-medium">{selectedCustomer.name}</span>
+                  <Badge className="text-[10px]">{selectedCustomer.tier}</Badge>
+                </div>
+                {loyaltyDiscount > 0 && (
+                  <p className="mt-1 text-xs text-emerald-500">
+                    Descuento aplicado: {formatCurrency(loyaltyDiscount)}
+                  </p>
+                )}
+              </div>
+            )}
+
             <div className="rounded-lg border border-slate-700 bg-slate-800/50 p-4">
               <div className="flex justify-between text-sm">
                 <span className="text-slate-400">Artículos</span>
@@ -508,7 +642,13 @@ export default function PosPage() {
               <Separator className="my-2" />
               <div className="flex justify-between text-base font-bold">
                 <span className="text-slate-300">Total</span>
-                <span className="text-emerald-400">{formatCurrency(totalAmount)}</span>
+                <span className="text-emerald-400">
+                  {loyaltyDiscount > 0 ? (
+                    <><span className="text-xs text-slate-500 line-through mr-2">{formatCurrency(totalAmount)}</span> {formatCurrency(finalTotal)}</>
+                  ) : (
+                    formatCurrency(totalAmount)
+                  )}
+                </span>
               </div>
             </div>
 

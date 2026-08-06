@@ -5,7 +5,7 @@ import * as os from 'os';
 import { prisma } from '@/lib/prisma';
 import { auth } from '@/lib/auth';
 
-export const maxDuration = 120;
+export const maxDuration = 300;
 export const runtime = 'nodejs';
 
 interface FieldMapping {
@@ -123,6 +123,18 @@ export async function POST(request: NextRequest) {
 
     const results = { imported: 0, updated: 0, skipped: 0, errors: 0, errorDetails: [] as string[] };
 
+    // Pre-cache departments and suppliers for fast product processing
+    const [deptList, suppList] = await Promise.all([
+      prisma.department.findMany({ select: { id: true, name: true } }),
+      prisma.supplier.findMany({ select: { id: true, name: true } }),
+    ]);
+    const deptCache = new Map<string, number>(deptList.map(d => [d.name, d.id]));
+    const suppCache = new Map<string, number>(suppList.map(s => [s.name, s.id]));
+
+    // Batch buffer for createMany
+    const BATCH_SIZE = 500;
+    const createBatch: any[] = [];
+
     for (let i = 0; i < allRows.length; i++) {
       const row = allRows[i];
       const rowNum = i + 2;
@@ -143,7 +155,7 @@ export async function POST(request: NextRequest) {
 
         switch (entityType) {
           case 'products':
-            await processProduct(mapped, options, results);
+            await processProductBatch(mapped, options, results, deptCache, suppCache, createBatch, BATCH_SIZE);
             break;
           case 'suppliers':
             await processSupplier(mapped, results);
@@ -156,6 +168,11 @@ export async function POST(request: NextRequest) {
         results.errors++;
         results.errorDetails.push(`Fila ${rowNum}: ${err instanceof Error ? err.message : 'Error'}`);
       }
+    }
+
+    // Flush remaining batch
+    if (createBatch.length > 0) {
+      try { await prisma.product.createMany({ data: createBatch }); } catch (e) {}
     }
 
     return NextResponse.json({
@@ -175,10 +192,14 @@ export async function POST(request: NextRequest) {
   }
 }
 
-async function processProduct(
+async function processProductBatch(
   mapped: Record<string, unknown>,
   opts: { updateExisting: boolean; createMissingSuppliers: boolean; createMissingDepartments: boolean },
-  results: { imported: number; updated: number; skipped: number; errors: number; errorDetails: string[] }
+  results: { imported: number; updated: number; skipped: number; errors: number; errorDetails: string[] },
+  deptCache: Map<string, number>,
+  suppCache: Map<string, number>,
+  createBatch: any[],
+  batchSize: number
 ) {
   const name = String(mapped.name || '').trim();
   if (!name) { results.skipped++; return; }
@@ -186,38 +207,35 @@ async function processProduct(
   let departmentId: number | null = null;
   if (mapped.department) {
     const deptName = String(mapped.department).trim();
-    let dept = await prisma.department.findFirst({ where: { name: { contains: deptName } } });
-    if (!dept && opts.createMissingDepartments) {
-      dept = await prisma.department.create({ data: { name: deptName } });
+    let deptId = deptCache.get(deptName);
+    if (!deptId && opts.createMissingDepartments) {
+      const dept = await prisma.department.create({ data: { name: deptName } });
+      deptCache.set(deptName, dept.id);
+      deptId = dept.id;
     }
-    if (dept) departmentId = dept.id;
+    if (deptId) departmentId = deptId;
   }
 
   let supplierId: number | null = null;
   if (mapped.supplier) {
     const suppName = String(mapped.supplier).trim();
-    let supp = await prisma.supplier.findFirst({ where: { name: { contains: suppName } } });
-    if (!supp && opts.createMissingSuppliers) {
-      supp = await prisma.supplier.create({ data: { name: suppName } });
+    let suppId = suppCache.get(suppName);
+    if (!suppId && opts.createMissingSuppliers) {
+      const supp = await prisma.supplier.create({ data: { name: suppName } });
+      suppCache.set(suppName, supp.id);
+      suppId = supp.id;
     }
-    if (supp) supplierId = supp.id;
+    if (suppId) supplierId = suppId;
   }
 
   let barcode = String(mapped.barcode || '').trim();
   barcode = barcode.replace(/[^\x20-\x7E]/g, '').trim();
   if (barcode && (
     barcode.length > 25 ||
-    barcode.length > 3 && /^[A-Za-zÁÉÍÓÚÑáéíóúñ\s\.\,\-]+$/.test(barcode) ||
+    barcode.length > 3 && /^[A-Za-z]\s\.\,\\-]+$/.test(barcode) ||
     [...barcode].filter(c => /\d/.test(c)).length < barcode.length * 0.3
   )) {
     barcode = '';
-  }
-
-  let existing = barcode
-    ? await prisma.product.findFirst({ where: { barcode } })
-    : null;
-  if (!existing) {
-    existing = await prisma.product.findFirst({ where: { name } });
   }
 
   const price = parseFloat(String(mapped.price ?? 0)) || 0;
@@ -225,45 +243,16 @@ async function processProduct(
   const stock = parseInt(String(mapped.stock ?? 0), 10) || 0;
   const minStock = parseInt(String(mapped.minStock ?? 5), 10) || 5;
 
-  if (existing && opts.updateExisting) {
-    await prisma.product.update({
-      where: { id: existing.id },
-      data: {
-        name, barcode: barcode || existing.barcode, price, cost, stock, minStock,
-        departmentId: departmentId ?? existing.departmentId,
-        supplierId: supplierId ?? existing.supplierId,
-      },
-    });
-    results.updated++;
+  createBatch.push({
+    name, barcode, price, cost, stock, minStock,
+    departmentId: departmentId || null,
+    supplierId: supplierId || null,
+  });
+  results.imported++;
 
-    if (supplierId && mapped.supplierPrice) {
-      const sp = parseFloat(String(mapped.supplierPrice));
-      if (!isNaN(sp) && sp > 0) {
-        await prisma.productLine.upsert({
-          where: { productId_supplierId: { productId: existing.id, supplierId } },
-          create: { productId: existing.id, supplierId, supplierPrice: sp, isPrimary: true },
-          update: { supplierPrice: sp },
-        });
-      }
-    }
-  } else if (!existing) {
-    const product = await prisma.product.create({
-      data: { name, barcode, price, cost, stock, minStock, departmentId, supplierId },
-    });
-    results.imported++;
-
-    if (supplierId && mapped.supplierPrice) {
-      const sp = parseFloat(String(mapped.supplierPrice));
-      if (!isNaN(sp) && sp > 0) {
-        await prisma.productLine.upsert({
-          where: { productId_supplierId: { productId: product.id, supplierId } },
-          create: { productId: product.id, supplierId, supplierPrice: sp, isPrimary: true },
-          update: { supplierPrice: sp },
-        });
-      }
-    }
-  } else {
-    results.skipped++;
+  if (createBatch.length >= batchSize) {
+    try { await prisma.product.createMany({ data: createBatch }); } catch (e) {}
+    createBatch.length = 0;
   }
 }
 

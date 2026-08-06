@@ -65,6 +65,8 @@ export const saleSchema = z.object({
     .min(1, "Agrega al menos un producto"),
   paymentMethodId: z.number(),
   total: z.number().min(0),
+  discountTotal: z.number().min(0).default(0),
+  customerId: z.number().nullable().optional(),
 });
 
 export const orderSchema = z.object({

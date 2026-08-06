@@ -83,8 +83,10 @@ export async function POST(request: Request) {
       const newSale = await tx.sale.create({
         data: {
           total: data.total,
+          discountTotal: data.discountTotal || 0,
           paymentMethodId: data.paymentMethodId,
           userId,
+          customerId: data.customerId || null,
           items: {
             create: data.items.map((item) => ({
               productId: item.productId,
@@ -103,6 +105,31 @@ export async function POST(request: Request) {
           },
         },
       });
+
+      // Update customer loyalty stats
+      if (data.customerId) {
+        const customer = await tx.customer.update({
+          where: { id: data.customerId },
+          data: {
+            purchaseCount: { increment: 1 },
+            totalSpent: { increment: data.total },
+            lastPurchaseAt: new Date(),
+          },
+        });
+
+        // Update tier based on new purchase count
+        const newCount = customer.purchaseCount + 1;
+        let newTier = "bronze";
+        if (newCount >= 30) newTier = "gold";
+        else if (newCount >= 10) newTier = "silver";
+
+        if (newTier !== customer.tier) {
+          await tx.customer.update({
+            where: { id: data.customerId },
+            data: { tier: newTier },
+          });
+        }
+      }
 
       // Auto-create cash entry for this sale
       await tx.cashEntry.create({

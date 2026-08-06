@@ -113,26 +113,27 @@ model PaymentMethod {
 }
 
 model Product {
-  id           Int        @id @default(autoincrement())
-  name         String
-  barcode      String     @default("")
-  price        Float
-  cost         Float      @default(0)
-  stock        Int        @default(0)
-  minStock     Int        @default(5) @map("min_stock")
-  active       Boolean    @default(true)
-  createdAt    DateTime   @default(now()) @map("created_at")
-  updatedAt    DateTime   @updatedAt @map("updated_at")
+  id             Int        @id @default(autoincrement())
+  name           String
+  barcode        String     @default("")
+  price          Float
+  cost           Float      @default(0)
+  stock          Int        @default(0)
+  minStock       Int        @default(5) @map("min_stock")
+  active         Boolean    @default(true)
+  loyaltyDiscount Boolean   @default(false) @map("loyalty_discount")
+  createdAt      DateTime   @default(now()) @map("created_at")
+  updatedAt      DateTime   @updatedAt @map("updated_at")
 
-  departmentId Int?       @map("department_id")
-  department   Department? @relation(fields: [departmentId], references: [id])
-  supplierId   Int?       @map("supplier_id")
-  supplier     Supplier?  @relation(fields: [supplierId], references: [id])
+  departmentId   Int?       @map("department_id")
+  department     Department? @relation(fields: [departmentId], references: [id])
+  supplierId     Int?       @map("supplier_id")
+  supplier       Supplier?  @relation(fields: [supplierId], references: [id])
 
-  productLines    ProductLine[]
-  saleItems       SaleItem[]
-  orderItems      SupplierOrderItem[]
-  refunds         Refund[]
+  productLines   ProductLine[]
+  saleItems      SaleItem[]
+  orderItems     SupplierOrderItem[]
+  refunds        Refund[]
 
   @@index([barcode])
   @@index([departmentId])
@@ -140,6 +141,28 @@ model Product {
   @@index([name])
   @@index([createdAt])
   @@map("products")
+}
+
+model Customer {
+  id              Int       @id @default(autoincrement())
+  name            String
+  fingerprintHash String?   @map("fingerprint_hash")
+  phone           String    @default("")
+  email           String    @default("")
+  totalSpent      Float     @default(0) @map("total_spent")
+  purchaseCount   Int       @default(0) @map("purchase_count")
+  lastPurchaseAt  DateTime? @map("last_purchase_at")
+  tier            String    @default("bronze")
+  active          Boolean   @default(true)
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  sales           Sale[]
+
+  @@index([name])
+  @@index([fingerprintHash])
+  @@index([tier])
+  @@map("customers")
 }
 
 model ProductLine {
@@ -160,14 +183,17 @@ model ProductLine {
 model Sale {
   id              Int           @id @default(autoincrement())
   total           Float
+  discountTotal   Float         @default(0) @map("discount_total")
   paymentMethodId Int?          @map("payment_method_id")
   paymentMethod   PaymentMethod? @relation(fields: [paymentMethodId], references: [id])
   userId          Int           @map("user_id")
   user            User          @relation(fields: [userId], references: [id])
+  customerId      Int?          @map("customer_id")
+  customer        Customer?     @relation(fields: [customerId], references: [id])
   createdAt       DateTime      @default(now()) @map("created_at")
 
-  items SaleItem[]
-  refunds Refund[]
+  items    SaleItem[]
+  refunds  Refund[]
 
   cashEntries CashEntry[]
 
@@ -175,6 +201,7 @@ model Sale {
   @@index([userId])
   @@index([paymentMethodId])
   @@index([total])
+  @@index([customerId])
   @@map("sales")
 }
 
