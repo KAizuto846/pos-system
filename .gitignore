@@ -13,3 +13,9 @@ dist-electron/
 latest.yml
 builder-effective-config.yaml
 prisma/prisma/
+
+# Relay local data
+relay/relay.db
+relay/relay.db-shm
+relay/relay.db-wal
+relay/relay.log
