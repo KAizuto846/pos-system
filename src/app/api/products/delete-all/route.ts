@@ -1,7 +1,7 @@
 // POST /api/products/delete-all - Delete all products with admin password confirmation
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import bcrypt from "bcrypt-ts";
+import { compare } from "bcrypt-ts";
 
 export async function POST(request: Request) {
   try {
@@ -31,7 +31,7 @@ export async function POST(request: Request) {
     }
 
     // Verify admin password
-    const valid = await bcrypt.compare(password, user.password);
+    const valid = await compare(password, user.password);
     if (!valid) {
       return Response.json(
         { error: "Contrasena incorrecta" },
