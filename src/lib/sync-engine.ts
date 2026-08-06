@@ -43,16 +43,13 @@ export async function logChange(
 // Get unsynced changes for a specific device (not including its own changes)
 export async function getUnsyncedChanges(
   excludeDeviceId: string,
-  since?: number,
+  since = 0,
   limit = 500
 ): Promise<SyncLogEntry[]> {
   const where: Prisma.SyncLogWhereInput = {
     deviceId: { not: excludeDeviceId },
-    synced: false,
+    syncVersion: { gt: since },
   };
-  if (since !== undefined) {
-    where.syncVersion = { gt: since };
-  }
   return prisma.syncLog.findMany({
     where,
     orderBy: { timestamp: "asc" },
@@ -60,14 +57,17 @@ export async function getUnsyncedChanges(
   });
 }
 
-// Get my unsynced changes to push to peers
+// Get my changes to share with a peer.
+// `since` is the per-peer cursor: only changes newer than what the peer already has.
 export async function getMyUnsyncedChanges(
   deviceId: string,
-  since?: number,
+  since = 0,
   limit = 500
 ): Promise<SyncLogEntry[]> {
-  const where: Prisma.SyncLogWhereInput = { deviceId, synced: false };
-  if (since !== undefined) where.syncVersion = { gt: since };
+  const where: Prisma.SyncLogWhereInput = {
+    deviceId,
+    syncVersion: { gt: since },
+  };
 
   return prisma.syncLog.findMany({
     where,
@@ -163,12 +163,15 @@ async function applyEntityChange(
     case "sale":
       if (operation === "CREATE") {
         const { items, ...saleData } = entityData;
-        await prisma.sale.create({
-          data: {
-            ...saleData,
-            items: items ? { create: items } : undefined,
-          } as Prisma.SaleCreateArgs["data"],
-        });
+        const existing = await prisma.sale.findUnique({ where: { id: entityId } });
+        if (!existing) {
+          await prisma.sale.create({
+            data: {
+              ...saleData,
+              items: items ? { create: items } : undefined,
+            } as Prisma.SaleCreateArgs["data"],
+          });
+        }
       }
       break;
 
@@ -222,29 +225,53 @@ async function applyEntityChange(
 
     case "refund":
       if (operation === "CREATE") {
-        await prisma.refund.create({ data: entityData as Prisma.RefundUncheckedCreateInput });
+        const existing = await prisma.refund.findUnique({ where: { id: entityId } });
+        if (!existing) {
+          await prisma.refund.create({ data: entityData as Prisma.RefundUncheckedCreateInput });
+        }
       }
       break;
 
     case "cashentry":
       if (operation === "CREATE") {
-        await prisma.cashEntry.create({ data: entityData as Prisma.CashEntryUncheckedCreateInput });
+        const existing = await prisma.cashEntry.findUnique({ where: { id: entityId } });
+        if (!existing) {
+          await prisma.cashEntry.create({ data: entityData as Prisma.CashEntryUncheckedCreateInput });
+        }
       }
       break;
 
     case "order":
       if (operation === "CREATE") {
         const { items: orderItems, ...orderData } = entityData;
-        await prisma.supplierOrder.create({
-          data: {
-            ...orderData,
-            items: orderItems ? { create: orderItems } : undefined,
-          } as Prisma.SupplierOrderCreateArgs["data"],
-        });
+        const existing = await prisma.supplierOrder.findUnique({ where: { id: entityId } });
+        if (!existing) {
+          await prisma.supplierOrder.create({
+            data: {
+              ...orderData,
+              items: orderItems ? { create: orderItems } : undefined,
+            } as Prisma.SupplierOrderCreateArgs["data"],
+          });
+        }
       } else if (operation === "UPDATE") {
         await prisma.supplierOrder.update({
           where: { id: entityId },
           data: entityData as Prisma.SupplierOrderUncheckedUpdateInput,
+        });
+      }
+      break;
+
+    case "customer":
+      if (operation === "DELETE") {
+        await prisma.customer.updateMany({
+          where: { id: entityId },
+          data: { active: false },
+        });
+      } else {
+        await prisma.customer.upsert({
+          where: { id: entityId },
+          create: { ...entityData, id: entityId } as Prisma.CustomerUncheckedCreateInput,
+          update: entityData as Prisma.CustomerUncheckedUpdateInput,
         });
       }
       break;

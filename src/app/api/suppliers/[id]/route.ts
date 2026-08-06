@@ -2,6 +2,8 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { supplierSchema } from "@/lib/validations";
 import { broadcast } from "@/lib/broadcast";
+import { logChange } from "@/lib/sync-engine";
+import { getDeviceId } from "@/lib/sync-utils";
 
 export async function PUT(
   request: Request,
@@ -46,6 +48,7 @@ export async function PUT(
     });
 
     broadcast("supplier:change", { id: supplierId });
+    void logChange(getDeviceId(), "UPDATE", "supplier", supplierId, updateData);
     return Response.json(supplier);
   } catch (error) {
     console.error("Error updating supplier:", error);
@@ -75,6 +78,7 @@ export async function DELETE(
     });
 
     broadcast("supplier:change", { id: supplierId });
+    void logChange(getDeviceId(), "DELETE", "supplier", supplierId, {});
     return Response.json({ success: true });
   } catch (error) {
     console.error("Error deleting supplier:", error);

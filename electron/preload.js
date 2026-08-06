@@ -7,6 +7,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Discovery
   getDiscoveredServers: () => ipcRenderer.invoke('get-discovered-servers'),
+  getLastSyncResult: () => ipcRenderer.invoke('get-last-sync-result'),
+  triggerSync: () => ipcRenderer.invoke('trigger-sync'),
 
   // App info
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),

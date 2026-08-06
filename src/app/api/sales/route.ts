@@ -2,6 +2,8 @@ import { auth } from "@/lib/auth";
 import { initializePrisma, prisma } from "@/lib/db";
 import { saleSchema } from "@/lib/validations";
 import { broadcast } from "@/lib/broadcast";
+import { logChange } from "@/lib/sync-engine";
+import { getDeviceId } from "@/lib/sync-utils";
 import type { Prisma } from "@prisma/client";
 
 function positiveInt(value: string | null, fallback: number) {
@@ -214,6 +216,16 @@ export async function POST(request: Request) {
     });
 
     broadcast("sale:create", { id: sale.id, total: sale.total });
+    void logChange(getDeviceId(), "CREATE", "sale", sale.id, {
+      id: sale.id,
+      total: sale.total,
+      discountTotal: sale.discountTotal,
+      paymentMethodId: sale.paymentMethodId,
+      userId: sale.userId,
+      customerId: sale.customerId,
+      items: data.items,
+      createdAt: sale.createdAt,
+    });
     return Response.json(sale, { status: 201 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Error al crear venta";

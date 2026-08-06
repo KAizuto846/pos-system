@@ -1,5 +1,7 @@
 import { auth } from "@/lib/auth";
 import { initializePrisma, prisma } from "@/lib/db";
+import { logChange } from "@/lib/sync-engine";
+import { getDeviceId } from "@/lib/sync-utils";
 import type { Prisma } from "@prisma/client";
 
 const VALID_STATUSES = ["pending", "sent", "partial", "received", "cancelled"];
@@ -48,6 +50,7 @@ export async function PUT(
         },
       });
 
+      void logChange(getDeviceId(), "UPDATE", "order", orderId, { items });
       return Response.json(order);
     }
 
@@ -78,6 +81,7 @@ export async function PUT(
       },
     });
 
+    void logChange(getDeviceId(), "UPDATE", "order", orderId, updateData);
     return Response.json(order);
   } catch (error) {
     console.error("Error updating order:", error);
@@ -106,6 +110,7 @@ export async function DELETE(
       where: { id: orderId },
     });
 
+    void logChange(getDeviceId(), "DELETE", "order", orderId, {});
     return Response.json({ success: true });
   } catch (error) {
     console.error("Error deleting order:", error);

@@ -2,6 +2,8 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { paymentMethodSchema } from "@/lib/validations";
 import { broadcast } from "@/lib/broadcast";
+import { logChange } from "@/lib/sync-engine";
+import { getDeviceId } from "@/lib/sync-utils";
 
 export async function GET() {
   try {
@@ -49,6 +51,12 @@ export async function POST(request: Request) {
     });
 
     broadcast("payment:change", { id: paymentMethod.id });
+    void logChange(getDeviceId(), "CREATE", "paymentmethod", paymentMethod.id, {
+      id: paymentMethod.id,
+      name: paymentMethod.name,
+      affectsCash: paymentMethod.affectsCash,
+      active: paymentMethod.active,
+    });
     return Response.json(paymentMethod, { status: 201 });
   } catch (error) {
     console.error("Error creating payment method:", error);

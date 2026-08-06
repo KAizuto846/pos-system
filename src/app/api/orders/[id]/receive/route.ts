@@ -1,6 +1,8 @@
 import { auth } from "@/lib/auth";
 import { initializePrisma, prisma } from "@/lib/db";
 import { broadcast } from "@/lib/broadcast";
+import { logChange } from "@/lib/sync-engine";
+import { getDeviceId } from "@/lib/sync-utils";
 import type { Prisma } from "@prisma/client";
 
 export async function POST(
@@ -116,6 +118,11 @@ export async function POST(
     });
 
     broadcast("order:receive", { id: orderId });
+    void logChange(getDeviceId(), "CREATE", "order", orderId, {
+      id: orderId,
+      items,
+      status: updatedOrder.status,
+    });
     return Response.json(updatedOrder);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Error al recibir orden";

@@ -1,5 +1,7 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { logChange } from "@/lib/sync-engine";
+import { getDeviceId } from "@/lib/sync-utils";
 
 export async function GET(request: Request) {
   try {
@@ -277,6 +279,16 @@ export async function POST(request: Request) {
       },
     });
 
+    void logChange(getDeviceId(), "CREATE", "cashentry", entry.id, {
+      id: entry.id,
+      type: entry.type,
+      category: entry.category,
+      amount: entry.amount,
+      description: entry.description,
+      paymentMethodId: entry.paymentMethodId,
+      userId: entry.userId,
+      recordedAt: entry.recordedAt,
+    });
     return Response.json(entry, { status: 201 });
   } catch (error) {
     console.error("Cash entry error:", error);

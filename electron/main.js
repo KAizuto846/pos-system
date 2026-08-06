@@ -8,7 +8,7 @@ const http = require('http');
 
 // ─── Simple JSON config ─────────────────────────────────────
 const CONFIG_PATH = path.join(app.getPath('userData'), 'config.json');
-let config = { mode: 'auto', serverPort: 3000, serverIP: '', businessName: 'Mi Negocio', deviceName: os.hostname() };
+let config = { mode: 'server', serverPort: 3000, serverIP: '', businessName: 'Mi Negocio', deviceName: os.hostname() };
 
 function loadConfig() {
   try { config = { ...config, ...JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')) }; } catch (e) {}
@@ -55,7 +55,7 @@ function showFirstRunSetup(callback) {
   setupWindow.once('ready-to-show', () => setupWindow.show());
 
   ipcMain.once('first-run-config', (event, mode) => {
-    config.mode = mode;
+    config.mode = 'server';
     config.businessName = 'Mi Negocio';
     config.deviceName = os.hostname();
     saveConfig();
@@ -99,7 +99,7 @@ function startDiscovery() {
     try {
       const data = JSON.parse(msg.toString());
       if (data.type === 'pos-server-announce' && data.port) {
-        const server = { ip: rinfo.address, port: data.port, name: data.name || 'POS Server' };
+        const server = { ip: rinfo.address, port: data.port, name: data.name || 'POS Server', deviceId: data.deviceId || '' };
         if (!discoveredServers.find(s => s.ip === server.ip && s.port === server.port)) {
           discoveredServers.push(server);
         }
@@ -115,7 +115,7 @@ function stopDiscovery() {
 
 function announceServer(port) {
   const sock = dgram.createSocket('udp4');
-  const msg = JSON.stringify({ type: 'pos-server-announce', port, name: config.businessName || 'POS Server' });
+  const msg = JSON.stringify({ type: 'pos-server-announce', port, name: config.businessName || 'POS Server', deviceId: config.deviceName || os.hostname() });
   setInterval(() => { sock.send(msg, DISCOVERY_PORT, DISCOVERY_MULTICAST); }, 5000);
   setInterval(() => { sock.send(msg, DISCOVERY_PORT, '255.255.255.255'); }, 5000);
 }
@@ -153,6 +153,7 @@ function getServerEnv() {
     AUTH_URL: `http://localhost:${port}`,
     NEXT_PUBLIC_APP_URL: `http://localhost:${port}`,
     ELECTRON_RUN_AS_NODE: '1',
+    DEVICE_ID: config.deviceName || os.hostname(),
   };
 
   try {
@@ -278,18 +279,37 @@ async function startServer() {
 
 // ─── P2P Sync ────────────────────────────────────────────────
 let syncInterval = null;
+let syncInProgress = false;
+let lastSyncResult = null;
+// Per-peer cursors: { pullSince: last syncVersion received from peer, pushSince: last sent }
+const peerCursors = new Map();
+
+function getPeerCursor(peerUrl, key) {
+  const cur = peerCursors.get(peerUrl);
+  return cur && cur[key] ? cur[key] : 0;
+}
+function setPeerCursor(peerUrl, key, value) {
+  const cur = peerCursors.get(peerUrl) || {};
+  cur[key] = value;
+  peerCursors.set(peerUrl, cur);
+}
 
 async function syncWithPeer(peerUrl) {
   const myDeviceId = config.deviceName || os.hostname();
+  let pulled = 0;
+  let pushed = 0;
+  let pullData = null;
+  let pushData = null;
   try {
-    // Pull changes from peer
+    // Pull changes from peer (only new ones since our last cursor)
+    const pullSince = getPeerCursor(peerUrl, 'pullSince');
     const pullRes = await fetch(`http://${peerUrl}/api/sync/pull`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ deviceId: myDeviceId }),
+      body: JSON.stringify({ deviceId: myDeviceId, since: pullSince }),
     });
     if (pullRes.ok) {
-      const pullData = await pullRes.json();
+      pullData = await pullRes.json();
       if (pullData.changes && pullData.changes.length > 0) {
         // Push received changes to our local server
         await fetch(`http://localhost:${config.serverPort}/api/sync/push`, {
@@ -297,41 +317,87 @@ async function syncWithPeer(peerUrl) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ deviceId: pullData.deviceId, changes: pullData.changes }),
         });
-        console.log(`[p2p] Synced ${pullData.changes.length} changes from ${peerUrl}`);
+        pulled = pullData.changes.length;
+        console.log(`[p2p] Synced ${pulled} changes from ${peerUrl}`);
+      }
+      if (pullData.changes && pullData.changes.length > 0) {
+        const maxVersion = Math.max(...pullData.changes.map((c) => c.syncVersion));
+        setPeerCursor(peerUrl, 'pullSince', maxVersion);
       }
     }
 
-    // Push our changes to peer
+    // Push our changes to peer (only new ones since last cursor)
+    const pushSince = getPeerCursor(peerUrl, 'pushSince');
     const pushRes = await fetch(`http://localhost:${config.serverPort}/api/sync/pull`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ deviceId: myDeviceId }),
+      body: JSON.stringify({ deviceId: myDeviceId, since: pushSince }),
     });
     if (pushRes.ok) {
-      const pushData = await pushRes.json();
+      pushData = await pushRes.json();
       if (pushData.changes && pushData.changes.length > 0) {
-        await fetch(`http://${peerUrl}/api/sync/push`, {
+        const pushPeerRes = await fetch(`http://${peerUrl}/api/sync/push`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ deviceId: myDeviceId, changes: pushData.changes }),
         });
-        console.log(`[p2p] Pushed ${pushData.changes.length} changes to ${peerUrl}`);
+        if (pushPeerRes.ok) {
+          pushed = pushData.changes.length;
+          console.log(`[p2p] Pushed ${pushed} changes to ${peerUrl}`);
+          // Acknowledge our local log so we don't resend
+          const ids = pushData.changes.map((c) => c.id);
+          await fetch(`http://localhost:${config.serverPort}/api/sync/ack`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ deviceId: myDeviceId, ids }),
+          }).catch(() => {});
+          const maxVersion = Math.max(...pushData.changes.map((c) => c.syncVersion));
+          setPeerCursor(peerUrl, 'pushSince', maxVersion);
+        }
       }
     }
+    return { ok: true, pulled, pushed, error: null };
   } catch (e) {
-    // Silently ignore sync errors (peer might be offline)
+    return { ok: false, pulled: 0, pushed: 0, error: e.message || 'Peer offline' };
   }
+}
+
+async function runSyncNow() {
+  if (syncInProgress) return { ok: false, error: 'Sync already in progress' };
+  syncInProgress = true;
+  try {
+    const myDeviceId = config.deviceName || os.hostname();
+    const peers = discoveredServers.filter((server) => {
+      const url = `${server.ip}:${server.port}`;
+      const isSelfUrl = url === `localhost:${config.serverPort}`;
+      const isSelfId = server.deviceId && server.deviceId === myDeviceId;
+      return !isLocalAddress(server.ip) && !isSelfUrl && !isSelfId;
+    });
+    const results = [];
+    for (const server of peers) {
+      const peerUrl = `${server.ip}:${server.port}`;
+      const res = await syncWithPeer(peerUrl);
+      results.push({ peer: peerUrl, name: server.name, ...res });
+    }
+    lastSyncResult = { at: new Date().toISOString(), peers: results.length, results };
+    console.log(`[p2p] Manual sync done: ${results.length} peers`);
+    return lastSyncResult;
+  } finally {
+    syncInProgress = false;
+  }
+}
+
+function isLocalAddress(ip) {
+  return ip === '127.0.0.1' || ip === '::1' || ip === '0.0.0.0' || ip === '255.255.255.255' || ip === 'localhost';
 }
 
 function startP2PSync() {
   if (syncInterval) clearInterval(syncInterval);
   syncInterval = setInterval(async () => {
-    // Sync with discovered servers
-    for (const server of discoveredServers) {
-      const peerUrl = `${server.ip}:${server.port}`;
-      if (peerUrl !== `localhost:${config.serverPort}`) {
-        await syncWithPeer(peerUrl);
-      }
+    try {
+      await runSyncNow();
+    } catch (e) {
+      console.error('[p2p] Sync cycle error:', e.message);
     }
   }, 30000); // Every 30 seconds
   console.log('[p2p] Sync started (30s interval)');
@@ -367,9 +433,7 @@ function createTray() {
   const menu = Menu.buildFromTemplate([
     { label: 'Mostrar POS', click: () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } } },
     { type: 'separator' },
-    { label: 'Modo Servidor', type: 'radio', checked: config.mode === 'server', click: () => setMode('server') },
-    { label: 'Modo Cliente', type: 'radio', checked: config.mode === 'client', click: () => setMode('client') },
-    { label: 'Automatico', type: 'radio', checked: config.mode === 'auto', click: () => setMode('auto') },
+    { label: 'Sincronizar ahora', click: () => { runSyncNow(); } },
     { type: 'separator' },
     { label: 'Reiniciar Servidor', click: () => { stopServer(); setTimeout(startServer, 1000); } },
     {
@@ -388,33 +452,7 @@ function createTray() {
   tray.on('double-click', () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } });
 }
 
-function setMode(mode) { config.mode = mode; saveConfig(); }
-
 // ─── URL resolution ──────────────────────────────────────────
-async function getTargetURL() {
-  if (config.mode === 'client' && config.serverIP) {
-    const url = `http://${config.serverIP}:${config.serverPort || 3000}`;
-    await waitForServer(url);
-    return url;
-  }
-  if (config.mode === 'auto') {
-    startDiscovery();
-    await new Promise(r => setTimeout(r, 2000));
-    stopDiscovery();
-    if (discoveredServers.length > 0) {
-      const s = discoveredServers[0];
-      config.serverIP = s.ip;
-      const url = `http://${s.ip}:${s.port}`;
-      await waitForServer(url);
-      return url;
-    }
-  }
-  await startServer();
-  const url = `http://localhost:${config.serverPort || 3000}`;
-  await waitForServer(url);
-  return url;
-}
-
 async function waitForServer(url, maxRetries = 60) {
   for (let i = 0; i < maxRetries; i++) {
     try {
@@ -478,45 +516,15 @@ function initializeApp(mode) {
     mainWindow.loadURL(`data:text/html,<html><body style="display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#0a0a0a;color:#e5e5e5;font-family:Arial,sans-serif"><div style="text-align:center"><h2 style="font-size:24px">POS System</h2><p style="color:#a3a3a3">Iniciando servidor en puerto ${port}...</p></div></body></html>`);
   }
 
-  // Start server based on mode
+  // Start local server (every device is a peer) and P2P sync
   (async () => {
-    if (mode === 'client') {
-      startDiscovery();
-      await new Promise(r => setTimeout(r, 3000));
-      stopDiscovery();
-      if (discoveredServers.length > 0) {
-        const s = discoveredServers[0];
-        config.serverIP = s.ip;
-        config.mode = 'client';
-        saveConfig();
-      } else {
-        dialog.showMessageBoxSync(mainWindow, {
-          type: 'info',
-          title: 'Servidor no encontrado',
-          message: 'No se encontro ningun servidor en la red.\nIniciando en modo servidor local...',
-          buttons: ['OK']
-        });
-        config.mode = 'server';
-        saveConfig();
-      }
-    }
-
-    if (config.mode === 'server' || config.mode === 'auto') {
-      await startServer();
-    }
-
-    // Start P2P sync after server is ready
+    await startServer();
     startDiscovery();
     setTimeout(() => {
       startP2PSync();
     }, 5000);
 
-    let url;
-    if (config.mode === 'client' && config.serverIP) {
-      url = `http://${config.serverIP}:${config.serverPort || 3000}`;
-    } else {
-      url = `http://localhost:${port}`;
-    }
+    const url = `http://localhost:${port}`;
     await waitForServer(url);
     mainWindow.loadURL(url);
   })();
@@ -542,6 +550,8 @@ app.on('before-quit', () => { isQuitting = true; stopServer(); stopDiscovery(); 
 ipcMain.handle('get-config', () => config);
 ipcMain.handle('set-config', (e, key, value) => { config[key] = value; saveConfig(); return true; });
 ipcMain.handle('get-discovered-servers', () => discoveredServers);
+ipcMain.handle('get-last-sync-result', () => lastSyncResult);
+ipcMain.handle('trigger-sync', async () => await runSyncNow());
 ipcMain.handle('get-app-version', () => app.getVersion());
 ipcMain.handle('restart-server', () => { stopServer(); setTimeout(startServer, 1000); return true; });
 ipcMain.handle('check-for-updates', async () => await checkForUpdates());

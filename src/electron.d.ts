@@ -23,6 +23,28 @@ type ElectronUpdateResult = {
   version?: string;
 };
 
+type SyncPeerResult = {
+  peer: string;
+  name?: string;
+  ok: boolean;
+  pulled: number;
+  pushed: number;
+  error: string | null;
+};
+
+type SyncResult = {
+  at: string;
+  peers: number;
+  results: SyncPeerResult[];
+};
+
+type DiscoveredServer = {
+  ip: string;
+  port: number;
+  name: string;
+  deviceId?: string;
+};
+
 interface Window {
   electronAPI?: {
     checkForUpdates: () => Promise<ElectronUpdateResult>;
@@ -30,5 +52,15 @@ interface Window {
     onUpdateStatus: (
       callback: (status: ElectronUpdateStatus) => void,
     ) => () => void;
+    getDiscoveredServers: () => Promise<DiscoveredServer[]>;
+    getLastSyncResult: () => Promise<SyncResult | null>;
+    triggerSync: () => Promise<SyncResult | { ok: false; error: string }>;
+    getConfig: () => Promise<{
+      mode?: string;
+      serverPort?: number;
+      serverIP?: string;
+      deviceName?: string;
+      businessName?: string;
+    }>;
   };
 }

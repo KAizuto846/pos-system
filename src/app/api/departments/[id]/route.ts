@@ -2,6 +2,8 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { departmentSchema } from "@/lib/validations";
 import { broadcast } from "@/lib/broadcast";
+import { logChange } from "@/lib/sync-engine";
+import { getDeviceId } from "@/lib/sync-utils";
 
 export async function PUT(
   request: Request,
@@ -43,6 +45,7 @@ export async function PUT(
     });
 
     broadcast("department:change", { id: departmentId });
+    void logChange(getDeviceId(), "UPDATE", "department", departmentId, updateData);
     return Response.json(department);
   } catch (error) {
     console.error("Error updating department:", error);
@@ -72,6 +75,7 @@ export async function DELETE(
     });
 
     broadcast("department:change", { id: departmentId });
+    void logChange(getDeviceId(), "DELETE", "department", departmentId, {});
     return Response.json({ success: true });
   } catch (error) {
     console.error("Error deleting department:", error);

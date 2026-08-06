@@ -3,6 +3,8 @@ import { prisma } from "@/lib/db";
 import { userSchema } from "@/lib/validations";
 import { hash } from "bcrypt-ts";
 import { broadcast } from "@/lib/broadcast";
+import { logChange } from "@/lib/sync-engine";
+import { getDeviceId } from "@/lib/sync-utils";
 
 export async function GET() {
   try {
@@ -88,6 +90,13 @@ export async function POST(request: Request) {
     });
 
     broadcast("user:change", { id: user.id });
+    void logChange(getDeviceId(), "CREATE", "user", user.id, {
+      id: user.id,
+      username: user.username,
+      name: user.name,
+      role: user.role,
+      active: user.active,
+    });
     return Response.json(user, { status: 201 });
   } catch (error) {
     console.error("Error creating user:", error);

@@ -2,6 +2,8 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { departmentSchema } from "@/lib/validations";
 import { broadcast } from "@/lib/broadcast";
+import { logChange } from "@/lib/sync-engine";
+import { getDeviceId } from "@/lib/sync-utils";
 
 export async function GET() {
   try {
@@ -49,6 +51,12 @@ export async function POST(request: Request) {
     });
 
     broadcast("department:change", { id: department.id });
+    void logChange(getDeviceId(), "CREATE", "department", department.id, {
+      id: department.id,
+      name: department.name,
+      description: department.description,
+      active: department.active,
+    });
     return Response.json(department, { status: 201 });
   } catch (error) {
     console.error("Error creating department:", error);

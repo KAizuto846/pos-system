@@ -3,6 +3,8 @@ import { prisma } from "@/lib/db";
 import { userSchema } from "@/lib/validations";
 import { hash } from "bcrypt-ts";
 import { broadcast } from "@/lib/broadcast";
+import { logChange } from "@/lib/sync-engine";
+import { getDeviceId } from "@/lib/sync-utils";
 
 export async function PUT(
   request: Request,
@@ -57,6 +59,13 @@ export async function PUT(
     });
 
     broadcast("user:change", { id: userId });
+    void logChange(getDeviceId(), "UPDATE", "user", userId, {
+      id: userId,
+      ...(data.username && { username: data.username }),
+      ...(data.name && { name: data.name }),
+      ...(data.role && { role: data.role }),
+      ...(data.active !== undefined && { active: data.active }),
+    });
     return Response.json(user);
   } catch (error) {
     console.error("Error updating user:", error);
@@ -93,6 +102,7 @@ export async function DELETE(
     });
 
     broadcast("user:change", { id: userId });
+    void logChange(getDeviceId(), "DELETE", "user", userId, {});
     return Response.json({ success: true });
   } catch (error) {
     console.error("Error deleting user:", error);

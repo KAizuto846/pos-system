@@ -2,6 +2,8 @@ import { auth } from "@/lib/auth";
 import { initializePrisma, prisma } from "@/lib/db";
 import { refundSchema } from "@/lib/validations";
 import { broadcast } from "@/lib/broadcast";
+import { logChange } from "@/lib/sync-engine";
+import { getDeviceId } from "@/lib/sync-utils";
 import type { Prisma } from "@prisma/client";
 
 export async function POST(request: Request) {
@@ -117,6 +119,15 @@ export async function POST(request: Request) {
     });
 
     broadcast("refund:create", { id: refund.id, saleId: refund.saleId });
+    void logChange(getDeviceId(), "CREATE", "refund", refund.id, {
+      id: refund.id,
+      saleId: refund.saleId,
+      productId: refund.productId,
+      quantity: refund.quantity,
+      amount: refund.amount,
+      reason: refund.reason,
+      userId: refund.userId,
+    });
     return Response.json(refund, { status: 201 });
   } catch (error) {
     const message =

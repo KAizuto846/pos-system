@@ -1,6 +1,8 @@
 import { auth } from "@/lib/auth";
 import { initializePrisma, prisma } from "@/lib/db";
 import { broadcast } from "@/lib/broadcast";
+import { logChange } from "@/lib/sync-engine";
+import { getDeviceId } from "@/lib/sync-utils";
 
 export async function POST(
   request: Request,
@@ -69,6 +71,7 @@ export async function POST(
     }
 
     broadcast("product:stock", { id: productId, stock: result.updated.stock });
+    void logChange(getDeviceId(), "UPDATE", "product", productId, { stock: result.updated.stock });
     return Response.json(result.updated);
   } catch (error) {
     console.error("Error adjusting stock:", error);

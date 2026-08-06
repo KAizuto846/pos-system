@@ -20,10 +20,13 @@ import {
   X,
   ClipboardCheck,
   UserRound,
+  Settings,
+  RefreshCw,
 } from 'lucide-react';
 import { signOut, useSession } from 'next-auth/react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import VersionBadge from '@/components/VersionBadge';
 import {
   Dialog,
   DialogContent,
@@ -60,6 +63,10 @@ const extraLinks = [
   { href: '/orders', label: 'Pedidos', icon: ClipboardList },
   { href: '/reports', label: 'Reportes', icon: BarChart3 },
   { href: '/importar', label: 'Importar Datos', icon: Upload },
+];
+
+const syncLinks = [
+  { href: '/sync', label: 'Sincronización', icon: RefreshCw },
 ];
 
 export default function Sidebar({ open, onClose }: SidebarProps) {
@@ -143,10 +150,24 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
           {extraLinks
             .filter((link) => link.href !== '/importar' || isAdmin)
             .map(renderLink)}
+          {syncLinks.map(renderLink)}
         </nav>
 
         {/* Bottom Actions */}
         <div className="border-t border-slate-700 p-3 space-y-2">
+          <Link
+            href="/settings"
+            onClick={onClose}
+            className={cn(
+              'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors',
+              isActive('/settings')
+                ? 'bg-emerald-600/20 text-emerald-400'
+                : 'text-slate-300 hover:bg-slate-700/50 hover:text-slate-100'
+            )}
+          >
+            <Settings className="h-5 w-5" />
+            <span>Configuración</span>
+          </Link>
           {canCloseShift && (
             <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
               <DialogTrigger asChild>
@@ -218,6 +239,9 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
             <LogOut className="h-5 w-5" />
             <span>Logout</span>
           </Button>
+          <div className="flex justify-center pt-1">
+            <VersionBadge />
+          </div>
         </div>
       </aside>
     </>

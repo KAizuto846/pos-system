@@ -2,6 +2,8 @@ import { auth } from "@/lib/auth";
 import { initializePrisma, prisma } from "@/lib/db";
 import { productSchema } from "@/lib/validations";
 import { broadcast } from "@/lib/broadcast";
+import { logChange } from "@/lib/sync-engine";
+import { getDeviceId } from "@/lib/sync-utils";
 import type { Prisma } from "@prisma/client";
 
 export async function PUT(
@@ -100,6 +102,7 @@ export async function PUT(
     });
 
     broadcast("product:update", { id: productId });
+    void logChange(getDeviceId(), "UPDATE", "product", productId, updateData);
     return Response.json(product);
   } catch (error) {
     console.error("Error updating product:", error);
@@ -129,6 +132,7 @@ export async function DELETE(
     });
 
     broadcast("product:delete", { id: productId });
+    void logChange(getDeviceId(), "DELETE", "product", productId, {});
     return Response.json({ success: true });
   } catch (error) {
     console.error("Error deleting product:", error);

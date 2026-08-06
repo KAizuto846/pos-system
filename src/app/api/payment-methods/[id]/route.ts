@@ -2,6 +2,8 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { paymentMethodSchema } from "@/lib/validations";
 import { broadcast } from "@/lib/broadcast";
+import { logChange } from "@/lib/sync-engine";
+import { getDeviceId } from "@/lib/sync-utils";
 
 export async function PUT(
   request: Request,
@@ -43,6 +45,7 @@ export async function PUT(
     });
 
     broadcast("payment:change", { id: paymentMethodId });
+    void logChange(getDeviceId(), "UPDATE", "paymentmethod", paymentMethodId, updateData);
     return Response.json(paymentMethod);
   } catch (error) {
     console.error("Error updating payment method:", error);
@@ -72,6 +75,7 @@ export async function DELETE(
     });
 
     broadcast("payment:change", { id: paymentMethodId });
+    void logChange(getDeviceId(), "DELETE", "paymentmethod", paymentMethodId, {});
     return Response.json({ success: true });
   } catch (error) {
     console.error("Error deleting payment method:", error);

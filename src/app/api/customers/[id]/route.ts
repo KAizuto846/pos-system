@@ -1,5 +1,7 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { logChange } from "@/lib/sync-engine";
+import { getDeviceId } from "@/lib/sync-utils";
 import { NextRequest } from "next/server";
 
 export async function GET(
@@ -58,6 +60,12 @@ export async function PUT(
       },
     });
 
+    void logChange(getDeviceId(), "UPDATE", "customer", parseInt(id, 10), {
+      ...(name !== undefined && { name }),
+      ...(phone !== undefined && { phone }),
+      ...(email !== undefined && { email }),
+      ...(active !== undefined && { active }),
+    });
     return Response.json({ success: true, customer });
   } catch (error: any) {
     return Response.json({ error: error.message }, { status: 500 });
@@ -80,6 +88,7 @@ export async function DELETE(
       data: { active: false },
     });
 
+    void logChange(getDeviceId(), "DELETE", "customer", parseInt(id, 10), { active: false });
     return Response.json({ success: true });
   } catch (error: any) {
     return Response.json({ error: error.message }, { status: 500 });

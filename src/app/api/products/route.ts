@@ -2,6 +2,8 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { productSchema } from "@/lib/validations";
 import { broadcast } from "@/lib/broadcast";
+import { logChange } from "@/lib/sync-engine";
+import { getDeviceId } from "@/lib/sync-utils";
 import type { Prisma } from "@prisma/client";
 
 export async function GET(request: Request) {
@@ -144,6 +146,18 @@ export async function POST(request: Request) {
     });
 
     broadcast("product:create", { id: product.id });
+    void logChange(getDeviceId(), "CREATE", "product", product.id, {
+      id: product.id,
+      name: product.name,
+      barcode: product.barcode,
+      price: product.price,
+      cost: product.cost,
+      stock: product.stock,
+      minStock: product.minStock,
+      active: product.active,
+      departmentId: product.departmentId,
+      supplierId: product.supplierId,
+    });
     return Response.json(product, { status: 201 });
   } catch (error) {
     console.error("Error creating product:", error);

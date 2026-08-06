@@ -1,6 +1,8 @@
 import { auth } from "@/lib/auth";
 import { initializePrisma, prisma } from "@/lib/db";
 import { orderSchema } from "@/lib/validations";
+import { logChange } from "@/lib/sync-engine";
+import { getDeviceId } from "@/lib/sync-utils";
 import type { Prisma } from "@prisma/client";
 
 function positiveInt(value: string | null, fallback: number) {
@@ -111,6 +113,12 @@ export async function POST(request: Request) {
       return newOrder;
     });
 
+    void logChange(getDeviceId(), "CREATE", "order", order.id, {
+      id: order.id,
+      supplierId: order.supplierId,
+      notes: order.notes,
+      items: data.items,
+    });
     return Response.json(order, { status: 201 });
   } catch (error) {
     console.error("Error creating order:", error);

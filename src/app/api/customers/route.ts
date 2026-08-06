@@ -1,5 +1,7 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { logChange } from "@/lib/sync-engine";
+import { getDeviceId } from "@/lib/sync-utils";
 
 export async function GET(request: Request) {
   try {
@@ -70,6 +72,12 @@ export async function POST(request: Request) {
       },
     });
 
+    void logChange(getDeviceId(), "CREATE", "customer", customer.id, {
+      id: customer.id,
+      name: customer.name,
+      phone: customer.phone,
+      email: customer.email,
+    });
     return Response.json({ success: true, customer });
   } catch (error: any) {
     return Response.json({ error: error.message }, { status: 500 });
