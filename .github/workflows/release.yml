@@ -2,7 +2,6 @@ name: Build & Release POS System
 
 on:
   push:
-    branches: [main, master]
     tags:
       - 'v*'
   workflow_dispatch:
@@ -50,14 +49,11 @@ jobs:
 
       - name: Build Electron app (Windows)
         run: |
-          # Create .env for standalone server
           echo "AUTH_SECRET=${{ secrets.AUTH_SECRET || 'pos-system-ci-secret-2026' }}" > .env
           echo "DATABASE_URL=file:./prisma/dev.db" >> .env
           echo "AUTH_URL=http://localhost:3000" >> .env
           echo "NEXT_PUBLIC_APP_URL=http://localhost:3000" >> .env
           npm run electron:build
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: List built artifacts
         run: Get-ChildItem -Recurse dist-electron/
@@ -83,6 +79,8 @@ jobs:
             *Generado automaticamente por GitHub Actions*
           files: |
             dist-electron/*.exe
+            dist-electron/*.blockmap
+            dist-electron/latest.yml
           draft: false
           prerelease: false
           generate_release_notes: true
