@@ -19,6 +19,7 @@ import {
   LogOut,
   X,
   ClipboardCheck,
+  UserRound,
 } from 'lucide-react';
 import { signOut, useSession } from 'next-auth/react';
 import { cn } from '@/lib/utils';
@@ -43,6 +44,7 @@ const navLinks = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/pos', label: 'POS (Punto de Venta)', icon: ShoppingCart },
   { href: '/products', label: 'Productos', icon: Package },
+  { href: '/customers', label: 'Clientes', icon: UserRound },
   { href: '/suppliers', label: 'Proveedores', icon: Truck },
   { href: '/departments', label: 'Departamentos', icon: Building2 },
   { href: '/payment-methods', label: 'Métodos de Pago', icon: Wallet },

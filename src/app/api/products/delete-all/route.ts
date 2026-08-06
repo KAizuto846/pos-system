@@ -1,6 +1,6 @@
 // POST /api/products/delete-all - Delete all products with admin password confirmation
 import { auth } from "@/lib/auth";
-import { initializePrisma, prisma } from "@/lib/prisma";
+import { prisma } from "@/lib/db";
 import type { Prisma } from "@prisma/client";
 import { compare } from "bcrypt-ts";
 
@@ -14,7 +14,7 @@ export async function POST(request: Request) {
     const userId = (session.user as any).id;
     const user = await prisma.user.findUnique({ where: { id: userId } });
 
-    if (!user || user.role !== "admin") {
+    if (!user || user.role !== "ADMIN") {
       return Response.json(
         { error: "Solo los administradores pueden eliminar todo el inventario" },
         { status: 403 }
@@ -41,7 +41,6 @@ export async function POST(request: Request) {
     }
 
     // Delete in correct order to respect foreign keys
-    await initializePrisma();
     const deleted = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const count = await tx.product.count();
       if (count === 0) {
