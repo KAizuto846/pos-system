@@ -25,9 +25,9 @@ export function initializePrisma(): Promise<void> {
   if (!globalForPrisma.prismaInit) {
     globalForPrisma.prismaInit = (async () => {
       await prisma.$queryRawUnsafe("PRAGMA journal_mode = WAL");
-      await prisma.$executeRawUnsafe("PRAGMA synchronous = NORMAL");
-      await prisma.$executeRawUnsafe("PRAGMA foreign_keys = ON");
-      await prisma.$executeRawUnsafe("PRAGMA busy_timeout = 5000");
+      await prisma.$queryRawUnsafe("PRAGMA synchronous = NORMAL");
+      await prisma.$queryRawUnsafe("PRAGMA foreign_keys = ON");
+      await prisma.$queryRawUnsafe("PRAGMA busy_timeout = 5000");
     })();
   }
 
