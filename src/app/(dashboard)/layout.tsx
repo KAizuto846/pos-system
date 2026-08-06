@@ -3,7 +3,6 @@
 import { useState, useEffect } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { useSession } from 'next-auth/react';
-import SessionProvider from '@/components/SessionProvider';
 import Sidebar from '@/components/layout/Sidebar';
 import Header from '@/components/layout/Header';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -66,9 +65,5 @@ export default function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
-  return (
-    <SessionProvider>
-      <DashboardLayoutContent>{children}</DashboardLayoutContent>
-    </SessionProvider>
-  );
+  return <DashboardLayoutContent>{children}</DashboardLayoutContent>;
 }

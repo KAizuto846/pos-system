@@ -1,15 +1,16 @@
 // P2P Sync Engine - Decentralized sync with operation log + LWW conflict resolution
 
 import { prisma } from "@/lib/prisma";
+import type { Prisma } from "@prisma/client";
 
-interface SyncLogEntry {
+export interface SyncLogEntry {
   id: number;
   deviceId: string;
   operation: string;
   entity: string;
   entityId: number;
   data: string;
-  timestamp: Date;
+  timestamp: Date | string;
   synced: boolean;
   syncVersion: number;
 }
@@ -40,27 +41,38 @@ export async function logChange(
 }
 
 // Get unsynced changes for a specific device (not including its own changes)
-export async function getUnsyncedChanges(excludeDeviceId: string, since?: number): Promise<SyncLogEntry[]> {
-  const where: any = {
+export async function getUnsyncedChanges(
+  excludeDeviceId: string,
+  since?: number,
+  limit = 500
+): Promise<SyncLogEntry[]> {
+  const where: Prisma.SyncLogWhereInput = {
     deviceId: { not: excludeDeviceId },
     synced: false,
   };
-  if (since) {
+  if (since !== undefined) {
     where.syncVersion = { gt: since };
   }
   return prisma.syncLog.findMany({
     where,
     orderBy: { timestamp: "asc" },
-    take: 500,
+    take: Math.min(500, Math.max(1, limit)),
   });
 }
 
 // Get my unsynced changes to push to peers
-export async function getMyUnsyncedChanges(deviceId: string): Promise<SyncLogEntry[]> {
+export async function getMyUnsyncedChanges(
+  deviceId: string,
+  since?: number,
+  limit = 500
+): Promise<SyncLogEntry[]> {
+  const where: Prisma.SyncLogWhereInput = { deviceId, synced: false };
+  if (since !== undefined) where.syncVersion = { gt: since };
+
   return prisma.syncLog.findMany({
-    where: { deviceId, synced: false },
+    where,
     orderBy: { timestamp: "asc" },
-    take: 500,
+    take: Math.min(500, Math.max(1, limit)),
   });
 }
 
@@ -87,7 +99,11 @@ export async function applyChanges(changes: SyncLogEntry[], myDeviceId: string) 
     }
 
     try {
-      const data = JSON.parse(change.data);
+      const data: unknown = JSON.parse(change.data);
+      const changeTimestamp = change.timestamp instanceof Date
+        ? change.timestamp
+        : new Date(change.timestamp);
+      if (Number.isNaN(changeTimestamp.getTime())) throw new Error("Invalid change timestamp");
       
       // Check for local conflicting change (LWW = Last Write Wins by timestamp)
       const localConflict = await prisma.syncLog.findFirst({
@@ -100,7 +116,7 @@ export async function applyChanges(changes: SyncLogEntry[], myDeviceId: string) 
         orderBy: { timestamp: "desc" },
       });
 
-      if (localConflict && localConflict.timestamp > change.timestamp) {
+      if (localConflict && localConflict.timestamp > changeTimestamp) {
         // Local change is newer, skip remote change but mark it as synced
         skipped.push(change.id);
         continue;
@@ -124,8 +140,13 @@ async function applyEntityChange(
   entity: string,
   operation: string,
   entityId: number,
-  data: any
+  data: unknown
 ) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    throw new Error("Invalid sync entity data");
+  }
+  const entityData = data as Record<string, unknown>;
+
   switch (entity) {
     case "product":
       if (operation === "DELETE") {
@@ -133,20 +154,20 @@ async function applyEntityChange(
       } else {
         await prisma.product.upsert({
           where: { id: entityId },
-          create: { ...data, id: entityId },
-          update: data,
+          create: { ...entityData, id: entityId } as Prisma.ProductUncheckedCreateInput,
+          update: entityData as Prisma.ProductUncheckedUpdateInput,
         });
       }
       break;
 
     case "sale":
       if (operation === "CREATE") {
-        const { items, ...saleData } = data;
+        const { items, ...saleData } = entityData;
         await prisma.sale.create({
           data: {
             ...saleData,
             items: items ? { create: items } : undefined,
-          },
+          } as Prisma.SaleCreateArgs["data"],
         });
       }
       break;
@@ -157,8 +178,8 @@ async function applyEntityChange(
       } else {
         await prisma.department.upsert({
           where: { id: entityId },
-          create: { ...data, id: entityId },
-          update: data,
+          create: { ...entityData, id: entityId } as Prisma.DepartmentUncheckedCreateInput,
+          update: entityData as Prisma.DepartmentUncheckedUpdateInput,
         });
       }
       break;
@@ -169,8 +190,8 @@ async function applyEntityChange(
       } else {
         await prisma.supplier.upsert({
           where: { id: entityId },
-          create: { ...data, id: entityId },
-          update: data,
+          create: { ...entityData, id: entityId } as Prisma.SupplierUncheckedCreateInput,
+          update: entityData as Prisma.SupplierUncheckedUpdateInput,
         });
       }
       break;
@@ -181,8 +202,8 @@ async function applyEntityChange(
       } else {
         await prisma.user.upsert({
           where: { id: entityId },
-          create: { ...data, id: entityId },
-          update: data,
+          create: { ...entityData, id: entityId } as Prisma.UserUncheckedCreateInput,
+          update: entityData as Prisma.UserUncheckedUpdateInput,
         });
       }
       break;
@@ -193,37 +214,37 @@ async function applyEntityChange(
       } else {
         await prisma.paymentMethod.upsert({
           where: { id: entityId },
-          create: { ...data, id: entityId },
-          update: data,
+          create: { ...entityData, id: entityId } as Prisma.PaymentMethodUncheckedCreateInput,
+          update: entityData as Prisma.PaymentMethodUncheckedUpdateInput,
         });
       }
       break;
 
     case "refund":
       if (operation === "CREATE") {
-        await prisma.refund.create({ data });
+        await prisma.refund.create({ data: entityData as Prisma.RefundUncheckedCreateInput });
       }
       break;
 
     case "cashentry":
       if (operation === "CREATE") {
-        await prisma.cashEntry.create({ data });
+        await prisma.cashEntry.create({ data: entityData as Prisma.CashEntryUncheckedCreateInput });
       }
       break;
 
     case "order":
       if (operation === "CREATE") {
-        const { items: orderItems, ...orderData } = data;
+        const { items: orderItems, ...orderData } = entityData;
         await prisma.supplierOrder.create({
           data: {
             ...orderData,
             items: orderItems ? { create: orderItems } : undefined,
-          },
+          } as Prisma.SupplierOrderCreateArgs["data"],
         });
       } else if (operation === "UPDATE") {
         await prisma.supplierOrder.update({
           where: { id: entityId },
-          data,
+          data: entityData as Prisma.SupplierOrderUncheckedUpdateInput,
         });
       }
       break;

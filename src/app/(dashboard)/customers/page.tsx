@@ -1,7 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import toast from 'react-hot-toast';
 import { Search, Plus, Edit, Trash2, Fingerprint, User, Loader2, Star, TrendingUp, Clock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -40,7 +39,7 @@ const TIER_LABELS: Record<string, string> = {
 };
 
 export default function CustomersPage() {
-  const router = useRouter();
+  const customersAbortRef = useRef<AbortController | null>(null);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -52,23 +51,36 @@ export default function CustomersPage() {
   const [saving, setSaving] = useState(false);
   const [enrolling, setEnrolling] = useState(false);
 
-  const fetchCustomers = useCallback(async () => {
+  const fetchCustomers = useCallback(async (query: string) => {
+    customersAbortRef.current?.abort();
+    const controller = new AbortController();
+    customersAbortRef.current = controller;
     setLoading(true);
     try {
       const params = new URLSearchParams();
-      if (search) params.set('q', search);
+      if (query) params.set('q', query);
       params.set('limit', '100');
-      const res = await fetch(`/api/customers?${params}`);
+      const res = await fetch(`/api/customers?${params}`, { signal: controller.signal });
+      if (!res.ok) throw new Error('Error al cargar clientes');
       const data = await res.json();
       setCustomers(data.customers || []);
-    } catch {
-      toast.error('Error al cargar clientes');
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === 'AbortError')) {
+        toast.error('Error al cargar clientes');
+      }
     } finally {
-      setLoading(false);
+      if (customersAbortRef.current === controller) setLoading(false);
     }
-  }, [search]);
+  }, []);
 
-  useEffect(() => { fetchCustomers(); }, [fetchCustomers]);
+  useEffect(() => {
+    customersAbortRef.current?.abort();
+    const timer = setTimeout(() => fetchCustomers(search), 300);
+    return () => {
+      clearTimeout(timer);
+      customersAbortRef.current?.abort();
+    };
+  }, [search, fetchCustomers]);
 
   const handleAdd = async () => {
     if (!form.name.trim()) { toast.error('Nombre requerido'); return; }
@@ -84,9 +96,9 @@ export default function CustomersPage() {
       toast.success('Cliente creado');
       setShowAddModal(false);
       setForm({ name: '', phone: '', email: '' });
-      fetchCustomers();
-    } catch (err: any) {
-      toast.error(err.message);
+      fetchCustomers(search);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al crear cliente');
     } finally {
       setSaving(false);
     }
@@ -104,7 +116,7 @@ export default function CustomersPage() {
       if (!res.ok) throw new Error('Error al actualizar');
       toast.success('Cliente actualizado');
       setShowEditModal(false);
-      fetchCustomers();
+      fetchCustomers(search);
     } catch {
       toast.error('Error al actualizar');
     } finally {
@@ -117,7 +129,7 @@ export default function CustomersPage() {
     try {
       await fetch(`/api/customers/${customer.id}`, { method: 'DELETE' });
       toast.success('Cliente eliminado');
-      fetchCustomers();
+      fetchCustomers(search);
     } catch {
       toast.error('Error al eliminar');
     }
@@ -136,7 +148,7 @@ export default function CustomersPage() {
       });
       if (!res.ok) throw new Error('Error');
       toast.success('Huella registrada');
-      fetchCustomers();
+      fetchCustomers(search);
       setShowDetailModal(false);
     } catch {
       toast.error('Error al registrar huella');

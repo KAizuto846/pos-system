@@ -1,5 +1,6 @@
 import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/db";
+import { initializePrisma, prisma } from "@/lib/db";
+import type { Prisma } from "@prisma/client";
 
 const VALID_STATUSES = ["pending", "sent", "partial", "received", "cancelled"];
 
@@ -25,7 +26,8 @@ export async function PUT(
 
     // If items are provided, update them (editing quantities/notes)
     if (items && Array.isArray(items)) {
-      await prisma.$transaction(async (tx: any) => {
+      await initializePrisma();
+      await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
         for (const item of items) {
           await tx.supplierOrderItem.update({
             where: { id: item.id },

@@ -2,6 +2,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { productSchema } from "@/lib/validations";
 import { broadcast } from "@/lib/broadcast";
+import type { Prisma } from "@prisma/client";
 
 export async function GET(request: Request) {
   try {
@@ -17,13 +18,14 @@ export async function GET(request: Request) {
     const skip = (page - 1) * limit;
     const departmentId = searchParams.get("departmentId");
     const supplierId = searchParams.get("supplierId");
+    const isPosView = searchParams.get("view") === "pos";
 
-    const where: Record<string, unknown> = {};
+    const where: Prisma.ProductWhereInput = {};
 
     if (q) {
       where.OR = [
+        { barcode: { equals: q } },
         { name: { contains: q } },
-        { barcode: { contains: q } },
       ];
     }
 
@@ -37,14 +39,36 @@ export async function GET(request: Request) {
       };
     }
 
+    const productQuery = isPosView
+      ? prisma.product.findMany({
+          where,
+          select: {
+            id: true,
+            name: true,
+            barcode: true,
+            price: true,
+            cost: true,
+            stock: true,
+            minStock: true,
+            active: true,
+            departmentId: true,
+            supplierId: true,
+            loyaltyDiscount: true,
+          },
+          orderBy: { name: "asc" as const },
+          skip,
+          take: limit,
+        })
+      : prisma.product.findMany({
+          where,
+          include: { department: true, supplier: true, productLines: { include: { supplier: true } } },
+          orderBy: { name: "asc" as const },
+          skip,
+          take: limit,
+        });
+
     const [products, total] = await Promise.all([
-      prisma.product.findMany({
-        where,
-        include: { department: true, supplier: true, productLines: { include: { supplier: true } } },
-        orderBy: { name: "asc" },
-        skip,
-        take: limit,
-      }),
+      productQuery,
       prisma.product.count({ where }),
     ]);
 

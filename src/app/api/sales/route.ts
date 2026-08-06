@@ -1,32 +1,97 @@
 import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/db";
+import { initializePrisma, prisma } from "@/lib/db";
 import { saleSchema } from "@/lib/validations";
 import { broadcast } from "@/lib/broadcast";
+import type { Prisma } from "@prisma/client";
 
-export async function GET() {
+function positiveInt(value: string | null, fallback: number) {
+  const parsed = Number.parseInt(value ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+export async function GET(request: Request) {
   try {
     const session = await auth();
     if (!session?.user) {
       return Response.json({ error: "No autorizado" }, { status: 401 });
     }
 
-    const sales = await prisma.sale.findMany({
-      include: {
-        items: {
-          include: { product: true },
-        },
-        paymentMethod: true,
-        user: {
-          select: { name: true },
-        },
-        refunds: {
-          select: { id: true, quantity: true, amount: true, reason: true, createdAt: true },
-        },
-      },
-      orderBy: { createdAt: "desc" },
-    });
+    const { searchParams } = new URL(request.url);
+    const page = positiveInt(searchParams.get("page"), 1);
+    const limit = Math.min(positiveInt(searchParams.get("limit"), 50), 100);
+    const skip = (page - 1) * limit;
+    const startDate = searchParams.get("startDate");
+    const endDate = searchParams.get("endDate");
+    const createdAt: { gte?: Date; lte?: Date } = {};
 
-    return Response.json(sales);
+    if (startDate) {
+      const start = new Date(startDate);
+      if (Number.isNaN(start.getTime())) {
+        return Response.json({ error: "startDate inválida" }, { status: 400 });
+      }
+      createdAt.gte = start;
+    }
+
+    if (endDate) {
+      const end = new Date(endDate);
+      if (Number.isNaN(end.getTime())) {
+        return Response.json({ error: "endDate inválida" }, { status: 400 });
+      }
+      end.setHours(23, 59, 59, 999);
+      createdAt.lte = end;
+    }
+
+    const where = Object.keys(createdAt).length > 0 ? { createdAt } : {};
+    const [sales, total] = await Promise.all([
+      prisma.sale.findMany({
+        where,
+        select: {
+          id: true,
+          total: true,
+          discountTotal: true,
+          paymentMethodId: true,
+          userId: true,
+          customerId: true,
+          createdAt: true,
+          items: {
+            select: {
+              id: true,
+              productId: true,
+              quantity: true,
+              price: true,
+              product: { select: { id: true, name: true, barcode: true } },
+            },
+          },
+          paymentMethod: { select: { id: true, name: true } },
+          user: { select: { name: true } },
+          refunds: {
+            select: {
+              id: true,
+              productId: true,
+              quantity: true,
+              amount: true,
+              reason: true,
+              createdAt: true,
+            },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: limit,
+      }),
+      prisma.sale.count({ where }),
+    ]);
+
+    return Response.json({
+      sales,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+        hasMore: skip + sales.length < total,
+      },
+    });
   } catch (error) {
     console.error("Error listing sales:", error);
     return Response.json({ error: "Error al obtener ventas" }, { status: 500 });
@@ -53,7 +118,8 @@ export async function POST(request: Request) {
     const data = parsed.data;
     const userId = parseInt(session.user.id, 10);
 
-    const sale = await prisma.$transaction(async (tx: any) => {
+    await initializePrisma();
+    const sale = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       // Atomic stock check + decrement using raw SQL
       // This prevents race conditions between concurrent sales
       for (const item of data.items) {
@@ -118,7 +184,7 @@ export async function POST(request: Request) {
         });
 
         // Update tier based on new purchase count
-        const newCount = customer.purchaseCount + 1;
+        const newCount = customer.purchaseCount;
         let newTier = "bronze";
         if (newCount >= 30) newTier = "gold";
         else if (newCount >= 10) newTier = "silver";

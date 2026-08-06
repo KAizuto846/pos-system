@@ -148,6 +148,7 @@ export default function FinancePage() {
   }, [buildDateFilter]);
 
   const fetchEntries = useCallback(async (page = 1, append = false) => {
+    await Promise.resolve();
     const { from, to } = buildDateFilter();
     const params = new URLSearchParams({
       action: 'cash-entries', page: String(page), limit: '30'
@@ -166,23 +167,29 @@ export default function FinancePage() {
     }
   }, [buildDateFilter, entryFilter]);
 
-  const fetchProducts = useCallback(async (page = 1, append = false) => {
+  const fetchProducts = useCallback(async (page = 1, append = false, signal?: AbortSignal) => {
     setProductLoading(true);
-    const params = new URLSearchParams({
-      action: 'product-breakdown', page: String(page), limit: '50'
-    });
-    if (productSearch) params.set('q', productSearch);
-    if (productDeptFilter && productDeptFilter !== 'all') params.set('departmentId', productDeptFilter);
+    try {
+      const params = new URLSearchParams({
+        action: 'product-breakdown', page: String(page), limit: '50'
+      });
+      if (productSearch) params.set('q', productSearch);
+      if (productDeptFilter && productDeptFilter !== 'all') params.set('departmentId', productDeptFilter);
 
-    const res = await fetch(`/api/finance?${params}`);
-    if (res.ok) {
+      const res = await fetch(`/api/finance?${params}`, { signal });
+      if (!res.ok) throw new Error('Error al cargar productos');
       const data = await res.json();
       setProducts(prev => append ? [...prev, ...data.products] : data.products);
       setProductHasMore(data.pagination.hasMore);
       setProductTotal(data.pagination.total);
       setProductPage(page);
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === 'AbortError')) {
+        toast.error('Error al cargar productos');
+      }
+    } finally {
+      if (!signal?.aborted) setProductLoading(false);
     }
-    setProductLoading(false);
   }, [productSearch, productDeptFilter]);
 
   useEffect(() => {
@@ -197,32 +204,52 @@ export default function FinancePage() {
   }, []);
 
   useEffect(() => {
-    setLoading(true);
-    fetchSummary();
-    if (tab === 'historial') fetchEntries(1, false);
-    if (tab === 'productos') fetchProducts(1, false);
-    setLoading(false);
+    let active = true;
+    const load = async () => {
+      await Promise.resolve();
+      if (!active) return;
+      setLoading(true);
+      const requests: Promise<void>[] = [fetchSummary()];
+      if (tab === 'historial') requests.push(fetchEntries(1, false));
+      await Promise.all(requests).catch(() => {});
+      if (active) setLoading(false);
+    };
+    load();
+    return () => { active = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dateFrom, dateTo, timeFrom, timeTo, tab]);
 
   useEffect(() => {
-    if (tab === 'historial') fetchEntries(1, false);
+    if (tab !== 'historial') return;
+    const timer = setTimeout(() => fetchEntries(1, false), 0);
+    return () => clearTimeout(timer);
+    // The date and tab changes are loaded by the effect above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entryFilter]);
 
   useEffect(() => {
-    if (tab === 'productos') {
+    if (tab !== 'productos') return;
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
       setProducts([]);
       setProductPage(1);
-      fetchProducts(1, false);
-    }
-  }, [productSearch, productDeptFilter]);
+      fetchProducts(1, false, controller.signal);
+    }, 300);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [productSearch, productDeptFilter, tab, fetchProducts]);
 
   const handleRefresh = () => {
     setLoading(true);
-    fetchSummary();
-    if (tab === 'historial') fetchEntries(1, false);
-    if (tab === 'productos') fetchProducts(productPage, false);
-    setLoading(false);
+    Promise.all([
+      fetchSummary(),
+      tab === 'historial' ? fetchEntries(1, false) : Promise.resolve(),
+      tab === 'productos' ? fetchProducts(productPage, false) : Promise.resolve(),
+    ]).catch(() => {}).finally(() => setLoading(false));
   };
 
   const handleCashSubmit = async (e: React.FormEvent) => {
@@ -284,7 +311,7 @@ export default function FinancePage() {
       fetchSummary(),
       tab === 'historial' ? fetchEntries(1, false) : Promise.resolve(),
       tab === 'productos' ? fetchProducts(productPage, false) : Promise.resolve(),
-    ]).finally(() => setLoading(false));
+    ]).catch(() => {}).finally(() => setLoading(false));
   };
 
   if (!isAdmin) {

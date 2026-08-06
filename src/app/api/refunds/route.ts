@@ -1,7 +1,8 @@
 import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/db";
+import { initializePrisma, prisma } from "@/lib/db";
 import { refundSchema } from "@/lib/validations";
 import { broadcast } from "@/lib/broadcast";
+import type { Prisma } from "@prisma/client";
 
 export async function POST(request: Request) {
   try {
@@ -23,7 +24,8 @@ export async function POST(request: Request) {
     const data = parsed.data;
     const userId = parseInt(session.user.id, 10);
 
-    const refund = await prisma.$transaction(async (tx: any) => {
+    await initializePrisma();
+    const refund = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       // Verify the sale exists
       const sale = await tx.sale.findUnique({
         where: { id: data.saleId },

@@ -1,6 +1,7 @@
 import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/db";
+import { initializePrisma, prisma } from "@/lib/db";
 import { broadcast } from "@/lib/broadcast";
+import type { Prisma } from "@prisma/client";
 
 export async function POST(
   request: Request,
@@ -45,7 +46,8 @@ export async function POST(
       );
     }
 
-    const updatedOrder = await prisma.$transaction(async (tx: any) => {
+    await initializePrisma();
+    const updatedOrder = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       for (const item of items) {
         const { orderItemId, receivedQuantity } = item;
 

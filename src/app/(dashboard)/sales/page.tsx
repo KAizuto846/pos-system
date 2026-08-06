@@ -53,6 +53,7 @@ interface PaymentMethod {
 
 interface RefundInfo {
   id: number;
+  productId: number;
   quantity: number;
   amount: number;
   reason: string;
@@ -69,13 +70,35 @@ interface Sale {
   refunds: RefundInfo[];
 }
 
+interface Pagination {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+  hasMore: boolean;
+}
+
+const PAGE_LIMIT = 25;
+
 export default function SalesPage() {
   const [sales, setSales] = useState<Sale[]>([]);
+  const [pagination, setPagination] = useState<Pagination>({
+    page: 1,
+    limit: PAGE_LIMIT,
+    total: 0,
+    totalPages: 0,
+    hasMore: false,
+  });
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const [appliedStartDate, setAppliedStartDate] = useState('');
+  const [appliedEndDate, setAppliedEndDate] = useState('');
+  const [page, setPage] = useState(1);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   // Refund dialog state
   const [refundOpen, setRefundOpen] = useState(false);
@@ -87,27 +110,37 @@ export default function SalesPage() {
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState('');
 
-  const fetchSales = () => {
-    setLoading(true);
-    let url = '/api/sales';
-    const params = new URLSearchParams();
-    if (startDate) params.set('startDate', startDate);
-    if (endDate) params.set('endDate', endDate);
-    const qs = params.toString();
-    if (qs) url += '?' + qs;
-
-    fetch(url)
-      .then((res) => res.json())
-      .then((data) => {
-        if (Array.isArray(data)) setSales(data);
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
-  };
-
   useEffect(() => {
+    const controller = new AbortController();
+
+    const fetchSales = async () => {
+      setLoading(true);
+      setLoadError('');
+      const params = new URLSearchParams({
+        page: String(page),
+        limit: String(PAGE_LIMIT),
+      });
+      if (appliedStartDate) params.set('startDate', appliedStartDate);
+      if (appliedEndDate) params.set('endDate', appliedEndDate);
+
+      try {
+        const res = await fetch(`/api/sales?${params}`, { signal: controller.signal });
+        if (!res.ok) throw new Error('Error al cargar ventas');
+        const data: { sales: Sale[]; pagination: Pagination } = await res.json();
+        setSales(data.sales);
+        setPagination(data.pagination);
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') return;
+        setSales([]);
+        setLoadError('No se pudieron cargar las ventas');
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    };
+
     fetchSales();
-  }, []);
+    return () => controller.abort();
+  }, [page, appliedStartDate, appliedEndDate, refreshKey]);
 
   const formatDate = (dateStr: string) => {
     const d = new Date(dateStr);
@@ -149,7 +182,9 @@ export default function SalesPage() {
     const item = refundSale.items.find((i) => i.productId === pid);
     if (!item) return 0;
     const alreadyRefunded =
-      refundSale.refunds?.reduce((sum, r) => sum + r.quantity, 0) || 0;
+      refundSale.refunds
+        ?.filter((refund) => refund.productId === pid)
+        .reduce((sum, refund) => sum + refund.quantity, 0) || 0;
     return item.quantity - alreadyRefunded;
   };
 
@@ -195,7 +230,7 @@ export default function SalesPage() {
 
       setMessage(`Reembolso creado exitosamente`);
       setRefundOpen(false);
-      fetchSales(); // Refresh the list
+      setRefreshKey((key) => key + 1);
     } catch {
       setMessage('Error de conexión');
     } finally {
@@ -237,20 +272,39 @@ export default function SalesPage() {
             className="w-44"
           />
         </div>
-        <Button onClick={fetchSales} size="sm">
+        <Button
+          onClick={() => {
+            setPage(1);
+            setAppliedStartDate(startDate);
+            setAppliedEndDate(endDate);
+          }}
+          size="sm"
+        >
           <Search className="mr-2 h-4 w-4" />
           Filter
         </Button>
-        {(startDate || endDate) && (
+        {(startDate || endDate || appliedStartDate || appliedEndDate) && (
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => { setStartDate(''); setEndDate(''); }}
+            onClick={() => {
+              setStartDate('');
+              setEndDate('');
+              setAppliedStartDate('');
+              setAppliedEndDate('');
+              setPage(1);
+            }}
           >
             Clear
           </Button>
         )}
       </div>
+
+      {loadError && (
+        <div className="rounded-md border border-red-600/50 bg-red-600/10 px-4 py-3 text-sm text-red-300">
+          {loadError}
+        </div>
+      )}
 
       <Card className="border-slate-700 bg-slate-800">
         <CardContent className="p-0 overflow-x-auto">
@@ -338,6 +392,32 @@ export default function SalesPage() {
           </Table>
         </CardContent>
       </Card>
+
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-xs text-slate-500">
+          {pagination.total > 0
+            ? `Página ${pagination.page} de ${pagination.totalPages} · ${pagination.total} ventas`
+            : '0 ventas'}
+        </p>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={loading || page <= 1}
+            onClick={() => setPage((current) => Math.max(1, current - 1))}
+          >
+            Anterior
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={loading || !pagination.hasMore}
+            onClick={() => setPage((current) => current + 1)}
+          >
+            Siguiente
+          </Button>
+        </div>
+      </div>
 
       {/* Sale Detail Dialog */}
       <Dialog open={detailOpen} onOpenChange={(o) => { setDetailOpen(o); if (!o) setSelectedSale(null); }}>

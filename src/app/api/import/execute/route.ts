@@ -4,6 +4,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { prisma } from '@/lib/prisma';
 import { auth } from '@/lib/auth';
+import type { Prisma } from '@prisma/client';
 
 export const maxDuration = 300;
 export const runtime = 'nodejs';
@@ -18,6 +19,18 @@ const FIELD_TARGETS = {
   suppliers: ['name', 'contact', 'phone', 'email', 'address'],
   departments: ['name', 'description'],
 } as const;
+
+const MAX_FILE_SIZE = 10 * 1024 * 1024;
+const MAX_ROWS = 20_000;
+const BATCH_SIZE = 200;
+
+interface ImportResults {
+  imported: number;
+  updated: number;
+  skipped: number;
+  errors: number;
+  errorDetails: string[];
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -43,6 +56,10 @@ export async function POST(request: NextRequest) {
 
     if (!file) {
       return NextResponse.json({ error: 'No se envio ningun archivo' }, { status: 400 });
+    }
+
+    if (file.size > MAX_FILE_SIZE) {
+      return NextResponse.json({ error: 'El archivo excede el limite de 10 MB' }, { status: 413 });
     }
 
     const validEntities = Object.keys(FIELD_TARGETS);
@@ -76,7 +93,7 @@ export async function POST(request: NextRequest) {
       try {
         const { DBFFile } = await import('dbffile');
         const dbf = await DBFFile.open(tempPath);
-        allRows = await dbf.readRecords(20000);
+        allRows = await dbf.readRecords(MAX_ROWS + 1);
 
         allRows = allRows.map((r: Record<string, unknown>) => {
           const cleaned: Record<string, unknown> = {};
@@ -121,7 +138,20 @@ export async function POST(request: NextRequest) {
       allRows = result.data as Record<string, unknown>[];
     }
 
-    const results = { imported: 0, updated: 0, skipped: 0, errors: 0, errorDetails: [] as string[] };
+    if (allRows.length > MAX_ROWS) {
+      return NextResponse.json(
+        { error: `El archivo excede el limite de ${MAX_ROWS} filas` },
+        { status: 413 }
+      );
+    }
+
+    const results: ImportResults = {
+      imported: 0,
+      updated: 0,
+      skipped: 0,
+      errors: 0,
+      errorDetails: [],
+    };
 
     // Pre-cache departments and suppliers for fast product processing
     const [deptList, suppList] = await Promise.all([
@@ -131,9 +161,7 @@ export async function POST(request: NextRequest) {
     const deptCache = new Map<string, number>(deptList.map(d => [d.name, d.id]));
     const suppCache = new Map<string, number>(suppList.map(s => [s.name, s.id]));
 
-    // Batch buffer for createMany
-    const BATCH_SIZE = 500;
-    const createBatch: any[] = [];
+    const createBatch: Prisma.ProductCreateManyInput[] = [];
 
     for (let i = 0; i < allRows.length; i++) {
       const row = allRows[i];
@@ -142,7 +170,7 @@ export async function POST(request: NextRequest) {
       try {
         const mapped: Record<string, unknown> = {};
         for (const [sourceField, targetField] of mapping) {
-          let value = row[sourceField];
+          const value = row[sourceField];
           if (value !== undefined && value !== null && value !== '') {
             mapped[targetField] = value;
           }
@@ -172,7 +200,7 @@ export async function POST(request: NextRequest) {
 
     // Flush remaining batch
     if (createBatch.length > 0) {
-      try { await prisma.product.createMany({ data: createBatch }); } catch (e) {}
+      await flushProductBatch(createBatch, results);
     }
 
     return NextResponse.json({
@@ -195,10 +223,10 @@ export async function POST(request: NextRequest) {
 async function processProductBatch(
   mapped: Record<string, unknown>,
   opts: { updateExisting: boolean; createMissingSuppliers: boolean; createMissingDepartments: boolean },
-  results: { imported: number; updated: number; skipped: number; errors: number; errorDetails: string[] },
+  results: ImportResults,
   deptCache: Map<string, number>,
   suppCache: Map<string, number>,
-  createBatch: any[],
+  createBatch: Prisma.ProductCreateManyInput[],
   batchSize: number
 ) {
   const name = String(mapped.name || '').trim();
@@ -248,17 +276,30 @@ async function processProductBatch(
     departmentId: departmentId || null,
     supplierId: supplierId || null,
   });
-  results.imported++;
-
   if (createBatch.length >= batchSize) {
-    try { await prisma.product.createMany({ data: createBatch }); } catch (e) {}
-    createBatch.length = 0;
+    await flushProductBatch(createBatch, results);
+  }
+}
+
+async function flushProductBatch(
+  createBatch: Prisma.ProductCreateManyInput[],
+  results: ImportResults
+) {
+  const batch = createBatch.splice(0, createBatch.length);
+  try {
+    const inserted = await prisma.product.createMany({ data: batch });
+    results.imported += inserted.count;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Error al insertar lote';
+    results.errors += batch.length;
+    results.errorDetails.push(`Lote de ${batch.length} productos: ${message}`);
+    console.error('Product import batch failed:', error);
   }
 }
 
 async function processSupplier(
   mapped: Record<string, unknown>,
-  results: { imported: number; updated: number; skipped: number; errors: number; errorDetails: string[] }
+  results: ImportResults
 ) {
   const name = String(mapped.name || '').trim();
   if (!name) { results.skipped++; return; }
@@ -292,7 +333,7 @@ async function processSupplier(
 
 async function processDepartment(
   mapped: Record<string, unknown>,
-  results: { imported: number; updated: number; skipped: number; errors: number; errorDetails: string[] }
+  results: ImportResults
 ) {
   const name = String(mapped.name || '').trim();
   if (!name) { results.skipped++; return; }

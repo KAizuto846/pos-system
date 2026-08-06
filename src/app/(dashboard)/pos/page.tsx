@@ -42,6 +42,14 @@ interface Product {
   active: boolean;
   departmentId: number | null;
   supplierId: number | null;
+  loyaltyDiscount?: boolean;
+}
+
+interface Customer {
+  id: number;
+  name: string;
+  tier: string;
+  purchaseCount: number;
 }
 
 interface PaymentMethod {
@@ -72,18 +80,18 @@ function useDebounce<T>(value: T, delay: number): T {
 }
 
 export default function PosPage() {
-  const {
-    cart,
-    addItem,
-    removeItem,
-    updateQuantity,
-    clearCart,
-    subtotal,
-    itemCount,
-  } = usePosStore();
+  const cart = usePosStore((state) => state.cart);
+  const addItem = usePosStore((state) => state.addItem);
+  const removeItem = usePosStore((state) => state.removeItem);
+  const updateQuantity = usePosStore((state) => state.updateQuantity);
+  const clearCart = usePosStore((state) => state.clearCart);
+  const subtotal = usePosStore((state) => state.subtotal);
+  const itemCount = usePosStore((state) => state.itemCount);
 
   const searchRef = useRef<HTMLInputElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
+  const productsAbortRef = useRef<AbortController | null>(null);
+  const customersAbortRef = useRef<AbortController | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
@@ -98,27 +106,40 @@ export default function PosPage() {
 
   // Loyalty/customer
   const [customerSearch, setCustomerSearch] = useState('');
-  const [customerResults, setCustomerResults] = useState<any[]>([]);
-  const [selectedCustomer, setSelectedCustomer] = useState<any>(null);
+  const [customerResults, setCustomerResults] = useState<Customer[]>([]);
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [searchingCustomer, setSearchingCustomer] = useState(false);
   const [scanningFingerprint, setScanningFingerprint] = useState(false);
 
   const debouncedSearch = useDebounce(searchTerm, 300);
+  const debouncedCustomerSearch = useDebounce(customerSearch, 300);
 
   const LIMIT = 50;
 
   // Fetch products with pagination
   const fetchProducts = useCallback(async (query: string, pageNum: number, append: boolean) => {
-    if (pageNum === 1) setLoading(true);
+    productsAbortRef.current?.abort();
+    const controller = new AbortController();
+    productsAbortRef.current = controller;
+
+    await Promise.resolve();
+    if (controller.signal.aborted) return;
+
+    if (pageNum === 1) {
+      setLoading(true);
+      if (!append) setProducts([]);
+    }
     else setLoadingMore(true);
     
     try {
       const params = new URLSearchParams();
       if (query) params.set('q', query);
+      params.set('view', 'pos');
       params.set('page', String(pageNum));
       params.set('limit', String(LIMIT));
       
-      const res = await fetch(`/api/products?${params}`);
+      const res = await fetch(`/api/products?${params}`, { signal: controller.signal });
+      if (!res.ok) throw new Error('Error al cargar productos');
       const data: PaginatedResponse = await res.json();
       
       if (data.products) {
@@ -127,20 +148,27 @@ export default function PosPage() {
         setTotal(data.pagination.total);
         setPage(pageNum);
       }
-    } catch {
-      toast.error('Error al cargar productos');
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === 'AbortError')) {
+        toast.error('Error al cargar productos');
+      }
     } finally {
-      setLoading(false);
-      setLoadingMore(false);
+      if (productsAbortRef.current === controller) {
+        setLoading(false);
+        setLoadingMore(false);
+      }
     }
+  }, []);
+
+  useEffect(() => () => {
+    productsAbortRef.current?.abort();
+    customersAbortRef.current?.abort();
   }, []);
 
   // Initial load / search change resets to page 1
   useEffect(() => {
-    setProducts([]);
-    setPage(1);
-    setHasMore(true);
-    fetchProducts(debouncedSearch, 1, false);
+    const timer = setTimeout(() => fetchProducts(debouncedSearch, 1, false), 0);
+    return () => clearTimeout(timer);
   }, [debouncedSearch, fetchProducts]);
 
   // Infinite scroll
@@ -206,16 +234,39 @@ export default function PosPage() {
   };
 
   // Loyalty: search customers
-  const searchCustomers = useCallback(async (query: string) => {
-    if (!query || query.length < 2) { setCustomerResults([]); return; }
-    setSearchingCustomer(true);
-    try {
-      const res = await fetch(`/api/customers?q=${encodeURIComponent(query)}&limit=5`);
-      const data = await res.json();
-      setCustomerResults(data.customers || []);
-    } catch { setCustomerResults([]); }
-    finally { setSearchingCustomer(false); }
-  }, []);
+  useEffect(() => {
+    customersAbortRef.current?.abort();
+    const query = debouncedCustomerSearch.trim();
+    if (query.length < 2 || selectedCustomer) {
+      return;
+    }
+
+    const controller = new AbortController();
+    customersAbortRef.current = controller;
+
+    const searchCustomers = async () => {
+      await Promise.resolve();
+      if (controller.signal.aborted) return;
+      setSearchingCustomer(true);
+      try {
+        const res = await fetch(`/api/customers?q=${encodeURIComponent(query)}&limit=5`, {
+          signal: controller.signal,
+        });
+        if (!res.ok) throw new Error('Error al buscar clientes');
+        const data = await res.json();
+        setCustomerResults(data.customers || []);
+      } catch (error) {
+        if (!(error instanceof DOMException && error.name === 'AbortError')) {
+          setCustomerResults([]);
+        }
+      } finally {
+        if (customersAbortRef.current === controller) setSearchingCustomer(false);
+      }
+    };
+    searchCustomers();
+
+    return () => controller.abort();
+  }, [debouncedCustomerSearch, selectedCustomer]);
 
   // Loyalty: simulate fingerprint scan
   const handleFingerprintScan = async () => {
@@ -239,7 +290,7 @@ export default function PosPage() {
   };
 
   // Loyalty: calculate discounts per product
-  const getCustomerDiscount = useCallback((product: any): number => {
+  const getCustomerDiscount = (product: Product): number => {
     if (!selectedCustomer || !product.loyaltyDiscount) return 0;
     const margin = product.price - (product.cost || 0);
     if (margin <= 0) return 0;
@@ -247,7 +298,7 @@ export default function PosPage() {
     const tierLimit = (margin * tierPct) / 100;
     const absoluteLimit = margin / 3;
     return Math.round((Math.min(tierLimit, absoluteLimit)) * 100) / 100;
-  }, [selectedCustomer]);
+  };
 
   // Loyalty: calculate total discount
   const loyaltyDiscount = cart.reduce((sum, item) => {
@@ -302,9 +353,9 @@ export default function PosPage() {
   };
 
   return (
-    <div className="flex h-[calc(100vh-4rem)] gap-0 -m-4 lg:-m-6">
+    <div className="-m-4 flex min-h-[calc(100vh-4rem)] flex-col gap-0 lg:-m-6 lg:h-[calc(100vh-4rem)] lg:flex-row">
       {/* Left Panel — Product Search & Grid (2/3) */}
-      <div className="flex w-2/3 flex-col overflow-hidden">
+      <div className="flex h-[65vh] w-full flex-col overflow-hidden lg:h-auto lg:w-2/3">
         {/* Search bar with count */}
         <div className="relative px-4 pt-4 pb-3 lg:px-6">
           <Search className="absolute left-7 lg:left-9 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -399,7 +450,7 @@ export default function PosPage() {
       </div>
 
       {/* Right Panel — Shopping Cart (1/3) */}
-      <div className="flex w-1/3 flex-col border-l border-slate-700 bg-slate-800">
+      <div className="flex min-h-[calc(100vh-4rem)] w-full flex-col border-t border-slate-700 bg-slate-800 lg:min-h-0 lg:w-1/3 lg:border-l lg:border-t-0">
         {/* Cart Header */}
         <div className="flex items-center justify-between border-b border-slate-700 px-4 py-3">
           <h2 className="flex items-center gap-2 text-lg font-semibold text-slate-100">
@@ -516,16 +567,26 @@ export default function PosPage() {
                   <Input
                     placeholder="Buscar cliente..."
                     value={customerSearch}
-                    onChange={(e) => { setCustomerSearch(e.target.value); searchCustomers(e.target.value); }}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setCustomerSearch(value);
+                      if (value.trim().length < 2) {
+                        setCustomerResults([]);
+                        setSearchingCustomer(false);
+                      }
+                    }}
                     className="h-8 text-xs border-slate-600 bg-slate-900 text-slate-100"
                   />
                   <Button variant="outline" size="sm" onClick={handleFingerprintScan} disabled={scanningFingerprint} className="h-8 border-slate-600 text-slate-300" title="Escanear huella (F5)">
                     <Fingerprint className={`h-4 w-4 ${scanningFingerprint ? 'animate-pulse text-emerald-400' : ''}`} />
                   </Button>
                 </div>
+                {searchingCustomer && customerSearch.length >= 2 && (
+                  <div className="px-3 py-1.5 text-xs text-slate-500">Buscando...</div>
+                )}
                 {customerResults.length > 0 && customerSearch.length >= 2 && (
                   <div className="max-h-32 overflow-y-auto rounded-lg border border-slate-700 bg-slate-900">
-                    {customerResults.map((c: any) => (
+                    {customerResults.map((c) => (
                       <div key={c.id} onClick={() => { setSelectedCustomer(c); setCustomerSearch(''); setCustomerResults([]); }} className="cursor-pointer px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-700">
                         {c.name} <Badge className="ml-1 text-[10px]">{c.tier || 'bronce'}</Badge>
                       </div>

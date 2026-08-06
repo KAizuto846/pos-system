@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Plus, Pencil, Trash2, PackageOpen, Search, Zap, X, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -85,6 +85,7 @@ interface FormProductLine {
 }
 
 export default function ProductsPage() {
+  const productsAbortRef = useRef<AbortController | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -122,7 +123,11 @@ export default function ProductsPage() {
 
   const LIMIT = 50;
 
-  const fetchProducts = useCallback((pageNum: number = 1, append: boolean = false) => {
+  const fetchProducts = useCallback(async (pageNum: number = 1, append: boolean = false) => {
+    productsAbortRef.current?.abort();
+    const controller = new AbortController();
+    productsAbortRef.current = controller;
+
     if (pageNum === 1) setLoading(true);
     else setLoadingMore(true);
 
@@ -133,19 +138,26 @@ export default function ProductsPage() {
     params.set('page', String(pageNum));
     params.set('limit', String(LIMIT));
 
-    fetch(`/api/products?${params}`)
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.products) {
-          setProducts(prev => append ? [...prev, ...data.products] : data.products);
-          setHasMore(data.pagination.hasMore);
-          setTotal(data.pagination.total);
-          setPage(pageNum);
-        }
+    try {
+      const res = await fetch(`/api/products?${params}`, { signal: controller.signal });
+      if (!res.ok) throw new Error('Error al cargar productos');
+      const data = await res.json();
+      if (data.products) {
+        setProducts(prev => append ? [...prev, ...data.products] : data.products);
+        setHasMore(data.pagination.hasMore);
+        setTotal(data.pagination.total);
+        setPage(pageNum);
+      }
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === 'AbortError')) {
+        setProducts([]);
+      }
+    } finally {
+      if (productsAbortRef.current === controller) {
         setLoading(false);
         setLoadingMore(false);
-      })
-      .catch(() => { setLoading(false); setLoadingMore(false); });
+      }
+    }
   }, [search, filterDepartment, filterSupplier]);
 
   const fetchDepartments = () => {
@@ -167,13 +179,14 @@ export default function ProductsPage() {
   };
 
   useEffect(() => {
-    fetchProducts(1);
     fetchDepartments();
     fetchSuppliers();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    return () => productsAbortRef.current?.abort();
+  }, []);
 
   // Debounced search
   useEffect(() => {
+    productsAbortRef.current?.abort();
     const timer = setTimeout(() => {
       fetchProducts(1, false);
     }, 300);
@@ -360,6 +373,7 @@ export default function ProductsPage() {
     setFormLoading(true);
 
     const body = buildProductBody();
+    delete body.stock;
 
     const res = await fetch(`/api/products/${selectedProduct.id}`, {
       method: 'PUT',

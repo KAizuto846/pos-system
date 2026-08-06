@@ -1,7 +1,8 @@
 import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/db";
+import { initializePrisma, prisma } from "@/lib/db";
 import { productSchema } from "@/lib/validations";
 import { broadcast } from "@/lib/broadcast";
+import type { Prisma } from "@prisma/client";
 
 export async function PUT(
   request: Request,
@@ -21,6 +22,12 @@ export async function PUT(
     }
 
     const body = await request.json();
+    if (Object.prototype.hasOwnProperty.call(body, "stock")) {
+      return Response.json(
+        { error: "El stock solo puede modificarse desde el endpoint de ajustes" },
+        { status: 400 }
+      );
+    }
     const parsed = productSchema.partial().safeParse(body);
 
     if (!parsed.success) {
@@ -37,7 +44,6 @@ export async function PUT(
     if (data.barcode !== undefined) updateData.barcode = data.barcode;
     if (data.price !== undefined) updateData.price = data.price;
     if (data.cost !== undefined) updateData.cost = data.cost;
-    if (data.stock !== undefined) updateData.stock = data.stock;
     if (data.minStock !== undefined) updateData.minStock = data.minStock;
     if (data.active !== undefined) updateData.active = data.active;
     if (data.departmentId !== undefined) updateData.departmentId = data.departmentId;
@@ -46,7 +52,8 @@ export async function PUT(
     const productLinesData = body.productLines;
 
     // Use a transaction: update product + replace productLines
-    const product = await prisma.$transaction(async (tx: any) => {
+    await initializePrisma();
+    const product = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       // Update product fields
       const updated = await tx.product.update({
         where: { id: productId },

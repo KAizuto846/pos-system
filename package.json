@@ -106,6 +106,7 @@
       "verifyUpdateCodeSignature": false
     },
     "nsis": {
+      "artifactName": "POS-System-Setup-${version}.${ext}",
       "oneClick": false,
       "perMachine": true,
       "allowToChangeInstallationDirectory": true,

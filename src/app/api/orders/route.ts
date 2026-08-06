@@ -1,25 +1,67 @@
 import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/db";
+import { initializePrisma, prisma } from "@/lib/db";
 import { orderSchema } from "@/lib/validations";
+import type { Prisma } from "@prisma/client";
 
-export async function GET() {
+function positiveInt(value: string | null, fallback: number) {
+  const parsed = Number.parseInt(value ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+export async function GET(request: Request) {
   try {
     const session = await auth();
     if (!session?.user) {
       return Response.json({ error: "No autorizado" }, { status: 401 });
     }
 
-    const orders = await prisma.supplierOrder.findMany({
-      include: {
-        supplier: true,
-        items: {
-          include: { product: true },
-        },
-      },
-      orderBy: { createdAt: "desc" },
-    });
+    const { searchParams } = new URL(request.url);
+    const page = positiveInt(searchParams.get("page"), 1);
+    const limit = Math.min(positiveInt(searchParams.get("limit"), 50), 100);
+    const skip = (page - 1) * limit;
 
-    return Response.json(orders);
+    const [orders, total] = await Promise.all([
+      prisma.supplierOrder.findMany({
+        select: {
+          id: true,
+          supplierId: true,
+          status: true,
+          notes: true,
+          createdAt: true,
+          updatedAt: true,
+          sentAt: true,
+          supplier: { select: { id: true, name: true, active: true } },
+          items: {
+            select: {
+              id: true,
+              productId: true,
+              quantity: true,
+              receivedQuantity: true,
+              received: true,
+              notes: true,
+              product: {
+                select: { id: true, name: true, barcode: true, stock: true, active: true },
+              },
+            },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: limit,
+      }),
+      prisma.supplierOrder.count(),
+    ]);
+
+    return Response.json({
+      orders,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+        hasMore: skip + orders.length < total,
+      },
+    });
   } catch (error) {
     console.error("Error listing orders:", error);
     return Response.json({ error: "Error al obtener órdenes" }, { status: 500 });
@@ -45,7 +87,8 @@ export async function POST(request: Request) {
 
     const data = parsed.data;
 
-    const order = await prisma.$transaction(async (tx: any) => {
+    await initializePrisma();
+    const order = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const newOrder = await tx.supplierOrder.create({
         data: {
           supplierId: data.supplierId,

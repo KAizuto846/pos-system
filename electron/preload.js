@@ -18,7 +18,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
   installUpdate: () => ipcRenderer.invoke('install-update'),
   onUpdateStatus: (callback) => {
-    ipcRenderer.on('update-status', (event, status) => callback(status));
+    const listener = (event, status) => callback(status);
+    ipcRenderer.on('update-status', listener);
+    return () => ipcRenderer.removeListener('update-status', listener);
   },
 
   // Server status (loading screen)

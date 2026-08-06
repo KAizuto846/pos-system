@@ -10,6 +10,8 @@ const path = require('path');
 
 const args = process.argv.slice(2);
 const platform = args.includes('--win') ? 'win' : args.includes('--linux') ? 'linux' : args.includes('--all') ? 'all' : 'win';
+const publishIndex = args.indexOf('--publish');
+const publishMode = publishIndex >= 0 && args[publishIndex + 1] ? args[publishIndex + 1] : 'never';
 
 console.log('╔══════════════════════════════════════════════════════════════╗');
 console.log('║  POS System - Electron Build Script                         ║');
@@ -101,11 +103,11 @@ console.log('\n📦 Paso 3: Building with electron-builder...');
 
 if (platform === 'win' || platform === 'all') {
   console.log('\n📦 Building Windows NSIS installer...');
-  run('npx', ['electron-builder', '--win', '--x64']);
+  run('npx', ['electron-builder', 'build', '--win', '--x64', '--publish', publishMode]);
 }
 
 if (platform === 'linux' || platform === 'all') {
-  run('npx', ['electron-builder', '--linux']);
+  run('npx', ['electron-builder', 'build', '--linux', '--publish', publishMode]);
 }
 
 console.log('\n╔══════════════════════════════════════════════════════════════╗');

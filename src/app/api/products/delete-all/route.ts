@@ -1,6 +1,7 @@
 // POST /api/products/delete-all - Delete all products with admin password confirmation
 import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/prisma";
+import { initializePrisma, prisma } from "@/lib/prisma";
+import type { Prisma } from "@prisma/client";
 import { compare } from "bcrypt-ts";
 
 export async function POST(request: Request) {
@@ -40,7 +41,8 @@ export async function POST(request: Request) {
     }
 
     // Delete in correct order to respect foreign keys
-    const deleted = await prisma.$transaction(async (tx: any) => {
+    await initializePrisma();
+    const deleted = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const count = await tx.product.count();
       if (count === 0) {
         return { products: 0, saleItems: 0, productLines: 0, refunds: 0, orderItems: 0 };

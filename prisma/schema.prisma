@@ -177,6 +177,7 @@ model ProductLine {
   supplier Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
 
   @@unique([productId, supplierId])
+  @@index([supplierId, productId])
   @@map("product_lines")
 }
 
@@ -199,6 +200,7 @@ model Sale {
 
   @@index([createdAt])
   @@index([userId])
+  @@index([userId, createdAt])
   @@index([paymentMethodId])
   @@index([total])
   @@index([customerId])
@@ -215,6 +217,7 @@ model SaleItem {
   price     Float
 
   @@index([saleId, productId])
+  @@index([productId, saleId])
   @@map("sale_items")
 }
 
@@ -270,6 +273,7 @@ model CashEntry {
 
   @@index([type])
   @@index([category])
+  @@index([type, category])
   @@index([recordedAt])
   @@index([paymentMethodId])
   @@index([userId])
@@ -291,6 +295,7 @@ model Refund {
 
   @@index([saleId])
   @@index([productId])
+  @@index([saleId, productId])
   @@index([createdAt])
   @@map("refunds")
 }
@@ -329,5 +334,6 @@ model SyncLog {
   @@index([deviceId, synced])
   @@index([entity, entityId])
   @@index([timestamp])
+  @@index([synced, timestamp])
   @@map("sync_log")
 }

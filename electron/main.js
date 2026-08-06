@@ -372,7 +372,14 @@ function createTray() {
     { label: 'Automatico', type: 'radio', checked: config.mode === 'auto', click: () => setMode('auto') },
     { type: 'separator' },
     { label: 'Reiniciar Servidor', click: () => { stopServer(); setTimeout(startServer, 1000); } },
-    { label: 'Buscar actualizaciones', click: () => { checkForUpdates(); } },
+    {
+      label: 'Buscar actualizaciones',
+      click: () => {
+        checkForUpdates().catch((error) => {
+          console.error('[Updater] Tray check failed:', error.stack || error);
+        });
+      },
+    },
     { type: 'separator' },
     { label: 'Salir', click: () => { isQuitting = true; stopServer(); stopDiscovery(); app.quit(); } },
   ]);
@@ -537,5 +544,5 @@ ipcMain.handle('set-config', (e, key, value) => { config[key] = value; saveConfi
 ipcMain.handle('get-discovered-servers', () => discoveredServers);
 ipcMain.handle('get-app-version', () => app.getVersion());
 ipcMain.handle('restart-server', () => { stopServer(); setTimeout(startServer, 1000); return true; });
-ipcMain.handle('check-for-updates', () => { checkForUpdates(); return true; });
-ipcMain.handle('install-update', () => { installUpdate(); return true; });
+ipcMain.handle('check-for-updates', async () => await checkForUpdates());
+ipcMain.handle('install-update', async () => await installUpdate());

@@ -60,6 +60,12 @@ interface SoldProduct {
   supplierPrice: number | null; totalSold: number;
 }
 
+interface ProductSearchResult {
+  id: number; name: string; barcode: string;
+  price: number; cost: number; stock: number; minStock: number;
+  department: { id: number; name: string } | null;
+}
+
 interface OrderItem {
   id: number; productId: number; quantity: number;
   product: Product; receivedQuantity: number; notes: string;
@@ -68,6 +74,11 @@ interface OrderItem {
 interface Order {
   id: number; supplierId: number; status: string; notes: string;
   createdAt: string; supplier: Supplier; items: OrderItem[];
+}
+
+interface Pagination {
+  page: number; limit: number; total: number;
+  totalPages: number; hasMore: boolean;
 }
 
 interface ExtraColumn {
@@ -107,7 +118,7 @@ function getStatusBadge(status: string) {
 
 function fmtSold(p: SoldProduct, key: string): string {
   if (key === 'department') return p.department?.name || '—';
-  const v = (p as any)[key];
+  const v = p[key as keyof SoldProduct];
   if (v === null || v === undefined) return '—';
   return typeof v === 'number' ? v.toFixed(2) : String(v);
 }
@@ -119,6 +130,10 @@ function weekAgoStr() { const d = new Date(); d.setDate(d.getDate() - 7); return
 export default function OrdersPage() {
   // ── Data ──
   const [orders, setOrders] = useState<Order[]>([]);
+  const [orderPage, setOrderPage] = useState(1);
+  const [orderPagination, setOrderPagination] = useState<Pagination>({
+    page: 1, limit: 25, total: 0, totalPages: 0, hasMore: false,
+  });
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [loading, setLoading] = useState(true);
   const exportRef = useRef<HTMLDivElement>(null);
@@ -163,12 +178,25 @@ export default function OrdersPage() {
   const [manualSearching, setManualSearching] = useState(false);
 
   // ── Fetchers ──
-  const fetchOrders = useCallback(() => {
+  const fetchOrders = useCallback(async (pageNum = 1, signal?: AbortSignal) => {
+    await Promise.resolve();
+    if (signal?.aborted) return;
     setLoading(true);
-    fetch('/api/orders')
-      .then(r => r.json())
-      .then(d => { if (Array.isArray(d)) setOrders(d); setLoading(false); })
-      .catch(() => setLoading(false));
+    try {
+      const params = new URLSearchParams({ page: String(pageNum), limit: '25' });
+      const res = await fetch(`/api/orders?${params}`, { signal });
+      if (!res.ok) throw new Error('Error al cargar pedidos');
+      const data: { orders: Order[]; pagination: Pagination } = await res.json();
+      setOrders(data.orders);
+      setOrderPagination(data.pagination);
+      setOrderPage(data.pagination.page);
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === 'AbortError')) {
+        setOrders([]);
+      }
+    } finally {
+      if (!signal?.aborted) setLoading(false);
+    }
   }, []);
 
   const fetchSuppliers = useCallback(() => {
@@ -178,7 +206,17 @@ export default function OrdersPage() {
       .catch(() => {});
   }, []);
 
-  useEffect(() => { fetchOrders(); fetchSuppliers(); }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    const initialLoad = setTimeout(() => {
+      fetchOrders(1, controller.signal);
+      fetchSuppliers();
+    }, 0);
+    return () => {
+      clearTimeout(initialLoad);
+      controller.abort();
+    };
+  }, [fetchOrders, fetchSuppliers]);
 
   const resetForm = () => {
     setFormSupplierId(''); setFormNotes(''); setDateFrom(weekAgoStr());
@@ -214,15 +252,16 @@ export default function OrdersPage() {
       const res = await fetch(`/api/orders/pending-items?supplierId=${formSupplierId}`);
       const data = await res.json();
       if (res.ok && data.products?.length > 0) {
-        setPendingItems(data.products);
+        const pendingProducts = data.products as Array<SoldProduct & { pendingQuantity: number }>;
+        setPendingItems(pendingProducts);
         // Add pending items to sold products if they're not already there
         const existingIds = new Set(soldProducts.map(p => p.productId));
-        const newProds = data.products.filter((p: any) => !existingIds.has(p.productId));
+        const newProds = pendingProducts.filter((p) => !existingIds.has(p.productId));
         if (newProds.length > 0) {
           const merged = [...soldProducts, ...newProds];
           setSoldProducts(merged);
           const qty = { ...quantities };
-          newProds.forEach((p: any) => { qty[String(p.productId)] = p.pendingQuantity; });
+          newProds.forEach((p) => { qty[String(p.productId)] = p.pendingQuantity; });
           setQuantities(qty);
         }
       }
@@ -231,14 +270,22 @@ export default function OrdersPage() {
   };
 
   // ── Manual product search ──
-  const searchProducts = async (q: string) => {
-    if (!q || q.length < 2) { setManualResults([]); return; }
-    setManualSearching(true);
-    try {
-      const res = await fetch(`/api/products?q=${encodeURIComponent(q)}&limit=20`);
-      const data = await res.json();
-      if (data.products) {
-        setManualResults(data.products.map((p: any) => ({
+  useEffect(() => {
+    const query = manualSearch.trim();
+    if (!showManualAdd || query.length < 2) {
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      setManualSearching(true);
+      try {
+        const res = await fetch(`/api/products?q=${encodeURIComponent(query)}&limit=20`, {
+          signal: controller.signal,
+        });
+        if (!res.ok) throw new Error('Error al buscar productos');
+        const data = await res.json();
+        setManualResults((data.products || []).map((p: ProductSearchResult) => ({
           productId: p.id,
           name: p.name,
           barcode: p.barcode,
@@ -250,10 +297,20 @@ export default function OrdersPage() {
           supplierPrice: null,
           totalSold: 0,
         })));
+      } catch (error) {
+        if (!(error instanceof DOMException && error.name === 'AbortError')) {
+          setManualResults([]);
+        }
+      } finally {
+        if (!controller.signal.aborted) setManualSearching(false);
       }
-    } catch {}
-    setManualSearching(false);
-  };
+    }, 300);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [manualSearch, showManualAdd]);
 
   const addManualProduct = (product: SoldProduct) => {
     // Check if already in the list
@@ -323,7 +380,7 @@ export default function OrdersPage() {
     const data = await res.json();
     setFormLoading(false);
     if (!res.ok) { setFormError(data.error || 'Error al crear'); return; }
-    setCreateOpen(false); resetForm(); fetchOrders();
+    setCreateOpen(false); resetForm(); fetchOrders(1);
   };
 
   // ── Partial receive ──
@@ -355,7 +412,7 @@ export default function OrdersPage() {
       if (res.ok) {
         setReceiveOpen(false);
         setSelectedOrder(null);
-        fetchOrders();
+        fetchOrders(orderPage);
       }
     } catch {}
     setReceiveLoading(false);
@@ -386,7 +443,7 @@ export default function OrdersPage() {
           })),
         }),
       });
-      setEditMode(false); fetchOrders();
+      setEditMode(false); fetchOrders(orderPage);
     } catch {}
     setFormLoading(false);
   };
@@ -710,7 +767,7 @@ export default function OrdersPage() {
 
                 {!formSupplierId && (
                   <div className="text-center py-8 text-slate-500 text-sm">
-                    Selecciona un proveedor, ajusta el rango de fechas y horas, y presiona "Calcular Ventas"
+                    Selecciona un proveedor, ajusta el rango de fechas y horas, y presiona &quot;Calcular Ventas&quot;
                   </div>
                 )}
               </div>
@@ -730,7 +787,14 @@ export default function OrdersPage() {
                       <Input
                         placeholder="Buscar producto..."
                         value={manualSearch}
-                        onChange={e => { setManualSearch(e.target.value); searchProducts(e.target.value); }}
+                        onChange={e => {
+                          const value = e.target.value;
+                          setManualSearch(value);
+                          if (value.trim().length < 2) {
+                            setManualResults([]);
+                            setManualSearching(false);
+                          }
+                        }}
                         className="pl-10"
                         autoFocus
                       />
@@ -831,6 +895,32 @@ export default function OrdersPage() {
           </Table>
         </CardContent>
       </Card>
+
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-xs text-slate-500">
+          {orderPagination.total > 0
+            ? `Página ${orderPagination.page} de ${orderPagination.totalPages} · ${orderPagination.total} pedidos`
+            : '0 pedidos'}
+        </p>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={loading || orderPage <= 1}
+            onClick={() => fetchOrders(orderPage - 1)}
+          >
+            Anterior
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={loading || !orderPagination.hasMore}
+            onClick={() => fetchOrders(orderPage + 1)}
+          >
+            Siguiente
+          </Button>
+        </div>
+      </div>
 
       {/* ── Receive Dialog ── */}
       <Dialog open={receiveOpen} onOpenChange={o => { setReceiveOpen(o); if (!o) setSelectedOrder(null); }}>

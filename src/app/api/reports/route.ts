@@ -30,38 +30,49 @@ export async function POST(request: Request) {
 
     end.setHours(23, 59, 59, 999);
 
-    // Sales count and total revenue
-    const salesInRange = await prisma.sale.findMany({
-      where: {
-        createdAt: { gte: start, lte: end },
-      },
-      include: {
-        items: {
-          include: { product: true },
+    const saleWhere = { createdAt: { gte: start, lte: end } };
+    const [salesAggregate, salesInRange, itemsInRange] = await Promise.all([
+      prisma.sale.aggregate({
+        where: saleWhere,
+        _count: true,
+        _sum: { total: true },
+      }),
+      prisma.sale.findMany({
+        where: saleWhere,
+        select: {
+          total: true,
+          createdAt: true,
+          paymentMethod: { select: { name: true } },
         },
-        paymentMethod: true,
-      },
-      orderBy: { createdAt: "asc" },
-    });
+        orderBy: { createdAt: "asc" },
+      }),
+      prisma.saleItem.findMany({
+        where: { sale: saleWhere },
+        select: {
+          productId: true,
+          quantity: true,
+          price: true,
+          product: { select: { name: true } },
+        },
+      }),
+    ]);
 
-    const salesCount = salesInRange.length;
-    const totalRevenue = salesInRange.reduce((sum: number, s: any) => sum + s.total, 0);
+    const salesCount = salesAggregate._count;
+    const totalRevenue = salesAggregate._sum.total || 0;
 
     // Top products
     const productSales: Record<number, { name: string; quantity: number; revenue: number }> = {};
 
-    for (const sale of salesInRange) {
-      for (const item of sale.items) {
-        if (!productSales[item.productId]) {
-          productSales[item.productId] = {
-            name: item.product.name,
-            quantity: 0,
-            revenue: 0,
-          };
-        }
-        productSales[item.productId].quantity += item.quantity;
-        productSales[item.productId].revenue += item.price * item.quantity;
+    for (const item of itemsInRange) {
+      if (!productSales[item.productId]) {
+        productSales[item.productId] = {
+          name: item.product.name,
+          quantity: 0,
+          revenue: 0,
+        };
       }
+      productSales[item.productId].quantity += item.quantity;
+      productSales[item.productId].revenue += item.price * item.quantity;
     }
 
     const topProducts = Object.entries(productSales)

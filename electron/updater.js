@@ -1,134 +1,213 @@
-const { autoUpdater } = require("electron-updater");
-const log = require("electron-log");
-const { dialog } = require("electron");
+const { app } = require('electron');
+const { autoUpdater } = require('electron-updater');
+const log = require('electron-log');
+
+const INITIAL_CHECK_DELAY_MS = 10 * 1000;
+const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000;
 
 let mainWindow = null;
-let isCheckingForUpdates = false;
+let activeOperation = null;
+let checkTimeout = null;
+let checkInterval = null;
+let isInitialized = false;
+let isUpdateDownloaded = false;
+let lastReportedError = null;
+
+function getDisabledReason() {
+  if (!app.isPackaged) {
+    return 'Las actualizaciones estan deshabilitadas fuera de la aplicacion empaquetada.';
+  }
+  if (process.platform !== 'win32') {
+    return 'Las actualizaciones automaticas solo estan disponibles en Windows.';
+  }
+  return null;
+}
+
+function sendStatus(status) {
+  if (
+    mainWindow &&
+    !mainWindow.isDestroyed() &&
+    !mainWindow.webContents.isDestroyed()
+  ) {
+    mainWindow.webContents.send('update-status', status);
+  }
+}
+
+function normalizeError(error) {
+  return error instanceof Error ? error : new Error(String(error));
+}
+
+function reportError(error) {
+  const normalizedError = normalizeError(error);
+  const details = normalizedError.stack || normalizedError.message;
+
+  if (details !== lastReportedError) {
+    lastReportedError = details;
+    log.error(`[Updater] ${details}`);
+    sendStatus({
+      type: 'error',
+      message: normalizedError.message,
+      stack: normalizedError.stack,
+    });
+  }
+
+  return normalizedError;
+}
+
+function clearUpdaterTimers() {
+  if (checkTimeout) {
+    clearTimeout(checkTimeout);
+    checkTimeout = null;
+  }
+  if (checkInterval) {
+    clearInterval(checkInterval);
+    checkInterval = null;
+  }
+}
+
+function runScheduledCheck() {
+  checkForUpdates().catch(reportError);
+}
 
 function setupAutoUpdater(win) {
   mainWindow = win;
 
-  // Configure electron-updater
+  const disabledReason = getDisabledReason();
+  if (disabledReason) {
+    clearUpdaterTimers();
+    log.info(`[Updater] ${disabledReason}`);
+    return { enabled: false, reason: disabledReason };
+  }
+
+  if (isInitialized) {
+    return { enabled: true };
+  }
+  isInitialized = true;
+
   autoUpdater.logger = log;
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.allowDowngrade = false;
   autoUpdater.forceDevUpdateConfig = false;
-
-  // Disable signature verification for now (not signing builds)
   autoUpdater.disableWebInstaller = true;
 
-  log.info("[Updater] Initializing auto-updater...");
-
-  // Check for updates on startup, then every 4 hours
-  setTimeout(() => {
-    checkForUpdates();
-  }, 10000); // Wait 10 seconds after startup
-
-  setInterval(() => {
-    checkForUpdates();
-  }, 4 * 60 * 60 * 1000); // Every 4 hours
-
-  // Event handlers
-  autoUpdater.on("checking-for-update", () => {
-    isCheckingForUpdates = true;
-    log.info("[Updater] Checking for updates...");
-    sendToRenderer("update-status", { type: "checking" });
+  autoUpdater.on('checking-for-update', () => {
+    lastReportedError = null;
+    log.info('[Updater] Checking for updates...');
+    sendStatus({ type: 'checking' });
   });
 
-  autoUpdater.on("update-available", (info) => {
-    isCheckingForUpdates = false;
-    log.info("[Updater] Update available:", info.version);
-    sendToRenderer("update-status", {
-      type: "available",
+  autoUpdater.on('update-available', (info) => {
+    log.info(`[Updater] Update available: ${info.version}`);
+    sendStatus({
+      type: 'available',
       version: info.version,
       releaseDate: info.releaseDate,
     });
   });
 
-  autoUpdater.on("update-not-available", (info) => {
-    isCheckingForUpdates = false;
-    log.info("[Updater] No updates available. Current version:", info.version);
-    sendToRenderer("update-status", {
-      type: "not-available",
-      version: info.version,
-    });
+  autoUpdater.on('update-not-available', (info) => {
+    log.info(`[Updater] No update available. Current version: ${info.version}`);
+    sendStatus({ type: 'not-available', version: info.version });
   });
 
-  autoUpdater.on("download-progress", (progress) => {
-    const percent = Math.round(progress.percent);
-    log.info(`[Updater] Download progress: ${percent}%`);
-    sendToRenderer("update-status", {
-      type: "downloading",
-      percent,
+  autoUpdater.on('download-progress', (progress) => {
+    sendStatus({
+      type: 'downloading',
+      percent: Math.round(progress.percent),
       bytesPerSecond: progress.bytesPerSecond,
       transferred: progress.transferred,
       total: progress.total,
     });
   });
 
-  autoUpdater.on("update-downloaded", (info) => {
-    isCheckingForUpdates = false;
-    log.info("[Updater] Update downloaded:", info.version);
-    sendToRenderer("update-status", {
-      type: "ready",
-      version: info.version,
-    });
-
-    // Notify user and ask to restart
-    dialog
-      .showMessageBox(mainWindow, {
-        type: "info",
-        buttons: ["Reiniciar ahora", "Mas tarde"],
-        title: "Actualizacion lista",
-        message: `Version ${info.version} descargada`,
-        detail:
-          "La actualizacion se instalara al reiniciar. Desea reiniciar ahora?",
-        defaultId: 0,
-        cancelId: 1,
-      })
-      .then(({ response }) => {
-        if (response === 0) {
-          // User chose to restart now
-          log.info("[Updater] User chose to restart now");
-          autoUpdater.quitAndInstall();
-        } else {
-          log.info("[Updater] User chose to restart later");
-        }
-      });
+  autoUpdater.on('update-downloaded', (info) => {
+    isUpdateDownloaded = true;
+    log.info(`[Updater] Update downloaded: ${info.version}`);
+    sendStatus({ type: 'ready', version: info.version });
   });
 
-  autoUpdater.on("error", (err) => {
-    isCheckingForUpdates = false;
-    log.error("[Updater] Error:", err.message);
-    sendToRenderer("update-status", {
-      type: "error",
-      message: err.message,
-    });
+  autoUpdater.on('error', (error) => {
+    reportError(error);
   });
+
+  clearUpdaterTimers();
+  checkTimeout = setTimeout(() => {
+    checkTimeout = null;
+    runScheduledCheck();
+  }, INITIAL_CHECK_DELAY_MS);
+  checkInterval = setInterval(runScheduledCheck, CHECK_INTERVAL_MS);
+  app.once('before-quit', clearUpdaterTimers);
+
+  log.info('[Updater] Auto-updater initialized.');
+  return { enabled: true };
 }
 
-function checkForUpdates() {
-  if (isCheckingForUpdates) {
-    log.info("[Updater] Already checking for updates, skipping...");
-    return;
-  }
-
+async function performUpdateCheck() {
   try {
-    autoUpdater.checkForUpdates();
-  } catch (err) {
-    log.error("[Updater] Failed to check for updates:", err.message);
+    const result = await autoUpdater.checkForUpdates();
+    if (result?.downloadPromise) {
+      await result.downloadPromise;
+    }
+
+    return {
+      enabled: true,
+      updateAvailable: Boolean(result?.isUpdateAvailable),
+      status: isUpdateDownloaded
+        ? 'ready'
+        : result?.isUpdateAvailable
+          ? 'available'
+          : 'not-available',
+      version: result?.updateInfo?.version,
+    };
+  } catch (error) {
+    throw reportError(error);
   }
 }
 
-function installUpdate() {
-  log.info("[Updater] Installing update...");
-  autoUpdater.quitAndInstall();
+async function checkForUpdates() {
+  const disabledReason = getDisabledReason();
+  if (disabledReason) {
+    return { enabled: false, reason: disabledReason };
+  }
+  if (!isInitialized) {
+    throw reportError(new Error('El actualizador no ha sido inicializado.'));
+  }
+
+  if (activeOperation) {
+    log.info('[Updater] An update operation is already active; reusing it.');
+    return await activeOperation;
+  }
+
+  const operation = performUpdateCheck();
+  activeOperation = operation;
+  try {
+    return await operation;
+  } finally {
+    if (activeOperation === operation) {
+      activeOperation = null;
+    }
+  }
 }
 
-function sendToRenderer(channel, data) {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send(channel, data);
+async function installUpdate() {
+  try {
+    const disabledReason = getDisabledReason();
+    if (disabledReason) {
+      throw new Error(disabledReason);
+    }
+    if (activeOperation) {
+      await activeOperation;
+    }
+    if (!isUpdateDownloaded) {
+      throw new Error('No hay una actualizacion descargada lista para instalar.');
+    }
+
+    log.info('[Updater] Restarting to install the downloaded update.');
+    autoUpdater.quitAndInstall(false, true);
+    return { installed: true };
+  } catch (error) {
+    throw reportError(error);
   }
 }
 

@@ -21,49 +21,48 @@ export async function GET(request: Request) {
 
     switch (action) {
       case "summary": {
-        // Total sales in period
-        const salesAgg = await prisma.sale.aggregate({
-          _sum: { total: true },
-          _count: true,
-          where: whereDate,
-        });
+        const [
+          salesAgg,
+          saleItems,
+          incomeByCategory,
+          expenseByCategory,
+          allIncome,
+          allExpense,
+        ] = await Promise.all([
+          prisma.sale.aggregate({
+            _sum: { total: true },
+            _count: true,
+            where: whereDate,
+          }),
+          prisma.saleItem.findMany({
+            where: { sale: whereDate },
+            select: { quantity: true, product: { select: { cost: true } } },
+          }),
+          prisma.cashEntry.groupBy({
+            by: ["category"],
+            where: { type: "INCOME" },
+            _sum: { amount: true },
+          }),
+          prisma.cashEntry.groupBy({
+            by: ["category"],
+            where: { type: { in: ["EXPENSE", "TRANSFER"] } },
+            _sum: { amount: true },
+          }),
+          prisma.cashEntry.aggregate({
+            _sum: { amount: true },
+            where: { type: "INCOME" },
+          }),
+          prisma.cashEntry.aggregate({
+            _sum: { amount: true },
+            where: { type: { in: ["EXPENSE", "TRANSFER"] } },
+          }),
+        ]);
 
-        // Profit from sales
-        const salesWithItems = await prisma.sale.findMany({
-          where: whereDate,
-          include: { items: { include: { product: { select: { cost: true } } } } },
-        });
-
-        let totalCost = 0;
-        let totalRevenue = 0;
-        for (const sale of salesWithItems) {
-          totalRevenue += sale.total;
-          for (const item of sale.items) {
-            totalCost += (item.product?.cost || 0) * item.quantity;
-          }
-        }
-
-        // Cash breakdown by category
-        const incomeByCategory = await prisma.cashEntry.groupBy({
-          by: ["category"],
-          where: { type: "INCOME" },
-          _sum: { amount: true },
-        });
-        const expenseByCategory = await prisma.cashEntry.groupBy({
-          by: ["category"],
-          where: { type: { in: ["EXPENSE", "TRANSFER"] } },
-          _sum: { amount: true },
-        });
-
-        // All-time total cash in safe
-        const allIncome = await prisma.cashEntry.aggregate({
-          _sum: { amount: true },
-          where: { type: "INCOME" },
-        });
-        const allExpense = await prisma.cashEntry.aggregate({
-          _sum: { amount: true },
-          where: { type: { in: ["EXPENSE", "TRANSFER"] } },
-        });
+        const totalRevenue = salesAgg._sum.total || 0;
+        const totalCost = saleItems.reduce(
+          (sum, item) => sum + item.product.cost * item.quantity,
+          0
+        );
         const cashBalance = (allIncome._sum.amount || 0) - (allExpense._sum.amount || 0);
 
         // Build category map
@@ -135,7 +134,16 @@ export async function GET(request: Request) {
         const [products, total] = await Promise.all([
           prisma.product.findMany({
             where,
-            include: { department: { select: { name: true } }, supplier: { select: { name: true } } },
+            select: {
+              id: true,
+              name: true,
+              barcode: true,
+              price: true,
+              cost: true,
+              stock: true,
+              department: { select: { name: true } },
+              supplier: { select: { name: true } },
+            },
             orderBy: { name: "asc" },
             skip,
             take: limit,
@@ -143,7 +151,7 @@ export async function GET(request: Request) {
           prisma.product.count({ where }),
         ]);
 
-        const items = products.map((p: any) => ({
+        const items = products.map((p) => ({
           id: p.id,
           name: p.name,
           barcode: p.barcode,

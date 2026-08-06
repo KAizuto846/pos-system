@@ -47,18 +47,40 @@ jobs:
           AUTH_URL: 'http://localhost:3000'
           NEXT_PUBLIC_APP_URL: 'http://localhost:3000'
 
+      - name: Clean Electron output
+        shell: pwsh
+        run: Remove-Item -Recurse -Force dist-electron -ErrorAction SilentlyContinue
+
       - name: Build Electron app (Windows)
         run: |
           echo "AUTH_SECRET=${{ secrets.AUTH_SECRET || 'pos-system-ci-secret-2026' }}" > .env
           echo "DATABASE_URL=file:./prisma/dev.db" >> .env
           echo "AUTH_URL=http://localhost:3000" >> .env
           echo "NEXT_PUBLIC_APP_URL=http://localhost:3000" >> .env
-          npm run electron:build
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          npm run electron:build -- --publish never
 
       - name: List built artifacts
         run: Get-ChildItem -Recurse dist-electron/
+
+      - name: Validate update metadata
+        shell: pwsh
+        run: |
+          $references = Get-Content dist-electron/latest.yml | ForEach-Object {
+            if ($_ -match '^\s*(?:url|path):\s*(.+?)\s*$') {
+              [System.Uri]::UnescapeDataString($Matches[1].Trim())
+            }
+          } | Sort-Object -Unique
+
+          if (-not $references) {
+            throw 'latest.yml does not reference an update artifact.'
+          }
+
+          foreach ($reference in $references) {
+            $artifact = Join-Path dist-electron $reference
+            if (-not (Test-Path -LiteralPath $artifact -PathType Leaf)) {
+              throw "latest.yml references a missing artifact: $reference"
+            }
+          }
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -69,7 +91,7 @@ jobs:
             ## POS System - Nueva version
 
             ### Instalacion
-            1. Descarga `POS-System-Setup-*.exe`
+            1. Descarga `POS-System-Setup-<version>.exe`
             2. Ejecuta el instalador
             3. En la primera ejecucion, elige entre "Empezar en local" o "Punto de venta compartido"
 

@@ -5,6 +5,7 @@ import { ToasterProvider } from "@/components/ui/toast";
 import SessionProvider from "@/components/SessionProvider";
 import QueryProvider from "@/components/QueryProvider";
 import { RealtimeProvider } from "@/components/RealtimeProvider";
+import { UpdateNotification } from "@/components/UpdateNotification";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -33,6 +34,7 @@ export default function RootLayout({
         <SessionProvider>
           <QueryProvider>
             <RealtimeProvider>
+              <UpdateNotification />
               {children}
               <ToasterProvider />
             </RealtimeProvider>

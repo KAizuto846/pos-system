@@ -1,5 +1,5 @@
 import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/db";
+import { initializePrisma, prisma } from "@/lib/db";
 import { broadcast } from "@/lib/broadcast";
 
 export async function POST(
@@ -29,31 +29,32 @@ export async function POST(
       );
     }
 
-    // Atomic stock update using raw SQL
-    // This prevents race conditions between concurrent adjustments
-    let result: number;
-    if (quantity < 0) {
-      // Decreasing stock: only succeed if there's enough
-      result = await prisma.$executeRaw`
-        UPDATE products SET stock = stock + ${quantity}
-        WHERE id = ${productId} AND stock >= ${-quantity}
-      `;
-    } else {
-      // Increasing stock: always succeeds
-      result = await prisma.$executeRaw`
-        UPDATE products SET stock = stock + ${quantity}
-        WHERE id = ${productId}
-      `;
-    }
+    await initializePrisma();
+    const result = await prisma.$transaction(async (tx) => {
+      const changed = quantity < 0
+        ? await tx.$executeRaw`
+            UPDATE products SET stock = stock + ${quantity}
+            WHERE id = ${productId} AND stock >= ${-quantity}
+          `
+        : await tx.$executeRaw`
+            UPDATE products SET stock = stock + ${quantity}
+            WHERE id = ${productId}
+          `;
 
-    if (result === 0) {
-      // Check if product exists
-      const product = await prisma.product.findUnique({
+      if (changed === 0) {
+        const exists = await tx.product.count({ where: { id: productId } });
+        return { error: exists === 0 ? "not_found" as const : "insufficient" as const };
+      }
+
+      const updated = await tx.product.findUnique({
         where: { id: productId },
-        select: { name: true, stock: true },
+        include: { department: true, supplier: true },
       });
+      return { updated };
+    });
 
-      if (!product) {
+    if ("error" in result) {
+      if (result.error === "not_found") {
         return Response.json({ error: "Producto no encontrado" }, { status: 404 });
       }
 
@@ -63,13 +64,12 @@ export async function POST(
       );
     }
 
-    const updated = await prisma.product.findUnique({
-      where: { id: productId },
-      include: { department: true, supplier: true },
-    });
+    if (!result.updated) {
+      return Response.json({ error: "Producto no encontrado" }, { status: 404 });
+    }
 
-    broadcast("product:stock", { id: productId, stock: updated!.stock });
-    return Response.json(updated);
+    broadcast("product:stock", { id: productId, stock: result.updated.stock });
+    return Response.json(result.updated);
   } catch (error) {
     console.error("Error adjusting stock:", error);
     return Response.json({ error: "Error al ajustar stock" }, { status: 500 });

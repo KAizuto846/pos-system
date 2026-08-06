@@ -3,7 +3,7 @@
 import { useRealtimeSync } from "@/hooks/useRealtimeSync";
 
 export function RealtimeProvider({ children }: { children: React.ReactNode }) {
-  useRealtimeSync({});
+  useRealtimeSync();
 
   return <>{children}</>;
 }
