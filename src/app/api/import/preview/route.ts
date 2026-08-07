@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { decodeTextBuffer } from '@/lib/import-decode';
 
 export const maxDuration = 30;
 
@@ -46,7 +47,7 @@ export async function POST(request: NextRequest) {
           const cleaned: Record<string, unknown> = {};
           for (const [key, val] of Object.entries(r)) {
             if (Buffer.isBuffer(val)) {
-              cleaned[key] = val.toString('utf8').trim();
+              cleaned[key] = decodeTextBuffer(val).trim();
             } else if (val instanceof Date) {
               cleaned[key] = val.toISOString().split('T')[0];
             } else if (typeof val === 'string') {
@@ -83,7 +84,8 @@ export async function POST(request: NextRequest) {
       columns = Array.from(new Set(rows.flatMap(r => Object.keys(r))));
     } else {
       fileType = 'csv';
-      const text = await file.text();
+      const buffer = Buffer.from(await file.arrayBuffer());
+      const text = decodeTextBuffer(buffer);
       const Papa = await import('papaparse');
       const detectDelimiter = (content: string): string => {
         const firstLine = content.split('\n')[0];

@@ -4,6 +4,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { prisma } from '@/lib/prisma';
 import { auth } from '@/lib/auth';
+import { decodeTextBuffer } from '@/lib/import-decode';
 import type { Prisma } from '@prisma/client';
 
 export const maxDuration = 300;
@@ -43,7 +44,7 @@ export async function POST(request: NextRequest) {
     const file = formData.get('file') as File | null;
     const entityType = formData.get('entityType') as string || 'products';
     let fieldMappings: FieldMapping[] = [];
-    let options = { updateExisting: false, createMissingSuppliers: true, createMissingDepartments: true };
+    let options = { updateExisting: true, createMissingSuppliers: true, createMissingDepartments: true };
 
     try {
       const mappingsRaw = formData.get('fieldMappings') as string;
@@ -100,7 +101,7 @@ export async function POST(request: NextRequest) {
           const cleaned: Record<string, unknown> = {};
           for (const [key, val] of Object.entries(r)) {
             if (Buffer.isBuffer(val)) {
-              cleaned[key] = val.toString('utf8').trim();
+              cleaned[key] = decodeTextBuffer(val).trim();
             } else if (val instanceof Date) {
               cleaned[key] = val.toISOString().split('T')[0];
             } else if (typeof val === 'string') {
@@ -132,7 +133,8 @@ export async function POST(request: NextRequest) {
           : [];
       allRows = data as Record<string, unknown>[];
     } else {
-      const text = await file.text();
+      const buffer = Buffer.from(await file.arrayBuffer());
+      const text = decodeTextBuffer(buffer);
       const Papa = await import('papaparse');
       const detectDelimiter = (content: string): string => {
         const firstLine = content.split('\n')[0];
@@ -172,6 +174,8 @@ export async function POST(request: NextRequest) {
     const suppCache = new Map<string, number>(suppList.map(s => [s.name, s.id]));
 
     const createBatch: Prisma.ProductCreateManyInput[] = [];
+    const seenKeys = new Set<string>();
+    const seenProducts = new Map<string, Prisma.ProductCreateManyInput>();
 
     for (let i = 0; i < allRows.length; i++) {
       const row = allRows[i];
@@ -193,7 +197,7 @@ export async function POST(request: NextRequest) {
 
         switch (entityType) {
           case 'products':
-            await processProductBatch(mapped, options, results, deptCache, suppCache, createBatch, BATCH_SIZE);
+            await processProductBatch(mapped, options, results, deptCache, suppCache, seenKeys, seenProducts, createBatch, BATCH_SIZE);
             break;
           case 'suppliers':
             await processSupplier(mapped, results);
@@ -209,8 +213,11 @@ export async function POST(request: NextRequest) {
     }
 
     // Flush remaining batch
+    if (seenProducts.size > 0) {
+      await flushProductBatch(seenProducts, results);
+    }
     if (createBatch.length > 0) {
-      await flushProductBatch(createBatch, results);
+      await flushCreateBatch(createBatch, results);
     }
 
     return NextResponse.json({
@@ -236,6 +243,8 @@ async function processProductBatch(
   results: ImportResults,
   deptCache: Map<string, number>,
   suppCache: Map<string, number>,
+  seenKeys: Set<string>,
+  seenProducts: Map<string, Prisma.ProductCreateManyInput>,
   createBatch: Prisma.ProductCreateManyInput[],
   batchSize: number
 ) {
@@ -284,48 +293,106 @@ async function processProductBatch(
     ? String(mapped.active).toLowerCase() === 'si' || String(mapped.active).toLowerCase() === 'true' || String(mapped.active) === '1'
     : true;
 
-  // Actualizar registros existentes: se busca por código de barras
-  // (o por nombre exacto si no hay código) cuando la opción está activa
-  if (opts.updateExisting) {
-    let existing = null;
-    if (barcode) {
-      existing = await prisma.product.findFirst({ where: { barcode } });
-    }
-    if (!existing && name) {
-      existing = await prisma.product.findFirst({ where: { name } });
-    }
-
-    if (existing) {
-      await prisma.product.update({
-        where: { id: existing.id },
-        data: {
-          name,
-          ...(barcode ? { barcode } : {}),
-          price,
-          cost,
-          stock,
-          minStock,
-          active,
-          ...(departmentId !== null ? { departmentId } : {}),
-          ...(supplierId !== null ? { supplierId } : {}),
-        },
-      });
-      results.updated++;
-      return;
-    }
-  }
-
-  createBatch.push({
+  const data: Prisma.ProductCreateManyInput = {
     name, barcode, price, cost, stock, minStock, active,
     departmentId: departmentId || null,
     supplierId: supplierId || null,
-  });
+  };
+
+  // Upsert por código de barras (o nombre exacto si no hay código):
+  // si el producto ya existe en la base NO se duplica, se reemplaza.
+  const key = barcode || `name:${name.toLowerCase()}`;
+  if (opts.updateExisting) {
+    if (seenKeys.has(key)) {
+      seenProducts.set(key, data);
+      results.updated++;
+      return;
+    }
+    seenKeys.add(key);
+    seenProducts.set(key, data);
+    if (seenProducts.size >= batchSize) {
+      await flushProductBatch(seenProducts, results);
+    }
+    return;
+  }
+
+  if (seenKeys.has(key)) {
+    results.skipped++;
+    return;
+  }
+  seenKeys.add(key);
+  createBatch.push(data);
   if (createBatch.length >= batchSize) {
-    await flushProductBatch(createBatch, results);
+    await flushCreateBatch(createBatch, results);
   }
 }
 
 async function flushProductBatch(
+  seenProducts: Map<string, Prisma.ProductCreateManyInput>,
+  results: ImportResults
+) {
+  if (seenProducts.size === 0) return;
+  const batch = Array.from(seenProducts.values());
+  seenProducts.clear();
+
+  const barcodes = batch.filter(b => b.barcode).map(b => b.barcode as string);
+  const names = batch.map(b => b.name);
+
+  const existing = await prisma.product.findMany({
+    where: {
+      OR: [
+        ...(barcodes.length > 0 ? [{ barcode: { in: barcodes } }] : []),
+        { name: { in: names } },
+      ],
+    },
+    select: { id: true, barcode: true, name: true },
+  });
+  const byBarcode = new Map(existing.filter(e => e.barcode).map(e => [e.barcode, e]));
+  const byName = new Map(existing.map(e => [e.name, e]));
+
+  const toCreate: Prisma.ProductCreateManyInput[] = [];
+  for (const data of batch) {
+    const existingRow = (data.barcode && byBarcode.get(data.barcode)) || byName.get(data.name);
+    if (existingRow) {
+      try {
+        await prisma.product.update({
+          where: { id: existingRow.id },
+          data: {
+            name: data.name,
+            ...(data.barcode ? { barcode: data.barcode } : {}),
+            price: data.price,
+            cost: data.cost,
+            stock: data.stock,
+            minStock: data.minStock,
+            active: data.active,
+            ...(data.departmentId !== undefined && data.departmentId !== null ? { departmentId: data.departmentId } : {}),
+            ...(data.supplierId !== undefined && data.supplierId !== null ? { supplierId: data.supplierId } : {}),
+          },
+        });
+        results.updated++;
+      } catch (error) {
+        results.errors++;
+        results.errorDetails.push(`Producto "${data.name}": ${error instanceof Error ? error.message : 'Error al actualizar'}`);
+      }
+    } else {
+      toCreate.push(data);
+    }
+  }
+
+  if (toCreate.length > 0) {
+    try {
+      const inserted = await prisma.product.createMany({ data: toCreate });
+      results.imported += inserted.count;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Error al insertar lote';
+      results.errors += toCreate.length;
+      results.errorDetails.push(`Lote de ${toCreate.length} productos: ${message}`);
+      console.error('Product import batch failed:', error);
+    }
+  }
+}
+
+async function flushCreateBatch(
   createBatch: Prisma.ProductCreateManyInput[],
   results: ImportResults
 ) {

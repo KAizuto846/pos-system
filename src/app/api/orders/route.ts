@@ -116,6 +116,7 @@ export async function POST(request: Request) {
         data: {
           supplierId: data.supplierId,
           notes: data.notes,
+          status: data.status ?? "pending",
           items: {
             create: data.items.map((item) => {
               const line = linesByProduct.get(item.productId);

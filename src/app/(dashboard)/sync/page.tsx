@@ -163,6 +163,45 @@ export default function SyncPage() {
     }
   };
 
+  const [copyingPeer, setCopyingPeer] = useState<string | null>(null);
+
+  const handleCopyFullDb = async (peer: DiscoveredServer) => {
+    const peerUrl = `${peer.ip}:${peer.port}`;
+    const confirmed = window.confirm(
+      `¿Copiar TODA la base de datos de "${peer.name || peerUrl}" a este equipo?\n\n` +
+      'Se REEMPLAZARÁ toda la información local (productos, ventas, finanzas, usuarios) ' +
+      'con la base de datos del otro equipo.\n\nEsta acción no se puede deshacer. ¿Continuar?'
+    );
+    if (!confirmed) return;
+    setCopyingPeer(peerUrl);
+    try {
+      if (win.electronAPI?.copyFullDb) {
+        const res = await win.electronAPI.copyFullDb(peerUrl);
+        if (res.ok) {
+          toast.success('Base de datos copiada correctamente');
+        } else {
+          toast.error(`Error: ${res.error || 'No se pudo copiar'}`);
+        }
+      } else {
+        const res = await fetch('/api/sync/full-db-copy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ peerUrl }),
+        });
+        const data = await res.json();
+        if (res.ok && data.ok) {
+          toast.success('Base de datos copiada correctamente');
+        } else {
+          toast.error(data.error || 'Error al copiar');
+        }
+      }
+    } catch {
+      toast.error('Error al copiar la base de datos');
+    } finally {
+      setCopyingPeer(null);
+    }
+  };
+
   const handleOpenFirewall = async () => {
     if (!isWindows) {
       toast.error('Solo disponible en la version de escritorio para Windows');
@@ -351,7 +390,7 @@ export default function SyncPage() {
             Conectar mis equipos (red local)
           </CardTitle>
           <CardDescription>
-            Tres pasos simples. Los equipos conectados se sincronizan solos cada 30 segundos.
+            Tres pasos simples. Los equipos conectados se sincronizan solos en tiempo real (cada 5 segundos).
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -404,6 +443,9 @@ export default function SyncPage() {
                       ? `Se encontraron ${peers.length} equipo${peers.length === 1 ? '' : 's'} en la red${peersUpdatedAt ? ` — detectados hace ${Math.max(1, Math.round((now - peersUpdatedAt.getTime()) / 1000))}s` : ''}.`
                       : 'Todavia no se detectan otros equipos. Pulsa "Buscar ahora".'}
                   </p>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Con el botón <span className="text-slate-300">Copiar BD</span> reemplazas TODA la información local por la del equipo seleccionado (como una copia de seguridad en vivo). Despues sigue sincronizando solo en tiempo real.
+                  </p>
                 </div>
                 <Button variant="outline" size="sm" onClick={handleSearchPeers} disabled={peersSearching} className="text-xs">
                   {peersSearching ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Search className="h-3.5 w-3.5 mr-1.5" />}
@@ -419,15 +461,28 @@ export default function SyncPage() {
                         <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-700 text-slate-300 flex-shrink-0">
                           <Server className="h-4 w-4" />
                         </div>
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium text-slate-200 truncate">{peer.name || 'Equipo'}</p>
-                          <p className="text-xs text-slate-400 font-mono">{peer.ip}:{peer.port}</p>
-                        </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-slate-200 truncate">{peer.name || 'Equipo'}</p>
+                        <p className="text-xs text-slate-400 font-mono">{peer.ip}:{peer.port}</p>
                       </div>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="text-xs"
+                        onClick={() => handleCopyFullDb(peer)}
+                        disabled={copyingPeer === `${peer.ip}:${peer.port}`}
+                        title="Copiar toda la base de datos de este equipo (reemplaza la local)"
+                      >
+                        {copyingPeer === `${peer.ip}:${peer.port}` ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Copy className="h-3.5 w-3.5 mr-1" />}
+                        {copyingPeer === `${peer.ip}:${peer.port}` ? 'Copiando...' : 'Copiar BD'}
+                      </Button>
                       <Badge variant="outline" className="text-emerald-400 border-emerald-500/50 flex-shrink-0">
                         <Radio className="h-3 w-3 mr-1" />
                         En linea
                       </Badge>
+                    </div>
                     </li>
                   ))}
                 </ul>
@@ -462,7 +517,7 @@ export default function SyncPage() {
               {syncing ? 'Sincronizando...' : 'Sincronizar ahora'}
             </Button>
             <p className="text-xs text-slate-500">
-              Envia y recibe los cambios pendientes con el relay (internet) y con los equipos de la red local. Tambien se sincroniza solo cada 30 segundos.
+              Envia y recibe los cambios pendientes con el relay (internet) y con los equipos de la red local. Tambien se sincroniza solo en tiempo real (cada 5 segundos).
             </p>
 
             {lastResult && (
@@ -604,7 +659,7 @@ export default function SyncPage() {
               <li>Conecta todos los equipos a la misma red local (mismo router/WiFi).</li>
               <li>Inicia POS System en cada equipo (aplicacion de escritorio o servidor web).</li>
               <li>Acepta la red cuando Windows pregunte por el firewall (o usa el boton &quot;Abrir Firewall&quot;).</li>
-              <li>Espera unos segundos: se detectan solos y sincronizan cada 30 segundos.</li>
+              <li>Espera unos segundos: se detectan solos y sincronizan en tiempo real (cada 5 segundos).</li>
               <li>Verificalo aqui: tus equipos deben aparecer en el paso 3 de &quot;Conectar mis equipos&quot;.</li>
             </ol>
             <p className="mt-2">
@@ -620,7 +675,7 @@ export default function SyncPage() {
               <li>Escribe el <span className="text-slate-200">secret</span>: debe ser <span className="font-medium">exactamente el mismo</span> en todos los equipos y en el relay.</li>
               <li>Pulsa <span className="text-slate-200">Probar conexion</span>: debe decir &quot;Conexion exitosa&quot;.</li>
               <li>Pulsa <span className="text-slate-200">Guardar</span>.</li>
-              <li>Listo: sincroniza solo cada 30 segundos, o pulsa &quot;Sincronizar ahora&quot;.</li>
+              <li>Listo: sincroniza solo en tiempo real (cada 5 segundos), o pulsa &quot;Sincronizar ahora&quot;.</li>
             </ol>
           </GuideSection>
 

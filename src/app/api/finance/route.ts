@@ -46,6 +46,7 @@ export async function GET(request: Request) {
           salesByMethod,
           entriesByMethod,
           entriesNoMethod,
+          refunds,
         ] = await Promise.all([
           prisma.sale.aggregate({
             _sum: { total: true },
@@ -85,13 +86,26 @@ export async function GET(request: Request) {
             where: { paymentMethodId: null, ...whereEntryDate },
             select: { type: true, amount: true },
           }),
+          prisma.refund.findMany({
+            where: whereDate,
+            select: {
+              amount: true,
+              quantity: true,
+              product: { select: { cost: true } },
+              sale: { select: { paymentMethodId: true } },
+            },
+          }),
         ]);
 
-        const totalRevenue = salesAgg._sum.total || 0;
-        const totalCost = saleItems.reduce(
+        const refundTotal = refunds.reduce((sum, r) => sum + r.amount, 0);
+        const refundCost = refunds.reduce((sum, r) => sum + r.quantity * (r.product?.cost || 0), 0);
+        const refundCount = refunds.length;
+
+        const totalRevenue = Math.max(0, (salesAgg._sum.total || 0) - refundTotal);
+        const totalCost = Math.max(0, saleItems.reduce(
           (sum, item) => sum + item.product.cost * item.quantity,
           0
-        );
+        ) - refundCost);
 
         // Build category map
         const incomeByCat: Record<string, number> = {};
@@ -134,6 +148,12 @@ export async function GET(request: Request) {
             costByMethod[item.sale.paymentMethodId] = (costByMethod[item.sale.paymentMethodId] || 0) + item.product.cost * item.quantity;
           }
         }
+        // Los reembolsos revierten la venta en el apartado del método de pago
+        for (const r of refunds) {
+          const pmId = r.sale?.paymentMethodId;
+          if (!pmId) continue;
+          costByMethod[pmId] = Math.max(0, (costByMethod[pmId] || 0) - r.quantity * (r.product?.cost || 0));
+        }
         const revenueByMethod: Record<number, number> = {};
         const countByMethod: Record<number, number> = {};
         for (const s of salesByMethod) {
@@ -141,6 +161,11 @@ export async function GET(request: Request) {
             revenueByMethod[s.paymentMethodId] = s._sum.total || 0;
             countByMethod[s.paymentMethodId] = s._count;
           }
+        }
+        for (const r of refunds) {
+          const pmId = r.sale?.paymentMethodId;
+          if (!pmId) continue;
+          revenueByMethod[pmId] = Math.max(0, (revenueByMethod[pmId] || 0) - r.amount);
         }
 
         // Reglas del usuario:
@@ -194,6 +219,11 @@ export async function GET(request: Request) {
             profit: netProfit,
             grossProfit,
             profitMargin: effectiveRevenue > 0 ? ((netProfit / effectiveRevenue) * 100).toFixed(1) : "0",
+            refunded: {
+              count: refundCount,
+              amount: refundTotal,
+              cost: refundCost,
+            },
             withdrawn: {
               profitOnly: profitWithdrawn,
               profitFromCombined,

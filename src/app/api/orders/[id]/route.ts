@@ -4,7 +4,7 @@ import { logChange } from "@/lib/sync-engine";
 import { getDeviceId } from "@/lib/sync-utils";
 import type { Prisma } from "@prisma/client";
 
-const VALID_STATUSES = ["pending", "sent", "partial", "received", "cancelled"];
+const VALID_STATUSES = ["pending", "sent", "partial", "received", "cancelled", "on_hold", "ready"];
 
 export async function PUT(
   request: Request,

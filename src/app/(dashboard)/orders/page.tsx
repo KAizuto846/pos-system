@@ -7,6 +7,7 @@ import {
   Download, Image as ImageIcon, FileText, AlertCircle, History, AlertTriangle, RefreshCcw, X,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { useSession } from 'next-auth/react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -112,7 +113,7 @@ const EXTRA_COLUMN_OPTIONS: { label: string; key: string }[] = [
   { label: 'Texto personalizado', key: 'custom_text' },
 ];
 
-// Columnas disponibles para la exportación PNG/PDF del pedido
+// Columnas disponibles para la exportación PNG/CSV del pedido
 const EXPORT_COLUMN_OPTIONS: { key: string; label: string; required?: boolean }[] = [
   { key: 'index', label: '#' },
   { key: 'barcode', label: 'Código', required: true },
@@ -141,10 +142,15 @@ function formatCurrency(n: number) {
 function getStatusBadge(status: string) {
   const v: Record<string, 'default' | 'secondary' | 'outline' | 'destructive'> = {
     pending: 'secondary', sent: 'outline', received: 'default', cancelled: 'destructive',
+    on_hold: 'secondary', ready: 'default',
   };
   const l: Record<string, string> = {
     pending: 'Pendiente', sent: 'Enviado', received: 'Recibido', cancelled: 'Cancelado',
+    on_hold: 'En espera', ready: 'Listo',
   };
+  if (status === 'on_hold') {
+    return <Badge variant="secondary" className="uppercase text-xs border-amber-600/60 text-amber-400">En espera</Badge>;
+  }
   return <Badge variant={v[status] || 'secondary'} className="uppercase text-xs">{l[status] || status}</Badge>;
 }
 
@@ -160,6 +166,12 @@ function weekAgoStr() { const d = new Date(); d.setDate(d.getDate() - 7); return
 
 // ─── Component ───
 export default function OrdersPage() {
+  const { data: session } = useSession();
+  const isAdmin = session?.user?.role === 'ADMIN';
+  // Datos simbólicos (ganancia/pérdida estimada) solo visibles para admin;
+  // el botón permite ocultarlos al cajero.
+  const [showProfitInfo, setShowProfitInfo] = useState(false);
+
   // ── Data ──
   const [orders, setOrders] = useState<Order[]>([]);
   const [orderPage, setOrderPage] = useState(1);
@@ -431,7 +443,7 @@ export default function OrdersPage() {
   };
 
   // ── Create order ──
-  const handleCreate = async (e: React.FormEvent) => {
+  const handleCreate = async (e: React.FormEvent, status?: string) => {
     e.preventDefault();
     setFormError('');
     const items = Object.entries(quantities)
@@ -442,11 +454,12 @@ export default function OrdersPage() {
     const res = await fetch('/api/orders', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ supplierId: parseInt(formSupplierId), notes: formNotes, items }),
+      body: JSON.stringify({ supplierId: parseInt(formSupplierId), notes: formNotes, status, items }),
     });
     const data = await res.json();
     setFormLoading(false);
     if (!res.ok) { setFormError(data.error || 'Error al crear'); return; }
+    toast.success(status === 'on_hold' ? 'Pedido guardado en espera' : 'Pedido creado');
     setCreateOpen(false); resetForm(); fetchOrders(1);
   };
 
@@ -473,16 +486,6 @@ export default function OrdersPage() {
     setExtraSearch('');
     setExtraResults([]);
     setReceiveOpen(true);
-  };
-
-  // Aplica un % de aumento: el precio de venta queda entero, el costo con 2 decimales
-  const applyPercentToItem = (itemId: number, percent: string) => {
-    const pct = parseFloat(percent);
-    if (!Number.isFinite(pct)) return;
-    const cost = parseFloat(receiveCosts[itemId] ?? '0') || 0;
-    const price = parseFloat(receivePrices[itemId] ?? '0') || 0;
-    setReceiveCosts(prev => ({ ...prev, [itemId]: (cost * (1 + pct / 100)).toFixed(2) }));
-    setReceivePrices(prev => ({ ...prev, [itemId]: String(Math.round(price * (1 + pct / 100))) }));
   };
 
   const extraProfit = receiveExtras.reduce((s, e) => {
@@ -591,6 +594,30 @@ export default function OrdersPage() {
     setReorderLoading(false);
   };
 
+  // Marca un pedido "en espera" como listo
+  const setOrderReady = async (order: Order) => {
+    if (!window.confirm(`¿Marcar el pedido #${order.id} como listo?`)) return;
+    try {
+      const res = await fetch(`/api/orders/${order.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'ready' }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast.error(data.error || 'Error al marcar como listo');
+        return;
+      }
+      toast.success(`Pedido #${order.id} marcado como listo`);
+      if (selectedOrder?.id === order.id) {
+        setSelectedOrder(prev => prev ? { ...prev, status: 'ready' } : prev);
+      }
+      fetchOrders(orderPage);
+    } catch {
+      toast.error('Error al marcar como listo');
+    }
+  };
+
   // ── Edit items ──
   const updateOrderItem = (itemId: number, field: string, value: string | number) => {
     if (!selectedOrder) return;
@@ -621,8 +648,8 @@ export default function OrdersPage() {
     setFormLoading(false);
   };
 
-  // ── Export (PNG or PDF) ──
-  const handleExport = async (format: 'png' | 'pdf') => {
+  // ── Export (PNG or CSV) ──
+  const handleExport = async (format: 'png' | 'csv') => {
     if (!selectedOrder) return;
     setExporting(true);
     try {
@@ -735,31 +762,43 @@ export default function OrdersPage() {
         link.href = canvas.toDataURL('image/png');
         link.click();
       } else {
-        // PDF: open in new window, use built-in print -> Save as PDF
-        const printWin = window.open('', '_blank');
-        if (!printWin) {
-          // Fallback: use html2canvas + jsPDF if popup blocked
-          const { jsPDF } = await import('jspdf');
-          const container = document.createElement('div');
-          container.style.cssText = 'position:fixed;left:-9999px;top:0;width:800px;background:#0f172a;padding:20px;z-index:-1';
-          container.innerHTML = htmlContent;
-          document.body.appendChild(container);
-          const html2canvas = (await import('html2canvas')).default;
-          await new Promise(r => setTimeout(r, 100));
-          const canvas = await html2canvas(container, { backgroundColor: '#0f172a', scale: 2 });
-          document.body.removeChild(container);
-          const imgData = canvas.toDataURL('image/png');
-          const pdf = new jsPDF('p', 'mm', 'a4');
-          const pdfW = pdf.internal.pageSize.getWidth();
-          const pdfH = (canvas.height * pdfW) / canvas.width;
-          pdf.addImage(imgData, 'PNG', 0, 0, pdfW, pdfH);
-          pdf.save(`pedido_${id}.pdf`);
-        } else {
-          printWin.document.write(htmlContent);
-          printWin.document.close();
-          // Wait for content to render then print
-          setTimeout(() => { printWin.focus(); printWin.print(); }, 250);
-        }
+        // CSV: archivo separado por comas. Con BOM para que Excel muestre
+        // correctamente caracteres especiales (ñ, tildes).
+        const escapeCsv = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`;
+        const rows: string[][] = [];
+        rows.push(cols.map(c => c.label));
+
+        items.forEach((item, idx) => {
+          const pending = Math.max(0, item.quantity - item.receivedQuantity);
+          const line = item.product?.productLines?.find(l => l.supplierId === supplier?.id && l.isPrimary)
+            ?? item.product?.productLines?.find(l => l.supplierId === supplier?.id);
+          const unitCost = item.costPrice ?? line?.supplierPrice ?? item.product?.cost ?? 0;
+          const unitProfit = (item.product?.price ?? 0) - unitCost;
+
+          rows.push(cols.map(c => {
+            switch (c.key) {
+              case 'index': return String(idx + 1);
+              case 'barcode': return item.product?.barcode || '—';
+              case 'name': return item.product?.name || `#${item.productId}`;
+              case 'quantity': return String(item.quantity);
+              case 'received': return String(item.receivedQuantity);
+              case 'pending': return pending > 0 ? String(pending) : '0';
+              case 'price': return (item.product?.price ?? 0) > 0 ? (item.product?.price ?? 0).toFixed(2) : '';
+              case 'supplierPrice': return unitCost > 0 ? unitCost.toFixed(2) : '';
+              case 'profit': return unitProfit.toFixed(2);
+              default: return '';
+            }
+          }));
+        });
+
+        const csv = '\uFEFF' + rows.map(r => r.map(escapeCsv).join(',')).join('\r\n');
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `pedido_${id}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
       }
     } catch (err) {
       console.error('Export error:', err);
@@ -775,14 +814,19 @@ export default function OrdersPage() {
     .filter(([pid]) => !hiddenRows.has(parseInt(pid)))
     .reduce((s, [, q]) => s + q, 0);
 
-  // Ganancia neta de lo agregado manualmente: productos sin sugerencia automática
-  // o piezas extra por encima de la sugerencia (totalSold), descontando el precio proveedor
+  // Pérdida estimada: costo de las piezas extra (por encima de las ventas reales).
+  // Si esas piezas no se venden, esa cantidad se pierde de la ganancia actual.
+  // Es información simbólica: no modifica finanzas ni inventario.
   const unitCostOf = (p: SoldProduct) => p.supplierPrice ?? p.cost;
-  const manualNetProfit = visibleProducts.reduce((sum, p) => {
-    const qty = quantities[String(p.productId)] || 0;
-    const extras = Math.max(0, qty - (p.totalSold || 0));
-    return sum + (p.price - unitCostOf(p)) * extras;
-  }, 0);
+  const lossBreakdown = visibleProducts
+    .map((p) => {
+      const qty = quantities[String(p.productId)] || 0;
+      const extras = Math.max(0, qty - (p.totalSold || 0));
+      const unitCost = unitCostOf(p);
+      return { productId: p.productId, name: p.name, qty: extras, unitCost, total: extras * unitCost };
+    })
+    .filter((p) => p.qty > 0);
+  const estimatedLoss = lossBreakdown.reduce((sum, p) => sum + p.total, 0);
 
   return (
     <div className="space-y-6">
@@ -811,15 +855,35 @@ export default function OrdersPage() {
                   <div className="rounded-md bg-red-600/20 border border-red-600/50 px-4 py-3 text-sm text-red-400">{formError}</div>
                 )}
 
-                {/* Contador de ganancia neta (productos manuales / piezas extra) */}
-                {orderedCount > 0 && (
-                  <div className="flex justify-end">
-                    <div className={`rounded-lg border px-4 py-2 text-right ${manualNetProfit >= 0 ? 'border-emerald-600/50 bg-emerald-900/30' : 'border-red-600/50 bg-red-900/30'}`}>
-                      <p className="text-[10px] uppercase tracking-wide text-slate-400">Ganancia neta (manual/extras)</p>
-                      <p className={`text-xl font-bold ${manualNetProfit >= 0 ? 'text-emerald-300' : 'text-red-400'}`}>
-                        {formatCurrency(manualNetProfit)}
-                      </p>
-                    </div>
+                {/* Pérdida estimada de piezas extra (solo admin, simbólico) */}
+                {isAdmin && (
+                  <div className="flex flex-col items-end gap-2">
+                    <Button type="button" variant="outline" size="sm" className="text-xs" onClick={() => setShowProfitInfo(v => !v)}>
+                      {showProfitInfo ? 'Ocultar datos de ganancia' : 'Ver ganancia estimada'}
+                    </Button>
+                    {showProfitInfo && orderedCount > 0 && (
+                      <div className="rounded-lg border border-red-600/50 bg-red-900/30 px-4 py-2 text-right">
+                        <p className="text-[10px] uppercase tracking-wide text-slate-400">
+                          Pérdida estimada si no se venden las piezas extra
+                        </p>
+                        <p className="text-xl font-bold text-red-400">{formatCurrency(estimatedLoss)}</p>
+                        {lossBreakdown.length > 0 && (
+                          <div className="mt-1 space-y-0.5 border-t border-red-800/60 pt-1">
+                            {lossBreakdown.map((p) => (
+                              <div key={p.productId} className="flex items-center justify-between gap-3 text-[11px] text-slate-400">
+                                <span className="max-w-[220px] truncate">{p.name} x{p.qty}</span>
+                                <span className="font-mono text-slate-300">
+                                  {formatCurrency(p.unitCost)} c/u = {formatCurrency(p.total)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        <p className="mt-1 text-[10px] text-slate-500">
+                          Total invertido en piezas que no han salido por venta (precio proveedor). Información simbólica.
+                        </p>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -1071,6 +1135,15 @@ export default function OrdersPage() {
 
               <DialogFooter className="border-t border-slate-700 pt-4">
                 <DialogClose asChild><Button type="button" variant="secondary">Cancelar</Button></DialogClose>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="border-amber-600/50 text-amber-400 hover:bg-amber-500/10"
+                  disabled={formLoading || orderedCount === 0}
+                  onClick={(e) => handleCreate(e, 'on_hold')}
+                >
+                  {formLoading ? 'Guardando...' : '⏸ Guardar en espera'}
+                </Button>
                 <Button type="submit" disabled={formLoading || orderedCount === 0}>
                   {formLoading ? 'Creando...' : `Crear Pedido (${orderedCount} prods.)`}
                 </Button>
@@ -1092,18 +1165,20 @@ export default function OrdersPage() {
                 <TableHead>Productos</TableHead>
                 <TableHead>Unidades</TableHead>
                 <TableHead>Recibidas</TableHead>
+                <TableHead>Aprox.</TableHead>
                 <TableHead>Fecha</TableHead>
                 <TableHead className="text-right">Acciones</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {loading ? Array.from({ length: 5 }).map((_, i) => (
-                <TableRow key={i}>{Array.from({ length: 8 }).map((_, j) => <TableCell key={j}><Skeleton className="h-4 w-full bg-slate-700" /></TableCell>)}</TableRow>
+                <TableRow key={i}>{Array.from({ length: 9 }).map((_, j) => <TableCell key={j}><Skeleton className="h-4 w-full bg-slate-700" /></TableCell>)}</TableRow>
               )) : orders.length === 0 ? (
-                <TableRow><TableCell colSpan={8} className="text-center text-slate-400 py-8">No hay pedidos creados</TableCell></TableRow>
+                <TableRow><TableCell colSpan={9} className="text-center text-slate-400 py-8">No hay pedidos creados</TableCell></TableRow>
               ) : orders.map(order => {
                 const totalQty = order.items.reduce((s, i) => s + i.quantity, 0);
                 const totalRecv = order.items.reduce((s, i) => s + i.receivedQuantity, 0);
+                const approxTotal = order.items.reduce((s, i) => s + i.quantity * (i.costPrice ?? i.product?.cost ?? 0), 0);
                 return (
                   <TableRow key={order.id}>
                     <TableCell className="font-mono text-xs text-slate-400">#{order.id}</TableCell>
@@ -1118,11 +1193,17 @@ export default function OrdersPage() {
                         </Badge>
                       ) : <span className="text-slate-500">—</span>}
                     </TableCell>
+                    <TableCell className={order.status === 'on_hold' ? 'text-amber-400 font-medium' : 'text-slate-500'}>
+                      {approxTotal > 0 ? formatCurrency(approxTotal) : '—'}
+                    </TableCell>
                     <TableCell className="text-sm text-slate-300">{formatDate(order.createdAt)}</TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
                         <Button variant="ghost" size="icon" onClick={() => { setSelectedOrder(order); setDetailOpen(true); setEditMode(false); }} title="Ver detalle"><Eye className="h-4 w-4 text-slate-400" /></Button>
-                        {order.status !== 'received' && (
+                        {order.status === 'on_hold' && (
+                          <Button variant="ghost" size="icon" onClick={() => setOrderReady(order)} title="Marcar como listo"><Clock className="h-4 w-4 text-amber-400" /></Button>
+                        )}
+                        {order.status !== 'received' && order.status !== 'on_hold' && (
                           <Button variant="ghost" size="icon" onClick={() => openReceiveDialog(order)} title="Recibir productos"><CheckCircle className="h-4 w-4 text-emerald-400" /></Button>
                         )}
                       </div>
@@ -1187,7 +1268,6 @@ export default function OrdersPage() {
                       <TableHead className="text-center w-20">Recibido</TableHead>
                       <TableHead className="text-center w-24">Caduca (MM/AAAA)</TableHead>
                       <TableHead className="text-center w-28">P. Proveedor</TableHead>
-                      <TableHead className="text-center w-24">Aumento %</TableHead>
                       <TableHead className="text-center w-24">P. Venta</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -1226,14 +1306,6 @@ export default function OrdersPage() {
                               value={receiveCosts[item.id] ?? ''}
                               onChange={e => setReceiveCosts(prev => ({ ...prev, [item.id]: e.target.value }))}
                               className="w-24 h-8 text-center mx-auto text-xs"
-                            />
-                          </TableCell>
-                          <TableCell className="text-center">
-                            <Input
-                              type="number" step="0.01" min="0"
-                              placeholder="0"
-                              onChange={e => applyPercentToItem(item.id, e.target.value)}
-                              className="w-20 h-8 text-center mx-auto text-xs"
                             />
                           </TableCell>
                           <TableCell className="text-center">
@@ -1377,11 +1449,16 @@ export default function OrdersPage() {
                       <RefreshCcw className="h-3.5 w-3.5 mr-1" />{reorderLoading ? '...' : 'Repedir faltantes'}
                     </Button>
                   )}
+                  {selectedOrder.status === 'on_hold' && (
+                    <Button variant="outline" size="sm" onClick={() => setOrderReady(selectedOrder)} className="text-xs border-emerald-600/50 text-emerald-400 hover:bg-emerald-500/10">
+                      <Clock className="h-3.5 w-3.5 mr-1" />Marcar como listo
+                    </Button>
+                  )}
                   <Button variant="outline" size="sm" onClick={() => handleExport('png')} disabled={exporting} className="text-xs">
                     <ImageIcon className="h-3.5 w-3.5 mr-1" />{exporting ? '...' : 'PNG'}
                   </Button>
-                  <Button variant="outline" size="sm" onClick={() => handleExport('pdf')} disabled={exporting} className="text-xs">
-                    <FileText className="h-3.5 w-3.5 mr-1" />{exporting ? '...' : 'PDF'}
+                  <Button variant="outline" size="sm" onClick={() => handleExport('csv')} disabled={exporting} className="text-xs">
+                    <FileText className="h-3.5 w-3.5 mr-1" />{exporting ? '...' : 'CSV'}
                   </Button>
                 </div>
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-2 justify-end rounded-md border border-slate-700 bg-slate-800/60 px-3 py-2">
@@ -1406,6 +1483,20 @@ export default function OrdersPage() {
                   ))}
                 </div>
               </div>
+
+              {selectedOrder.status === 'on_hold' && (
+                <div className="rounded-md border border-amber-700/60 bg-amber-950/20 px-4 py-3 text-sm flex items-center justify-between flex-wrap gap-2">
+                  <span className="flex items-center gap-2 text-amber-300">
+                    <Clock className="h-4 w-4" /> Pedido en espera
+                  </span>
+                  <span className="text-amber-200/90">
+                    Total aprox. (precio proveedor):{' '}
+                    <span className="font-bold text-amber-200">
+                      {formatCurrency(selectedOrder.items.reduce((s, i) => s + i.quantity * (i.costPrice ?? i.product?.cost ?? 0), 0))}
+                    </span>
+                  </span>
+                </div>
+              )}
 
               {/* Exportable content */}
               <div ref={exportRef} className="p-4 rounded-lg" style={{ background: '#1e293b' }}>

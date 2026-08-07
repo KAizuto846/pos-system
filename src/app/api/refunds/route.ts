@@ -48,6 +48,8 @@ export async function POST(request: Request) {
         throw new Error("El producto no pertenece a esta venta");
       }
 
+      const salePaymentMethodId = sale.paymentMethodId ?? null;
+
       // Calculate already refunded quantity using atomic SQL
       // This prevents race conditions between concurrent refunds
       const alreadyRefundedResult = await tx.$queryRaw<{ total: number }[]>`
@@ -104,6 +106,8 @@ export async function POST(request: Request) {
       `;
 
       // Create cash entry for the refund (expense)
+      // Se asigna el método de pago de la venta original para que el reembolso
+      // revierta el apartado correspondiente y la caja.
       await tx.cashEntry.create({
         data: {
           type: "EXPENSE",
@@ -111,6 +115,7 @@ export async function POST(request: Request) {
           amount: data.amount,
           description: `Reembolso Venta #${data.saleId} - ${product.name} x${data.quantity}`,
           saleId: data.saleId,
+          paymentMethodId: salePaymentMethodId,
           userId,
         },
       });

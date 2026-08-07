@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getDiscoveredServers: () => ipcRenderer.invoke('get-discovered-servers'),
   getLastSyncResult: () => ipcRenderer.invoke('get-last-sync-result'),
   triggerSync: () => ipcRenderer.invoke('trigger-sync'),
+  copyFullDb: (peerUrl) => ipcRenderer.invoke('copy-full-db', peerUrl),
 
   // App info
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),

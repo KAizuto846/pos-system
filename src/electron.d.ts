@@ -55,6 +55,7 @@ interface Window {
     getDiscoveredServers: () => Promise<DiscoveredServer[]>;
     getLastSyncResult: () => Promise<SyncResult | null>;
     triggerSync: () => Promise<SyncResult | { ok: false; error: string }>;
+    copyFullDb: (peerUrl: string) => Promise<{ ok: boolean; error?: string; counts?: Record<string, number> }>;
     getConfig: () => Promise<{
       mode?: string;
       serverPort?: number;

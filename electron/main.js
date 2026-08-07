@@ -409,8 +409,8 @@ function startP2PSync() {
     } catch (e) {
       console.error('[p2p] Sync cycle error:', e.message);
     }
-  }, 30000); // Every 30 seconds
-  console.log('[p2p] Sync started (30s interval)');
+  }, 5000); // Every 5 seconds (near real-time)
+  console.log('[p2p] Sync started (5s interval)');
 }
 
 function stopP2PSync() {
@@ -620,6 +620,26 @@ ipcMain.handle('set-config', (e, key, value) => { config[key] = value; saveConfi
 ipcMain.handle('get-discovered-servers', () => discoveredServers);
 ipcMain.handle('get-last-sync-result', () => lastSyncResult);
 ipcMain.handle('trigger-sync', async () => await runSyncNow());
+// Copia la base de datos completa del equipo indicado (estilo rclone):
+// descarga su dump y lo restaura en el servidor local de este equipo.
+ipcMain.handle('copy-full-db', async (e, peerUrl) => {
+  try {
+    const res = await fetch(`http://${peerUrl}/api/sync/full-db`);
+    if (!res.ok) return { ok: false, error: `El equipo respondió con estado ${res.status}` };
+    const dump = await res.json();
+    if (!dump?.data) return { ok: false, error: 'El equipo no devolvió datos válidos' };
+    const restoreRes = await fetch(`http://localhost:${config.serverPort}/api/sync/restore-db`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(dump),
+    });
+    const data = await restoreRes.json();
+    if (!restoreRes.ok) return { ok: false, error: data.error || 'Error al restaurar la base de datos' };
+    return { ok: true, counts: data.counts };
+  } catch (err) {
+    return { ok: false, error: err.message || 'No se pudo copiar la base de datos' };
+  }
+});
 ipcMain.handle('get-app-version', () => app.getVersion());
 ipcMain.handle('restart-server', () => { stopServer(); setTimeout(startServer, 1000); return true; });
 ipcMain.handle('check-for-updates', async () => await checkForUpdates());

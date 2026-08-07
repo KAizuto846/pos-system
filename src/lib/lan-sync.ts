@@ -8,7 +8,7 @@ import { getLocalBaseUrl, resolveServerDeviceId } from "@/lib/sync-utils";
 import { prisma } from "@/lib/prisma";
 
 const MAX_CHANGES = 500;
-const SYNC_INTERVAL_MS = 30000;
+const SYNC_INTERVAL_MS = 5000;
 
 // Cursors por peer (persistidos en AppSetting para sobrevivir reinicios)
 function cursorKey(peerUrl: string, dir: "pullSince" | "pushSince"): string {

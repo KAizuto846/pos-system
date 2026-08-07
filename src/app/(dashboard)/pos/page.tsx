@@ -147,6 +147,25 @@ export default function PosPage() {
         setHasMore(data.pagination.hasMore);
         setTotal(data.pagination.total);
         setPage(pageNum);
+
+        // Escáner de código de barras: si la búsqueda coincide EXACTAMENTE
+        // con un código, el producto se agrega solo al carrito y se limpia
+        // el campo para poder escanear el siguiente inmediatamente.
+        const term = query.trim();
+        if (!append && term) {
+          const exact = data.products.find((p) => p.barcode === term);
+          if (exact) {
+            addItem({
+              productId: exact.id,
+              name: exact.name,
+              barcode: exact.barcode,
+              price: exact.price,
+              stock: exact.stock,
+            });
+            setSearchTerm('');
+            searchRef.current?.focus();
+          }
+        }
       }
     } catch (error) {
       if (!(error instanceof DOMException && error.name === 'AbortError')) {
@@ -158,7 +177,7 @@ export default function PosPage() {
         setLoadingMore(false);
       }
     }
-  }, []);
+  }, [addItem, setSearchTerm]);
 
   useEffect(() => () => {
     productsAbortRef.current?.abort();
@@ -204,12 +223,33 @@ export default function PosPage() {
       .catch(() => toast.error('Error al cargar métodos de pago'));
   }, []);
 
+  // Escaneo de código de barras: agrega el producto y limpia el campo
+  // para poder escanear el siguiente inmediatamente.
+  const handleBarcodeScan = useCallback((product: Product) => {
+    addItem({
+      productId: product.id,
+      name: product.name,
+      barcode: product.barcode,
+      price: product.price,
+      stock: product.stock,
+    });
+    setSearchTerm('');
+    searchRef.current?.focus();
+  }, [addItem, setSearchTerm]);
+
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'F2') {
         e.preventDefault();
         searchRef.current?.focus();
+      }
+      if (e.key === 'Enter' && document.activeElement === searchRef.current) {
+        const term = searchTerm.trim();
+        if (term && products.length === 1) {
+          e.preventDefault();
+          handleBarcodeScan(products[0]);
+        }
       }
       if (e.key === 'Escape') {
         setSearchTerm('');
@@ -218,7 +258,7 @@ export default function PosPage() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [products, searchTerm, handleBarcodeScan]);
 
   const totalAmount = subtotal();
   const count = itemCount();

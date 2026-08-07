@@ -106,7 +106,7 @@ export default function ImportPage() {
   const [entityType, setEntityType] = useState<string>('products');
   const [fieldMappings, setFieldMappings] = useState<FieldMapping[]>([]);
   const [options, setOptions] = useState({
-    updateExisting: false,
+    updateExisting: true,
     createMissingSuppliers: true,
     createMissingDepartments: true,
   });

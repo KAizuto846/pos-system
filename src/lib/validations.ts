@@ -72,6 +72,7 @@ export const saleSchema = z.object({
 export const orderSchema = z.object({
   supplierId: z.number(),
   notes: z.string().default(""),
+  status: z.enum(["pending", "sent", "partial", "received", "cancelled", "on_hold", "ready"]).optional(),
   items: z
     .array(
       z.object({

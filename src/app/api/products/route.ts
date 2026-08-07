@@ -45,9 +45,12 @@ export async function GET(request: Request) {
     }
 
     if (supplierId) {
-      where.productLines = {
-        some: { supplierId: parseInt(supplierId) },
-      };
+      const sid = parseInt(supplierId);
+      where.OR = [
+        ...(where.OR || []),
+        { supplierId: sid },
+        { productLines: { some: { supplierId: sid } } },
+      ];
     }
 
     if (priceMin || priceMax) {

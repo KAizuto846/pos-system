@@ -32,6 +32,11 @@ interface FinanceSummary {
     profit: number; profitMargin: string;
     availableProfit: number; combinedAvailable: number;
     grossProfit: number;
+    refunded: {
+      count: number;
+      amount: number;
+      cost: number;
+    };
     withdrawn: {
       total: number;
       profitOnly: number;
@@ -80,6 +85,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   operating_expense: 'Gasto operativo',
   purchase: 'Compra mercancía',
   transfer: 'Transferencia',
+  refund: 'Reembolso',
   other: 'Otro',
 };
 
@@ -91,6 +97,7 @@ const CATEGORY_ICONS: Record<string, string> = {
   operating_expense: '📋',
   purchase: '📦',
   transfer: '🔄',
+  refund: '↩️',
   other: '❓',
 };
 
@@ -436,6 +443,11 @@ export default function FinancePage() {
             </div>
             <p className="text-xs text-slate-500 mt-1">
               {summary ? `${summary.sales.count} transacciones` : ''}
+              {summary && summary.sales.refunded?.amount > 0 && (
+                <span className="ml-2 text-red-400">
+                  (Reembolsado: {formatCurrency(summary.sales.refunded.amount)})
+                </span>
+              )}
             </p>
           </CardContent>
         </Card>
