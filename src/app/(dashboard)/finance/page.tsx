@@ -45,6 +45,13 @@ interface FinanceSummary {
     expenseByCategory: Record<string, number>;
     incomeTotal: number; expenseTotal: number;
   };
+  byPaymentMethod: {
+    id: number;
+    name: string;
+    affectsCash: boolean;
+    sales: { count: number; revenue: number; totalCost: number; profit: number };
+    available: number;
+  }[];
 }
 
 interface CashEntry {
@@ -59,11 +66,11 @@ interface ProductBreakdown {
   id: number; name: string; barcode: string;
   publicPrice: number; costPrice: number;
   profit: number; margin: string;
-  stock: number;
+  stock: number; minStock: number;
   department: string | null; supplier: string | null;
 }
 
-interface PaymentMethod { id: number; name: string; }
+interface PaymentMethod { id: number; name: string; affectsCash?: boolean; }
 
 const CATEGORY_LABELS: Record<string, string> = {
   sales: 'Ventas POS',
@@ -112,7 +119,18 @@ export default function FinancePage() {
   const [productTotal, setProductTotal] = useState(0);
   const [productLoading, setProductLoading] = useState(false);
   const [departments, setDepartments] = useState<{ id: number; name: string }[]>([]);
+  const [suppliers, setSuppliers] = useState<{ id: number; name: string }[]>([]);
   const [productDeptFilter, setProductDeptFilter] = useState('all');
+  const [productSupplierFilter, setProductSupplierFilter] = useState('all');
+  const [productActiveFilter, setProductActiveFilter] = useState('all');
+  const [productPriceMin, setProductPriceMin] = useState('');
+  const [productPriceMax, setProductPriceMax] = useState('');
+  const [productCostMin, setProductCostMin] = useState('');
+  const [productCostMax, setProductCostMax] = useState('');
+  const [productStockMin, setProductStockMin] = useState('');
+  const [productStockMax, setProductStockMax] = useState('');
+  const [productMinStockMin, setProductMinStockMin] = useState('');
+  const [productMinStockMax, setProductMinStockMax] = useState('');
 
   // Cash dialog
   const [cashDialogOpen, setCashDialogOpen] = useState(false);
@@ -175,6 +193,16 @@ export default function FinancePage() {
       });
       if (productSearch) params.set('q', productSearch);
       if (productDeptFilter && productDeptFilter !== 'all') params.set('departmentId', productDeptFilter);
+      if (productSupplierFilter && productSupplierFilter !== 'all') params.set('supplierId', productSupplierFilter);
+      if (productActiveFilter && productActiveFilter !== 'all') params.set('active', productActiveFilter);
+      if (productPriceMin) params.set('priceMin', productPriceMin);
+      if (productPriceMax) params.set('priceMax', productPriceMax);
+      if (productCostMin) params.set('costMin', productCostMin);
+      if (productCostMax) params.set('costMax', productCostMax);
+      if (productStockMin) params.set('stockMin', productStockMin);
+      if (productStockMax) params.set('stockMax', productStockMax);
+      if (productMinStockMin) params.set('minStockMin', productMinStockMin);
+      if (productMinStockMax) params.set('minStockMax', productMinStockMax);
 
       const res = await fetch(`/api/finance?${params}`, { signal });
       if (!res.ok) throw new Error('Error al cargar productos');
@@ -190,7 +218,9 @@ export default function FinancePage() {
     } finally {
       if (!signal?.aborted) setProductLoading(false);
     }
-  }, [productSearch, productDeptFilter]);
+  }, [productSearch, productDeptFilter, productSupplierFilter, productActiveFilter,
+      productPriceMin, productPriceMax, productCostMin, productCostMax,
+      productStockMin, productStockMax, productMinStockMin, productMinStockMax]);
 
   useEffect(() => {
     Promise.all([
@@ -199,6 +229,9 @@ export default function FinancePage() {
       }),
       fetch('/api/departments').then(r => r.json()).then((data: { id: number; name: string }[]) => {
         if (Array.isArray(data)) setDepartments(data.filter(d => d));
+      }),
+      fetch('/api/suppliers').then(r => r.json()).then((data: { id: number; name: string }[]) => {
+        if (Array.isArray(data)) setSuppliers(data.filter(d => d));
       }),
     ]);
   }, []);
@@ -241,7 +274,10 @@ export default function FinancePage() {
       clearTimeout(timer);
       controller.abort();
     };
-  }, [productSearch, productDeptFilter, tab, fetchProducts]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [productSearch, productDeptFilter, productSupplierFilter, productActiveFilter,
+      productPriceMin, productPriceMax, productCostMin, productCostMax,
+      productStockMin, productStockMax, productMinStockMin, productMinStockMax, tab]);
 
   const handleRefresh = () => {
     setLoading(true);
@@ -454,6 +490,59 @@ export default function FinancePage() {
         </Card>
       </div>
 
+      {/* Payment method breakdown */}
+      {summary && summary.byPaymentMethod && summary.byPaymentMethod.length > 0 && (
+        <div>
+          <h3 className="mb-3 text-sm font-semibold text-slate-300 flex items-center gap-2">
+            <Wallet className="h-4 w-4 text-amber-400" />
+            Apartados por método de pago
+            <span className="text-xs font-normal text-slate-500">
+              (cada método con sus ventas, costo, ganancia y disponible)
+            </span>
+          </h3>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {summary.byPaymentMethod.map((pm) => (
+              <Card key={pm.id} className="border-slate-700 bg-slate-800/50">
+                <CardHeader className="pb-2">
+                  <CardTitle className="flex items-center justify-between text-sm font-semibold text-slate-200">
+                    <span>{pm.name}</span>
+                    {pm.affectsCash ? (
+                      <Badge variant="outline" className="text-[10px] border-amber-600 text-amber-400">Afecta caja</Badge>
+                    ) : (
+                      <Badge variant="outline" className="text-[10px] border-slate-600 text-slate-400">No afecta caja</Badge>
+                    )}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2 text-sm">
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-400">Ventas</span>
+                    <span className="font-semibold text-slate-100">{formatCurrency(pm.sales.revenue)}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-400">Costo total</span>
+                    <span className="font-semibold text-red-400">{formatCurrency(pm.sales.totalCost)}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-400">Ganancia neta</span>
+                    <span className="font-semibold text-emerald-400">{formatCurrency(pm.sales.profit)}</span>
+                  </div>
+                  <Separator className="bg-slate-700" />
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-400">Disponible</span>
+                    <span className={`font-bold ${pm.available >= 0 ? 'text-amber-400' : 'text-red-400'}`}>
+                      {formatCurrency(pm.available)}
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-slate-500">
+                    {pm.sales.count} ventas · disponible = ingresos − egresos de este método
+                  </p>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Tabs */}
       <Tabs value={tab} onValueChange={setTab} className="space-y-4">
         <TabsList className="bg-slate-800 border border-slate-700">
@@ -664,25 +753,81 @@ export default function FinancePage() {
                   Desgloce de Productos
                   <span className="ml-2 text-xs font-normal text-slate-500">({productTotal} productos)</span>
                 </CardTitle>
-                <div className="flex items-center gap-2">
-                  <Select value={productDeptFilter} onValueChange={setProductDeptFilter}>
-                    <SelectTrigger className="w-36 border-slate-600 bg-slate-800 text-slate-200 h-8 text-xs">
-                      <SelectValue placeholder="Departamento" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Todos</SelectItem>
-                      {departments.map(d => (
-                        <SelectItem key={d.id} value={String(d.id)}>{d.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <div className="relative">
-                    <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
-                    <Input placeholder="Buscar..." value={productSearch}
-                      onChange={e => setProductSearch(e.target.value)}
-                      className="w-44 pl-8 h-8 text-xs border-slate-600 bg-slate-800 text-slate-200" />
-                  </div>
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+                  <Input placeholder="Buscar..." value={productSearch}
+                    onChange={e => setProductSearch(e.target.value)}
+                    className="w-44 pl-8 h-8 text-xs border-slate-600 bg-slate-800 text-slate-200" />
                 </div>
+              </div>
+              {/* Filters: depto, proveedor, estado, precio, costo, stock, stock minimo */}
+              <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-8">
+                <Select value={productDeptFilter} onValueChange={setProductDeptFilter}>
+                  <SelectTrigger className="h-8 text-xs border-slate-600 bg-slate-800 text-slate-200">
+                    <SelectValue placeholder="Depto" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todos los deptos.</SelectItem>
+                    {departments.map(d => (
+                      <SelectItem key={d.id} value={String(d.id)}>{d.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={productSupplierFilter} onValueChange={setProductSupplierFilter}>
+                  <SelectTrigger className="h-8 text-xs border-slate-600 bg-slate-800 text-slate-200">
+                    <SelectValue placeholder="Proveedor" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todos los prov.</SelectItem>
+                    {suppliers.map(s => (
+                      <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={productActiveFilter} onValueChange={setProductActiveFilter}>
+                  <SelectTrigger className="h-8 text-xs border-slate-600 bg-slate-800 text-slate-200">
+                    <SelectValue placeholder="Estado" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Activos e inactivos</SelectItem>
+                    <SelectItem value="true">Solo activos</SelectItem>
+                    <SelectItem value="false">Solo inactivos</SelectItem>
+                  </SelectContent>
+                </Select>
+                <div className="flex items-center gap-1">
+                  <Input type="number" placeholder="Precio mín" value={productPriceMin}
+                    onChange={e => setProductPriceMin(e.target.value)} className="h-8 text-xs border-slate-600 bg-slate-800 text-slate-200" />
+                  <Input type="number" placeholder="máx" value={productPriceMax}
+                    onChange={e => setProductPriceMax(e.target.value)} className="h-8 text-xs border-slate-600 bg-slate-800 text-slate-200" />
+                </div>
+                <div className="flex items-center gap-1">
+                  <Input type="number" placeholder="Costo mín" value={productCostMin}
+                    onChange={e => setProductCostMin(e.target.value)} className="h-8 text-xs border-slate-600 bg-slate-800 text-slate-200" />
+                  <Input type="number" placeholder="máx" value={productCostMax}
+                    onChange={e => setProductCostMax(e.target.value)} className="h-8 text-xs border-slate-600 bg-slate-800 text-slate-200" />
+                </div>
+                <div className="flex items-center gap-1">
+                  <Input type="number" placeholder="Stock mín" value={productStockMin}
+                    onChange={e => setProductStockMin(e.target.value)} className="h-8 text-xs border-slate-600 bg-slate-800 text-slate-200" />
+                  <Input type="number" placeholder="máx" value={productStockMax}
+                    onChange={e => setProductStockMax(e.target.value)} className="h-8 text-xs border-slate-600 bg-slate-800 text-slate-200" />
+                </div>
+                <div className="flex items-center gap-1">
+                  <Input type="number" placeholder="MinStock mín" value={productMinStockMin}
+                    onChange={e => setProductMinStockMin(e.target.value)} className="h-8 text-xs border-slate-600 bg-slate-800 text-slate-200" />
+                  <Input type="number" placeholder="máx" value={productMinStockMax}
+                    onChange={e => setProductMinStockMax(e.target.value)} className="h-8 text-xs border-slate-600 bg-slate-800 text-slate-200" />
+                </div>
+                <Button variant="outline" size="sm"
+                  onClick={() => {
+                    setProductDeptFilter('all'); setProductSupplierFilter('all'); setProductActiveFilter('all');
+                    setProductPriceMin(''); setProductPriceMax(''); setProductCostMin(''); setProductCostMax('');
+                    setProductStockMin(''); setProductStockMax(''); setProductMinStockMin(''); setProductMinStockMax('');
+                    setProductSearch('');
+                  }}
+                  className="h-8 border-slate-600 text-slate-300 text-xs">
+                  Limpiar
+                </Button>
               </div>
             </CardHeader>
             <CardContent className="p-0">
@@ -706,6 +851,7 @@ export default function FinancePage() {
                         <th className="px-3 py-2.5 text-xs font-medium text-slate-400">Ganancia</th>
                         <th className="px-3 py-2.5 text-xs font-medium text-slate-400">Margen</th>
                         <th className="px-3 py-2.5 text-xs font-medium text-slate-400">Stock</th>
+                        <th className="px-3 py-2.5 text-xs font-medium text-slate-400">Stock mín.</th>
                         <th className="px-3 py-2.5 text-xs font-medium text-slate-400">Depto</th>
                       </tr>
                     </thead>
@@ -731,6 +877,12 @@ export default function FinancePage() {
                             <Badge variant={p.stock <= 0 ? 'destructive' : 'outline'}
                               className={p.stock > 0 ? 'border-slate-600 text-slate-300' : ''}>
                               {p.stock}
+                            </Badge>
+                          </td>
+                          <td className="px-3 py-2.5">
+                            <Badge variant={p.stock <= p.minStock ? 'destructive' : 'outline'}
+                              className={p.stock > p.minStock ? 'border-slate-600 text-slate-300' : ''}>
+                              {p.minStock}
                             </Badge>
                           </td>
                           <td className="px-3 py-2.5 text-xs text-slate-400">{p.department || '—'}</td>
@@ -834,18 +986,39 @@ export default function FinancePage() {
 
               {/* Payment Method */}
               <div className="space-y-2">
-                <Label>Método de pago</Label>
-                <Select value={cashPaymentMethod} onValueChange={setCashPaymentMethod}>
+                <Label className="flex items-center gap-1">
+                  Método de pago
+                  {cashType === 'EXPENSE' && <span className="text-red-400">*</span>}
+                </Label>
+                <Select
+                  value={cashPaymentMethod}
+                  onValueChange={(v) => {
+                    setCashPaymentMethod(v);
+                    // Si se retira de un metodo que NO afecta caja, la categoria
+                    // solo puede ser un retiro mixto (ganancias + costos) del apartado.
+                    if (cashType === 'EXPENSE' && v !== '__none__' && v) {
+                      const pm = paymentMethods.find(p => String(p.id) === v);
+                      if (pm && pm.affectsCash === false && cashCategory === 'profit_withdrawal') {
+                        setCashCategory('profit_cost_withdrawal');
+                      }
+                    }
+                  }}
+                >
                   <SelectTrigger className="border-slate-600 bg-slate-800 text-slate-200">
-                    <SelectValue placeholder="Seleccionar (opcional)" />
+                    <SelectValue placeholder={cashType === 'EXPENSE' ? 'Selecciona de dónde sale el dinero' : 'Seleccionar (opcional)'} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="__none__">Ninguno</SelectItem>
+                    <SelectItem value="__none__">Caja general (sin método)</SelectItem>
                     {paymentMethods.map(pm => (
-                      <SelectItem key={pm.id} value={String(pm.id)}>{pm.name}</SelectItem>
+                      <SelectItem key={pm.id} value={String(pm.id)}>
+                        {pm.name}{pm.affectsCash === false ? ' (no afecta caja)' : ''}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+                {cashType === 'EXPENSE' && !cashPaymentMethod && (
+                  <p className="text-xs text-amber-400">Selecciona de qué método de pago sale el egreso.</p>
+                )}
               </div>
 
               {/* Date/Time */}

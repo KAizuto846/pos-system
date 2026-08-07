@@ -13,6 +13,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // App info
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
 
+  // Network diagnostics (Windows)
+  openDiagnostics: () => ipcRenderer.invoke('open-diagnostics'),
+  openFirewall: () => ipcRenderer.invoke('open-firewall'),
+
   // Server
   restartServer: () => ipcRenderer.invoke('restart-server'),
 

@@ -556,8 +556,66 @@ function initializeApp(mode) {
 
 app.on('before-quit', () => { isQuitting = true; stopServer(); stopDiscovery(); stopP2PSync(); });
 
+// ─── Diagnostics (Windows) ───────────────────────────────────
+// Abre una ventana cmd con un chequeo visual de los requisitos de sincronizacion
+function openDiagnostics() {
+  if (process.platform !== 'win32') return { ok: false, error: 'Solo disponible en Windows' };
+  const port = config.serverPort || 3000;
+  const script = [
+    '@echo off',
+    'title POS System - Diagnostico de red y sincronizacion',
+    'color 0A',
+    'echo =============================================================',
+    'echo   POS SYSTEM - VERIFICACION DE REQUISITOS DE SINCRONIZACION',
+    'echo =============================================================',
+    'echo.',
+    'echo [1] IPs de ESTE equipo en la red local:',
+    'ipconfig ^| findstr /i "IPv4"',
+    'echo.',
+    `echo [2] Servidor web escuchando en el puerto ${port} (debe listar):`,
+    `netstat -an ^| findstr ":${port}" ^| findstr LISTENING`,
+    'echo.',
+    'echo [3] Puerto UDP 9876 (deteccion de equipos):',
+    'netstat -an ^| findstr ":9876"',
+    'echo.',
+    'echo [4] Reglas de firewall de entrada que permiten Node/Electron:',
+    'netsh advfirewall firewall show rule name=all dir=in ^| findstr /i "node electron pos-system"',
+    'echo   (Si aparece una linea "Regla:" con Node.js o Electron, esta permitido)',
+    'echo.',
+    'echo [5] Alcance multicast (otros equipos deben responder):',
+    'ping -n 2 230.185.192.108',
+    'echo.',
+    'echo =============================================================',
+    'echo   SI UN EQUIPO NO APARECE EN LA PESTANA DE SINCRONIZACION:',
+    'echo    1. Asegurate de que todos esten en la MISMA red WiFi/cable.',
+    'echo    2. Abre el Firewall de Windows y permite Node.js/Electron',
+    'echo       (boton "Abrir Firewall" en la app).',
+    'echo    3. Evita el "aislamiento de clientes" del router.',
+    'echo =============================================================',
+    'pause'
+  ].join('\r\n');
+  try {
+    const scriptPath = path.join(app.getPath('temp'), 'pos-diagnostics.bat');
+    fs.writeFileSync(scriptPath, script, 'utf8');
+    spawn('cmd.exe', ['/c', scriptPath], { shell: false, detached: true, stdio: 'ignore' }).unref();
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+function openFirewallSettings() {
+  if (process.platform !== 'win32') return { ok: false, error: 'Solo disponible en Windows' };
+  try {
+    shell.openExternal('windowsdefender://firewall').catch(() => {});
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
 // ─── IPC handlers ──────────────────────────────────────────
-ipcMain.handle('get-config', () => config);
+ipcMain.handle('get-config', () => ({ ...config, platform: process.platform }));
 ipcMain.handle('set-config', (e, key, value) => { config[key] = value; saveConfig(); return true; });
 ipcMain.handle('get-discovered-servers', () => discoveredServers);
 ipcMain.handle('get-last-sync-result', () => lastSyncResult);
@@ -566,3 +624,5 @@ ipcMain.handle('get-app-version', () => app.getVersion());
 ipcMain.handle('restart-server', () => { stopServer(); setTimeout(startServer, 1000); return true; });
 ipcMain.handle('check-for-updates', async () => await checkForUpdates());
 ipcMain.handle('install-update', async () => await installUpdate());
+ipcMain.handle('open-diagnostics', () => openDiagnostics());
+ipcMain.handle('open-firewall', () => openFirewallSettings());

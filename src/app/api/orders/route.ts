@@ -42,7 +42,13 @@ export async function GET(request: Request) {
               received: true,
               notes: true,
               product: {
-                select: { id: true, name: true, barcode: true, stock: true, active: true },
+                select: {
+                  id: true, name: true, barcode: true, stock: true, active: true,
+                  price: true, cost: true,
+                  productLines: {
+                    select: { supplierId: true, supplierPrice: true, isPrimary: true },
+                  },
+                },
               },
             },
           },
@@ -91,15 +97,35 @@ export async function POST(request: Request) {
 
     await initializePrisma();
     const order = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const products = await tx.product.findMany({
+        where: { id: { in: data.items.map((i) => i.productId) } },
+        include: {
+          productLines: {
+            where: { supplierId: data.supplierId },
+          },
+        },
+      });
+      const linesByProduct = new Map(
+        products.map((p) => [
+          p.id,
+          p.productLines.find((l) => l.isPrimary) ?? p.productLines[0] ?? null,
+        ])
+      );
+
       const newOrder = await tx.supplierOrder.create({
         data: {
           supplierId: data.supplierId,
           notes: data.notes,
           items: {
-            create: data.items.map((item) => ({
-              productId: item.productId,
-              quantity: item.quantity,
-            })),
+            create: data.items.map((item) => {
+              const line = linesByProduct.get(item.productId);
+              const product = products.find((p) => p.id === item.productId);
+              return {
+                productId: item.productId,
+                quantity: item.quantity,
+                costPrice: line?.supplierPrice ?? product?.cost ?? 0,
+              };
+            }),
           },
         },
         include: {

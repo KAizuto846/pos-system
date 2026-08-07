@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
-import { Users, Package, DollarSign, ShoppingCart } from 'lucide-react';
+import { Users, Package, DollarSign, ShoppingCart, CalendarClock } from 'lucide-react';
 import {
   Card,
   CardHeader,
@@ -17,11 +17,13 @@ interface Stats {
   todaySales: number;
   todayRevenue: number;
   lowStockProducts: { id: number; name: string; stock: number; minStock: number }[];
+  expiringProducts: { productId: number; name: string; stock: number; quantity: number; expiresAt: string }[];
 }
 
 export default function DashboardPage() {
   const { data: session } = useSession();
   const [stats, setStats] = useState<Stats | null>(null);
+  const [now, setNow] = useState(() => Date.now());
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -30,6 +32,7 @@ export default function DashboardPage() {
       .then((data) => {
         if (data && typeof data.totalUsers === 'number') {
           setStats(data);
+          setNow(Date.now());
         }
         setLoading(false);
       })
@@ -112,6 +115,47 @@ export default function DashboardPage() {
               );
             })}
       </div>
+
+      {/* Expiring Products Alerts */}
+      {stats && stats.expiringProducts && stats.expiringProducts.length > 0 && (
+        <Card className="border-red-900/60 bg-slate-800">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-slate-100">
+              <CalendarClock className="h-4 w-4 text-amber-400" />
+              Próximos a Caducar (60 días)
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              {stats.expiringProducts.slice(0, 15).map((b) => {
+                const daysLeft = Math.ceil((new Date(b.expiresAt).getTime() - now) / (24 * 60 * 60 * 1000));
+                const critical = daysLeft <= 30;
+                return (
+                  <div
+                    key={`${b.productId}-${b.expiresAt}`}
+                    className={`flex items-center justify-between rounded-lg border px-4 py-2 ${
+                      critical
+                        ? 'border-red-800 bg-red-950/40'
+                        : 'border-amber-800/60 bg-amber-950/20'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="text-sm text-slate-200">{b.name}</span>
+                      <span className="text-xs text-slate-400">Vence: {new Date(b.expiresAt).toLocaleDateString('es-MX', { month: '2-digit', year: 'numeric' })}</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-sm text-slate-300">{b.quantity} piezas</span>
+                      <span className={`text-sm font-medium ${critical ? 'text-red-400' : 'text-amber-400'}`}>
+                        {daysLeft <= 0 ? 'VENCIDO' : `${daysLeft} días`}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Low Stock Alerts */}
       {stats && stats.lowStockProducts && stats.lowStockProducts.length > 0 && (

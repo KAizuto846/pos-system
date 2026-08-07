@@ -78,8 +78,9 @@ export async function POST(request: NextRequest) {
     const isDBF = fileName.endsWith('.dbf');
     const isCSV = fileName.endsWith('.csv');
     const isXLSX = fileName.endsWith('.xlsx') || fileName.endsWith('.xls');
+    const isJSON = fileName.endsWith('.json');
 
-    if (!isDBF && !isCSV && !isXLSX) {
+    if (!isDBF && !isCSV && !isXLSX && !isJSON) {
       return NextResponse.json({ error: 'Formato no soportado' }, { status: 400 });
     }
 
@@ -120,6 +121,15 @@ export async function POST(request: NextRequest) {
       const sheetName = workbook.SheetNames[0];
       const sheet = workbook.Sheets[sheetName];
       const data = XLSX.utils.sheet_to_json(sheet);
+      allRows = data as Record<string, unknown>[];
+    } else if (isJSON) {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      const data = Array.isArray(parsed)
+        ? parsed
+        : Array.isArray(parsed.products)
+          ? parsed.products
+          : [];
       allRows = data as Record<string, unknown>[];
     } else {
       const text = await file.text();
@@ -270,9 +280,43 @@ async function processProductBatch(
   const cost = parseFloat(String(mapped.cost ?? 0)) || 0;
   const stock = parseInt(String(mapped.stock ?? 0), 10) || 0;
   const minStock = parseInt(String(mapped.minStock ?? 5), 10) || 5;
+  const active = mapped.active !== undefined
+    ? String(mapped.active).toLowerCase() === 'si' || String(mapped.active).toLowerCase() === 'true' || String(mapped.active) === '1'
+    : true;
+
+  // Actualizar registros existentes: se busca por código de barras
+  // (o por nombre exacto si no hay código) cuando la opción está activa
+  if (opts.updateExisting) {
+    let existing = null;
+    if (barcode) {
+      existing = await prisma.product.findFirst({ where: { barcode } });
+    }
+    if (!existing && name) {
+      existing = await prisma.product.findFirst({ where: { name } });
+    }
+
+    if (existing) {
+      await prisma.product.update({
+        where: { id: existing.id },
+        data: {
+          name,
+          ...(barcode ? { barcode } : {}),
+          price,
+          cost,
+          stock,
+          minStock,
+          active,
+          ...(departmentId !== null ? { departmentId } : {}),
+          ...(supplierId !== null ? { supplierId } : {}),
+        },
+      });
+      results.updated++;
+      return;
+    }
+  }
 
   createBatch.push({
-    name, barcode, price, cost, stock, minStock,
+    name, barcode, price, cost, stock, minStock, active,
     departmentId: departmentId || null,
     supplierId: supplierId || null,
   });

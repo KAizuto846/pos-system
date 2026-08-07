@@ -33,10 +33,12 @@ interface ShiftReport {
   endDate: string;
   totalSales: number;
   totalAmount: number;
+  totalCost: number;
   totalRefunds: number;
   refundAmount: number;
   netAmount: number;
   byPaymentMethod: string;
+  details: string;
   notes: string;
   createdAt: string;
   user: {
@@ -75,6 +77,41 @@ function parsePaymentMethods(json: string): Record<string, { count: number; tota
     return JSON.parse(json);
   } catch {
     return {};
+  }
+}
+
+interface ReportDetails {
+  products: Array<{
+    productId: number;
+    name: string;
+    barcode: string;
+    quantity: number;
+    price: number;
+    cost: number;
+  }>;
+  entries: Array<{
+    type: string;
+    category: string;
+    amount: number;
+    description: string;
+    paymentMethod: string | null;
+    recordedAt: string;
+  }>;
+  refunds: Array<{
+    amount: number;
+    quantity: number;
+    reason: string;
+    productName: string | null;
+    saleId: number;
+    createdAt: string;
+  }>;
+}
+
+function parseDetails(json: string): ReportDetails {
+  try {
+    return JSON.parse(json);
+  } catch {
+    return { products: [], entries: [], refunds: [] };
   }
 }
 
@@ -171,7 +208,7 @@ export default function ReportsPage() {
             })
               .then(async (res) => {
                 if (res.ok) {
-                  toast.success('Turno iniciado exitosamente');
+                  toast.success('Turno guardado/actualizado correctamente');
                   fetchReports();
                 } else {
                   const err = await res.json();
@@ -351,10 +388,11 @@ export default function ReportsPage() {
                   <TableHead>Fecha Fin</TableHead>
                   <TableHead className="text-right">Ventas</TableHead>
                   <TableHead className="text-right">Monto</TableHead>
+                  <TableHead className="text-right">Costo</TableHead>
                   <TableHead className="text-right">Devoluciones</TableHead>
                   <TableHead className="text-right">Neto</TableHead>
                   <TableHead>Formas de Pago</TableHead>
-                  {isAdmin && <TableHead className="text-right">Detalle</TableHead>}
+                  <TableHead className="text-right">Detalle</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -364,8 +402,8 @@ export default function ReportsPage() {
                   return (
                     <TableRow
                       key={report.id}
-                      className={isAdmin ? 'cursor-pointer hover:bg-slate-700/50' : ''}
-                      onClick={() => isAdmin && setSelectedReport(report)}
+                      className="cursor-pointer hover:bg-slate-700/50"
+                      onClick={() => setSelectedReport(report)}
                     >
                       {isAdmin && (
                         <TableCell>
@@ -388,6 +426,9 @@ export default function ReportsPage() {
                       </TableCell>
                       <TableCell className="text-right text-slate-200">
                         {formatCurrency(report.totalAmount)}
+                      </TableCell>
+                      <TableCell className="text-right text-red-400/80">
+                        {formatCurrency(report.totalCost)}
                       </TableCell>
                       <TableCell className="text-right">
                         {report.totalRefunds > 0 ? (
@@ -419,21 +460,19 @@ export default function ReportsPage() {
                           )}
                         </div>
                       </TableCell>
-                      {isAdmin && (
-                        <TableCell className="text-right">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="text-slate-400 hover:text-white"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setSelectedReport(report);
-                            }}
-                          >
-                            <Eye className="h-4 w-4" />
-                          </Button>
-                        </TableCell>
-                      )}
+                      <TableCell className="text-right">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-slate-400 hover:text-white"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedReport(report);
+                          }}
+                        >
+                          <Eye className="h-4 w-4" />
+                        </Button>
+                      </TableCell>
                     </TableRow>
                   );
                 })}
@@ -443,21 +482,24 @@ export default function ReportsPage() {
         </CardContent>
       </Card>
 
-      {/* Detail Dialog (admin only) */}
-      {isAdmin && (
-        <Dialog open={!!selectedReport} onOpenChange={(open) => !open && setSelectedReport(null)}>
-          <DialogContent className="bg-slate-800 border-slate-700 text-slate-100 max-w-2xl">
-            <DialogHeader>
-              <DialogTitle className="text-slate-100 flex items-center gap-2">
-                <BarChart3 className="h-5 w-5 text-blue-400" />
-                Detalle del Turno
-              </DialogTitle>
-            </DialogHeader>
+      {/* Detail Dialog */}
+      <Dialog open={!!selectedReport} onOpenChange={(open) => !open && setSelectedReport(null)}>
+        <DialogContent className="bg-slate-800 border-slate-700 text-slate-100 max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-slate-100 flex items-center gap-2">
+              <BarChart3 className="h-5 w-5 text-blue-400" />
+              Detalle del Turno
+            </DialogTitle>
+          </DialogHeader>
 
-            {selectedReport && (
+          {selectedReport && (() => {
+            const details = parseDetails(selectedReport.details);
+            const entriesIncome = details.entries.filter(e => e.type === 'INCOME');
+            const entriesExpense = details.entries.filter(e => e.type === 'EXPENSE');
+            return (
               <div className="space-y-4">
                 {/* User info */}
-                <div className="flex items-center gap-2 text-sm text-slate-300 border-b border-slate-700 pb-3">
+                <div className="flex items-center gap-2 text-sm text-slate-300 border-b border-slate-700 pb-3 flex-wrap">
                   <User className="h-4 w-4 text-slate-400" />
                   <span className="font-medium text-slate-100">
                     {selectedReport.user?.name || selectedReport.user?.username}
@@ -468,7 +510,7 @@ export default function ReportsPage() {
                 </div>
 
                 {/* Summary grid */}
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
                   <div className="rounded-lg bg-slate-900/50 p-3 border border-slate-700">
                     <p className="text-xs text-slate-400 uppercase tracking-wide">Ventas</p>
                     <p className="text-xl font-bold text-slate-100 mt-1">{selectedReport.totalSales}</p>
@@ -477,6 +519,12 @@ export default function ReportsPage() {
                     <p className="text-xs text-slate-400 uppercase tracking-wide">Monto Total</p>
                     <p className="text-xl font-bold text-emerald-400 mt-1">
                       {formatCurrency(selectedReport.totalAmount)}
+                    </p>
+                  </div>
+                  <div className="rounded-lg bg-slate-900/50 p-3 border border-slate-700">
+                    <p className="text-xs text-slate-400 uppercase tracking-wide">Costo Total</p>
+                    <p className="text-xl font-bold text-red-400/80 mt-1">
+                      {formatCurrency(selectedReport.totalCost)}
                     </p>
                   </div>
                   <div className="rounded-lg bg-slate-900/50 p-3 border border-slate-700">
@@ -489,6 +537,12 @@ export default function ReportsPage() {
                     <p className="text-xs text-slate-400 uppercase tracking-wide">Neto</p>
                     <p className="text-xl font-bold text-purple-400 mt-1">
                       {formatCurrency(selectedReport.netAmount)}
+                    </p>
+                  </div>
+                  <div className="rounded-lg bg-slate-900/50 p-3 border border-slate-700">
+                    <p className="text-xs text-slate-400 uppercase tracking-wide">Ganancia Bruta</p>
+                    <p className="text-xl font-bold text-emerald-400 mt-1">
+                      {formatCurrency(selectedReport.totalAmount - selectedReport.totalCost)}
                     </p>
                   </div>
                 </div>
@@ -515,6 +569,83 @@ export default function ReportsPage() {
                   )}
                 </div>
 
+                {/* Products sold breakdown */}
+                {details.products.length > 0 && (
+                  <div className="rounded-lg bg-slate-900/50 p-3 border border-slate-700">
+                    <p className="text-xs text-slate-400 uppercase tracking-wide mb-3">
+                      Desglose de Productos Vendidos ({details.products.length})
+                    </p>
+                    <div className="max-h-64 overflow-y-auto">
+                      <Table>
+                        <TableHeader>
+                          <TableRow className="bg-slate-800/80">
+                            <TableHead>Código</TableHead>
+                            <TableHead>Producto</TableHead>
+                            <TableHead className="text-center">Cant.</TableHead>
+                            <TableHead className="text-right">Precio</TableHead>
+                            <TableHead className="text-right">Subtotal</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {details.products.map(p => (
+                            <TableRow key={p.productId}>
+                              <TableCell className="font-mono text-xs text-slate-400">{p.barcode || '—'}</TableCell>
+                              <TableCell className="text-sm text-slate-200">{p.name}</TableCell>
+                              <TableCell className="text-center text-slate-300">{p.quantity}</TableCell>
+                              <TableCell className="text-right text-slate-300">{formatCurrency(p.price)}</TableCell>
+                              <TableCell className="text-right text-emerald-400">{formatCurrency(p.price * p.quantity)}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Refunds breakdown */}
+                {details.refunds.length > 0 && (
+                  <div className="rounded-lg bg-slate-900/50 p-3 border border-slate-700">
+                    <p className="text-xs text-slate-400 uppercase tracking-wide mb-3">
+                      Desglose de Devoluciones ({details.refunds.length})
+                    </p>
+                    <div className="space-y-2 max-h-48 overflow-y-auto">
+                      {details.refunds.map((r, i) => (
+                        <div key={i} className="flex items-center justify-between text-sm">
+                          <span className="text-slate-200">{r.productName || 'Producto eliminado'} <span className="text-slate-500">x{r.quantity}</span></span>
+                          <div className="text-right">
+                            {r.reason && <span className="text-xs text-slate-500 block">{r.reason}</span>}
+                            <span className="text-red-400">-{formatCurrency(r.amount)}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Income/Expense entries breakdown */}
+                {(entriesIncome.length > 0 || entriesExpense.length > 0) && (
+                  <div className="rounded-lg bg-slate-900/50 p-3 border border-slate-700">
+                    <p className="text-xs text-slate-400 uppercase tracking-wide mb-3">
+                      Movimientos de Caja ({entriesIncome.length} ingresos · {entriesExpense.length} egresos)
+                    </p>
+                    <div className="space-y-2 max-h-48 overflow-y-auto">
+                      {details.entries.map((e, i) => (
+                        <div key={i} className="flex items-center justify-between text-sm">
+                          <span className="text-slate-200">
+                            {e.type === 'INCOME' ? 'Ingreso' : 'Egreso'}
+                            <span className="text-slate-500"> · {e.category}</span>
+                            {e.paymentMethod && <span className="text-slate-500"> · {e.paymentMethod}</span>}
+                            {e.description && <span className="text-slate-500"> · {e.description}</span>}
+                          </span>
+                          <span className={e.type === 'INCOME' ? 'text-emerald-400' : 'text-red-400'}>
+                            {e.type === 'INCOME' ? '+' : '-'}{formatCurrency(e.amount)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {/* Notes */}
                 {selectedReport.notes && (
                   <div className="rounded-lg bg-slate-900/50 p-3 border border-slate-700">
@@ -523,10 +654,10 @@ export default function ReportsPage() {
                   </div>
                 )}
               </div>
-            )}
-          </DialogContent>
-        </Dialog>
-      )}
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

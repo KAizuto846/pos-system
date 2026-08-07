@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Plus, Pencil, Trash2, PackageOpen, Search, Zap, X, Check } from 'lucide-react';
+import { Plus, Pencil, Trash2, PackageOpen, Search, Download, X, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -39,6 +39,7 @@ import {
   SelectItem,
 } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
+import toast from 'react-hot-toast';
 
 interface Department {
   id: number;
@@ -62,6 +63,15 @@ interface ProductLineItem {
   supplier: Supplier;
 }
 
+interface ProductBatchItem {
+  id: number;
+  productId: number;
+  quantity: number;
+  expiresAt: string | null;
+  costPrice: number;
+  createdAt: string;
+}
+
 interface Product {
   id: number;
   name: string;
@@ -76,12 +86,22 @@ interface Product {
   department: Department | null;
   supplier: Supplier | null;
   productLines: ProductLineItem[];
+  batches: ProductBatchItem[];
 }
 
 interface FormProductLine {
   supplierId: string;
   supplierPrice: string;
   isPrimary: boolean;
+}
+
+interface FormBatch {
+  id?: number;
+  quantity: string;
+  month: string;
+  year: string;
+  costPrice: string;
+  removed?: boolean;
 }
 
 export default function ProductsPage() {
@@ -94,6 +114,15 @@ export default function ProductsPage() {
   const [search, setSearch] = useState('');
   const [filterDepartment, setFilterDepartment] = useState('all');
   const [filterSupplier, setFilterSupplier] = useState('all');
+  const [filterActive, setFilterActive] = useState('all');
+  const [filterPriceMin, setFilterPriceMin] = useState('');
+  const [filterPriceMax, setFilterPriceMax] = useState('');
+  const [filterCostMin, setFilterCostMin] = useState('');
+  const [filterCostMax, setFilterCostMax] = useState('');
+  const [filterStockMin, setFilterStockMin] = useState('');
+  const [filterStockMax, setFilterStockMax] = useState('');
+  const [filterMinStockMin, setFilterMinStockMin] = useState('');
+  const [filterMinStockMax, setFilterMinStockMax] = useState('');
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [total, setTotal] = useState(0);
@@ -103,7 +132,6 @@ export default function ProductsPage() {
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [stockOpen, setStockOpen] = useState(false);
-  const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
 
   // Form state
@@ -115,6 +143,7 @@ export default function ProductsPage() {
   const [formMinStock, setFormMinStock] = useState('5');
   const [formDepartmentId, setFormDepartmentId] = useState('all');
   const [formProductLines, setFormProductLines] = useState<FormProductLine[]>([]);
+  const [formBatches, setFormBatches] = useState<FormBatch[]>([]);
   const [formError, setFormError] = useState('');
   const [formLoading, setFormLoading] = useState(false);
 
@@ -135,6 +164,15 @@ export default function ProductsPage() {
     if (search) params.set('q', search);
     if (filterDepartment !== 'all') params.set('departmentId', filterDepartment);
     if (filterSupplier !== 'all') params.set('supplierId', filterSupplier);
+    if (filterActive !== 'all') params.set('active', filterActive);
+    if (filterPriceMin) params.set('priceMin', filterPriceMin);
+    if (filterPriceMax) params.set('priceMax', filterPriceMax);
+    if (filterCostMin) params.set('costMin', filterCostMin);
+    if (filterCostMax) params.set('costMax', filterCostMax);
+    if (filterStockMin) params.set('stockMin', filterStockMin);
+    if (filterStockMax) params.set('stockMax', filterStockMax);
+    if (filterMinStockMin) params.set('minStockMin', filterMinStockMin);
+    if (filterMinStockMax) params.set('minStockMax', filterMinStockMax);
     params.set('page', String(pageNum));
     params.set('limit', String(LIMIT));
 
@@ -158,7 +196,9 @@ export default function ProductsPage() {
         setLoadingMore(false);
       }
     }
-  }, [search, filterDepartment, filterSupplier]);
+  }, [search, filterDepartment, filterSupplier, filterActive,
+      filterPriceMin, filterPriceMax, filterCostMin, filterCostMax,
+      filterStockMin, filterStockMax, filterMinStockMin, filterMinStockMax]);
 
   const fetchDepartments = () => {
     fetch('/api/departments')
@@ -191,7 +231,7 @@ export default function ProductsPage() {
       fetchProducts(1, false);
     }, 300);
     return () => clearTimeout(timer);
-  }, [search, filterDepartment, filterSupplier]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [fetchProducts]);
 
   const loadMore = () => {
     if (!hasMore || loadingMore || loading) return;
@@ -213,8 +253,30 @@ export default function ProductsPage() {
     setFormMinStock('5');
     setFormDepartmentId('all');
     setFormProductLines([]);
+    setFormBatches([]);
     setFormError('');
   };
+
+  const addBatchRow = () => {
+    setFormBatches(prev => [...prev, { quantity: '', month: '', year: '', costPrice: '' }]);
+  };
+
+  const removeBatchRow = (index: number) => {
+    setFormBatches(prev => {
+      const updated = prev.map((b, i) => i === index ? { ...b, removed: true } : b);
+      return updated.filter(b => !b.removed || b.id !== undefined);
+    });
+  };
+
+  const updateBatchRow = (index: number, field: keyof FormBatch, value: string) => {
+    setFormBatches(prev => prev.map((b, i) => i === index ? { ...b, [field]: value } : b));
+  };
+
+  // Suma de piezas en lotes (existentes no eliminados + nuevos)
+  const batchTotal = formBatches.reduce(
+    (s, b) => s + (b.removed ? 0 : parseInt(b.quantity) || 0),
+    0
+  );
 
   const addProductLine = () => {
     setFormProductLines(prev => [...prev, emptyProductLine()]);
@@ -320,52 +382,6 @@ export default function ProductsPage() {
     fetchProducts(1);
   };
 
-  const handleQuickAdd = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setFormError('');
-    setFormLoading(true);
-
-    const body = {
-      name: formName,
-      barcode: formBarcode || `Q${Date.now()}`,
-      price: parseFloat(formPrice) || 0,
-      cost: parseFloat(formCost) || 0,
-      stock: parseInt(formStock || '0'),
-      minStock: parseInt(formMinStock || '5'),
-      departmentId: formDepartmentId !== 'all' ? parseInt(formDepartmentId) : null,
-      active: true,
-      ...(formProductLines.length > 0
-        ? {
-            productLines: formProductLines
-              .filter(pl => pl.supplierId !== 'all')
-              .map(pl => ({
-                supplierId: parseInt(pl.supplierId),
-                supplierPrice: pl.supplierPrice ? parseFloat(pl.supplierPrice) : null,
-                isPrimary: pl.isPrimary,
-              })),
-          }
-        : {}),
-    };
-
-    const res = await fetch('/api/products', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-
-    const data = await res.json();
-    setFormLoading(false);
-
-    if (!res.ok) {
-      setFormError(data.error || 'Error creating product');
-      return;
-    }
-
-    setQuickAddOpen(false);
-    resetForm();
-    fetchProducts(1);
-  };
-
   const handleEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedProduct) return;
@@ -373,7 +389,29 @@ export default function ProductsPage() {
     setFormLoading(true);
 
     const body = buildProductBody();
-    delete body.stock;
+    body.stock = parseInt(formStock, 10) || 0;
+
+    // Lotes: agregar nuevos, eliminar marcados como quitados
+    const batchOps: Array<{
+      action: string;
+      id?: number;
+      quantity?: number;
+      expiresAt?: string | null;
+      costPrice?: number | null;
+    }> = formBatches
+      .filter(b => !b.removed && b.id === undefined && parseInt(b.quantity) > 0)
+      .map(b => ({
+        action: 'add',
+        quantity: parseInt(b.quantity),
+        expiresAt: b.month && b.year ? `${b.month}/${b.year}` : null,
+        costPrice: b.costPrice ? parseFloat(b.costPrice) : null,
+      }));
+    for (const b of formBatches) {
+      if (b.removed && b.id !== undefined) {
+        batchOps.push({ action: 'delete', id: b.id });
+      }
+    }
+    if (batchOps.length > 0) body.batchOps = batchOps;
 
     const res = await fetch(`/api/products/${selectedProduct.id}`, {
       method: 'PUT',
@@ -422,6 +460,39 @@ export default function ProductsPage() {
     }
   };
 
+  const handleExportCsv = async () => {
+    const params = new URLSearchParams({ format: 'csv' });
+    if (search) params.set('q', search);
+    if (filterDepartment !== 'all') params.set('departmentId', filterDepartment);
+    if (filterSupplier !== 'all') params.set('supplierId', filterSupplier);
+    if (filterActive !== 'all') params.set('active', filterActive);
+    if (filterPriceMin) params.set('priceMin', filterPriceMin);
+    if (filterPriceMax) params.set('priceMax', filterPriceMax);
+    if (filterCostMin) params.set('costMin', filterCostMin);
+    if (filterCostMax) params.set('costMax', filterCostMax);
+    if (filterStockMin) params.set('stockMin', filterStockMin);
+    if (filterStockMax) params.set('stockMax', filterStockMax);
+    if (filterMinStockMin) params.set('minStockMin', filterMinStockMin);
+    if (filterMinStockMax) params.set('minStockMax', filterMinStockMax);
+
+    try {
+      const res = await fetch(`/api/products/export?${params}`);
+      if (!res.ok) throw new Error('Error al exportar');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const filename = res.headers.get('content-disposition')?.match(/filename="?([^";]+)"?/)?.[1] || `inventario-${new Date().toISOString().split('T')[0]}.csv`;
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch {
+      toast.error('Error al exportar inventario');
+    }
+  };
+
   const openEdit = (product: Product) => {
     setSelectedProduct(product);
     setFormName(product.name);
@@ -431,6 +502,25 @@ export default function ProductsPage() {
     setFormStock(String(product.stock));
     setFormMinStock(String(product.minStock));
     setFormDepartmentId(product.departmentId ? String(product.departmentId) : 'all');
+
+    // Populate batches from product data
+    if (product.batches && product.batches.length > 0) {
+      setFormBatches(
+        product.batches.map(b => {
+          const d = b.expiresAt ? new Date(b.expiresAt) : null;
+          return {
+            id: b.id,
+            quantity: String(b.quantity),
+            month: d ? String(d.getMonth() + 1).padStart(2, '0') : '',
+            year: d ? String(d.getFullYear()) : '',
+            costPrice: b.costPrice ? String(b.costPrice) : '',
+            removed: false,
+          };
+        })
+      );
+    } else {
+      setFormBatches([]);
+    }
 
     // Populate productLines from product data
     if (product.productLines && product.productLines.length > 0) {
@@ -453,11 +543,6 @@ export default function ProductsPage() {
     }
 
     setEditOpen(true);
-  };
-
-  const openQuickAdd = () => {
-    resetForm();
-    setQuickAddOpen(true);
   };
 
   // Helper to get display supplier text for a product
@@ -565,9 +650,9 @@ export default function ProductsPage() {
           <p className="text-sm text-slate-400 mt-1">Administra tu inventario de productos</p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" className="border-amber-500/50 text-amber-400 hover:bg-amber-500/10" onClick={openQuickAdd}>
-            <Zap className="mr-2 h-4 w-4" />
-            Alta Rápida
+          <Button variant="outline" onClick={handleExportCsv} className="border-emerald-600/50 text-emerald-400 hover:bg-emerald-500/10">
+            <Download className="mr-2 h-4 w-4" />
+            Exportar CSV
           </Button>
           <Dialog open={createOpen} onOpenChange={(o) => { setCreateOpen(o); if (!o) resetForm(); }}>
             <DialogTrigger asChild>
@@ -648,41 +733,89 @@ export default function ProductsPage() {
       </div>
 
       {/* Filters */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <Input
-            placeholder="Buscar por nombre o código..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-10"
-          />
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <Input
+              placeholder="Buscar por nombre o código..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-10"
+            />
+          </div>
+          <div className="w-full sm:w-48">
+            <Select value={filterDepartment} onValueChange={setFilterDepartment}>
+              <SelectTrigger>
+                <SelectValue placeholder="Departamento" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos los dptos.</SelectItem>
+                {departments.map((d) => (
+                  <SelectItem key={d.id} value={String(d.id)}>{d.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="w-full sm:w-48">
+            <Select value={filterSupplier} onValueChange={setFilterSupplier}>
+              <SelectTrigger>
+                <SelectValue placeholder="Proveedor" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos los prov.</SelectItem>
+                {suppliers.map((s) => (
+                  <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="w-full sm:w-40">
+            <Select value={filterActive} onValueChange={setFilterActive}>
+              <SelectTrigger>
+                <SelectValue placeholder="Estado" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Activos e inactivos</SelectItem>
+                <SelectItem value="true">Solo activos</SelectItem>
+                <SelectItem value="false">Solo inactivos</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </div>
-        <div className="w-full sm:w-48">
-          <Select value={filterDepartment} onValueChange={setFilterDepartment}>
-            <SelectTrigger>
-              <SelectValue placeholder="Departamento" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Todos los dptos.</SelectItem>
-              {departments.map((d) => (
-                <SelectItem key={d.id} value={String(d.id)}>{d.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="w-full sm:w-48">
-          <Select value={filterSupplier} onValueChange={setFilterSupplier}>
-            <SelectTrigger>
-              <SelectValue placeholder="Proveedor" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Todos los prov.</SelectItem>
-              {suppliers.map((s) => (
-                <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
+          <div className="space-y-1">
+            <Label className="text-[10px] text-slate-500">Precio mín</Label>
+            <Input type="number" step="0.01" min="0" placeholder="0.00" value={filterPriceMin} onChange={(e) => setFilterPriceMin(e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-[10px] text-slate-500">Precio máx</Label>
+            <Input type="number" step="0.01" min="0" placeholder="0.00" value={filterPriceMax} onChange={(e) => setFilterPriceMax(e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-[10px] text-slate-500">Costo mín</Label>
+            <Input type="number" step="0.01" min="0" placeholder="0.00" value={filterCostMin} onChange={(e) => setFilterCostMin(e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-[10px] text-slate-500">Costo máx</Label>
+            <Input type="number" step="0.01" min="0" placeholder="0.00" value={filterCostMax} onChange={(e) => setFilterCostMax(e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-[10px] text-slate-500">Stock mín</Label>
+            <Input type="number" min="0" placeholder="0" value={filterStockMin} onChange={(e) => setFilterStockMin(e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-[10px] text-slate-500">Stock máx</Label>
+            <Input type="number" min="0" placeholder="0" value={filterStockMax} onChange={(e) => setFilterStockMax(e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-[10px] text-slate-500">Stock mín. mín</Label>
+            <Input type="number" min="0" placeholder="0" value={filterMinStockMin} onChange={(e) => setFilterMinStockMin(e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-[10px] text-slate-500">Stock mín. máx</Label>
+            <Input type="number" min="0" placeholder="0" value={filterMinStockMax} onChange={(e) => setFilterMinStockMax(e.target.value)} />
+          </div>
         </div>
       </div>
 
@@ -695,7 +828,9 @@ export default function ProductsPage() {
                 <TableHead>Nombre</TableHead>
                 <TableHead>Código</TableHead>
                 <TableHead>Precio</TableHead>
+                <TableHead>Costo</TableHead>
                 <TableHead>Stock</TableHead>
+                <TableHead>Stock mín.</TableHead>
                 <TableHead>Departamento</TableHead>
                 <TableHead>Proveedor</TableHead>
                 <TableHead>Estado</TableHead>
@@ -706,7 +841,7 @@ export default function ProductsPage() {
               {loading ? (
                 Array.from({ length: 5 }).map((_, i) => (
                   <TableRow key={i}>
-                    {Array.from({ length: 8 }).map((_, j) => (
+                    {Array.from({ length: 10 }).map((_, j) => (
                       <TableCell key={j}>
                         <Skeleton className="h-4 w-full bg-slate-700" />
                       </TableCell>
@@ -715,7 +850,7 @@ export default function ProductsPage() {
                 ))
               ) : products.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center text-slate-400 py-8">
+                  <TableCell colSpan={10} className="text-center text-slate-400 py-8">
                     No se encontraron productos
                   </TableCell>
                 </TableRow>
@@ -725,11 +860,13 @@ export default function ProductsPage() {
                     <TableCell className="font-medium text-slate-100">{product.name}</TableCell>
                     <TableCell className="text-slate-400 font-mono text-xs">{product.barcode || '—'}</TableCell>
                     <TableCell className="text-slate-200">${product.price.toFixed(2)}</TableCell>
+                    <TableCell className="text-red-400/80 font-mono text-xs">${product.cost.toFixed(2)}</TableCell>
                     <TableCell>
                       <Badge variant={product.stock <= product.minStock ? 'destructive' : 'default'}>
                         {product.stock}
                       </Badge>
                     </TableCell>
+                    <TableCell className="text-slate-400 text-xs">{product.minStock}</TableCell>
                     <TableCell className="text-slate-300">{product.department?.name || '—'}</TableCell>
                     <TableCell className="text-slate-300">{getSupplierDisplay(product)}</TableCell>
                     <TableCell>
@@ -778,77 +915,6 @@ export default function ProductsPage() {
           </div>
         </CardContent>
       </Card>
-
-      {/* ⚡ Alta Rápida Dialog */}
-      <Dialog open={quickAddOpen} onOpenChange={(o) => { setQuickAddOpen(o); if (!o) resetForm(); }}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Zap className="h-5 w-5 text-amber-400" />
-              Alta Rápida de Producto
-            </DialogTitle>
-            <DialogDescription>
-              Crea un producto al instante — solo lo esencial
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleQuickAdd}>
-            <div className="space-y-4 py-4">
-              {formError && (
-                <div className="rounded-md bg-red-600/20 border border-red-600/50 px-4 py-3 text-sm text-red-400">
-                  {formError}
-                </div>
-              )}
-              <div className="space-y-2">
-                <Label htmlFor="qa-name">Nombre *</Label>
-                <Input id="qa-name" value={formName} onChange={(e) => setFormName(e.target.value)} placeholder="Nombre del producto" required autoFocus />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="qa-barcode">Código de barras</Label>
-                <Input id="qa-barcode" value={formBarcode} onChange={(e) => setFormBarcode(e.target.value)} placeholder="Opcional — se genera automático" />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="qa-price">Precio $ *</Label>
-                  <Input id="qa-price" type="number" step="0.01" min="0" value={formPrice} onChange={(e) => setFormPrice(e.target.value)} placeholder="0.00" required />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="qa-cost">Costo $</Label>
-                  <Input id="qa-cost" type="number" step="0.01" min="0" value={formCost} onChange={(e) => setFormCost(e.target.value)} placeholder="0.00" />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="qa-stock">Stock inicial</Label>
-                  <Input id="qa-stock" type="number" min="0" value={formStock} onChange={(e) => setFormStock(e.target.value)} placeholder="0" />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="qa-dept">Departamento</Label>
-                  <Select value={formDepartmentId} onValueChange={setFormDepartmentId}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Seleccionar" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Sin departamento</SelectItem>
-                      {departments.map((d) => (
-                        <SelectItem key={d.id} value={String(d.id)}>{d.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              {renderSuppliersSection(true)}
-            </div>
-            <DialogFooter>
-              <DialogClose asChild>
-                <Button type="button" variant="secondary">Cancelar</Button>
-              </DialogClose>
-              <Button type="submit" disabled={formLoading} className="bg-amber-600 hover:bg-amber-500">
-                {formLoading ? 'Creando...' : '⚡ Dar de Alta'}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
 
       {/* Edit Dialog */}
       <Dialog open={editOpen} onOpenChange={(o) => { setEditOpen(o); if (!o) { resetForm(); setSelectedProduct(null); } }}>
@@ -909,6 +975,55 @@ export default function ProductsPage() {
                 </div>
               </div>
               {renderSuppliersSection()}
+              {/* Batches / Expiration section */}
+              <div className="space-y-3 rounded-md border border-slate-700 bg-slate-800/40 p-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label>Lotes / Caducidad</Label>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      Piezas por lote: {batchTotal} · Sin asignar: {Math.max(0, (parseInt(formStock) || 0) - batchTotal)} · Caducidad opcional (día = último del mes)
+                    </p>
+                  </div>
+                  <Button type="button" variant="outline" size="sm" onClick={addBatchRow} className="h-7 text-xs border-dashed">
+                    <Plus className="h-3 w-3 mr-1" />
+                    Agregar lote
+                  </Button>
+                </div>
+                {formBatches.length === 0 ? (
+                  <p className="text-xs text-slate-500 italic">Sin lotes asignados</p>
+                ) : (
+                  <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                    {formBatches.map((b, index) => {
+                      const isNew = b.id === undefined;
+                      return (
+                        <div key={index} className={`grid grid-cols-12 gap-2 items-center rounded-md border p-2 ${b.removed ? 'border-red-800 bg-red-950/30 opacity-50' : 'border-slate-700 bg-slate-800/60'}`}>
+                          <div className="col-span-3 space-y-1">
+                            <Label className="text-[10px] text-slate-500">Piezas</Label>
+                            <Input type="number" min="0" value={b.quantity} onChange={(e) => updateBatchRow(index, 'quantity', e.target.value)} className="h-7 text-xs" placeholder="0" disabled={b.removed} />
+                          </div>
+                          <div className="col-span-2 space-y-1">
+                            <Label className="text-[10px] text-slate-500">Mes</Label>
+                            <Input type="number" min="1" max="12" value={b.month} onChange={(e) => updateBatchRow(index, 'month', e.target.value)} className="h-7 text-xs" placeholder="MM" disabled={b.removed} />
+                          </div>
+                          <div className="col-span-3 space-y-1">
+                            <Label className="text-[10px] text-slate-500">Año</Label>
+                            <Input type="number" min="2020" max="2200" value={b.year} onChange={(e) => updateBatchRow(index, 'year', e.target.value)} className="h-7 text-xs" placeholder="AAAA" disabled={b.removed} />
+                          </div>
+                          <div className="col-span-3 space-y-1">
+                            <Label className="text-[10px] text-slate-500">Costo</Label>
+                            <Input type="number" step="0.01" min="0" value={b.costPrice} onChange={(e) => updateBatchRow(index, 'costPrice', e.target.value)} className="h-7 text-xs" placeholder={formCost || '0.00'} disabled={b.removed} />
+                          </div>
+                          <div className="col-span-1 flex justify-end">
+                            <button type="button" onClick={() => removeBatchRow(index)} className="text-red-400 hover:text-red-300 transition-colors" title={isNew ? 'Quitar lote' : 'Eliminar lote'}>
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
             <DialogFooter>
               <Button type="submit" disabled={formLoading}>

@@ -33,6 +33,19 @@ export async function POST(
 
     await initializePrisma();
     const result = await prisma.$transaction(async (tx) => {
+      // El stock no puede quedar por debajo de la suma de piezas en lotes
+      if (quantity < 0) {
+        const product = await tx.product.findUnique({
+          where: { id: productId },
+          include: { batches: true },
+        });
+        if (!product) return { error: "not_found" as const };
+        const batchTotal = product.batches.reduce((s, b) => s + b.quantity, 0);
+        if (product.stock + quantity < batchTotal) {
+          return { error: "batch_limit" as const, batchTotal };
+        }
+      }
+
       const changed = quantity < 0
         ? await tx.$executeRaw`
             UPDATE products SET stock = stock + ${quantity}
@@ -58,6 +71,12 @@ export async function POST(
     if ("error" in result) {
       if (result.error === "not_found") {
         return Response.json({ error: "Producto no encontrado" }, { status: 404 });
+      }
+      if (result.error === "batch_limit") {
+        return Response.json(
+          { error: `Stock insuficiente: no puede quedar por debajo de las ${result.batchTotal} piezas asignadas a lotes.` },
+          { status: 400 }
+        );
       }
 
       return Response.json(

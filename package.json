@@ -1,6 +1,6 @@
 {
   "name": "pos-system-new",
-  "version": "0.3.7",
+  "version": "0.4.0",
   "description": "Sistema de Punto de Venta — POS System",
   "author": "KAizuto846",
   "private": true,
@@ -101,9 +101,10 @@
           ]
         }
       ],
-      "icon": "public/icons/icon-512.png",
-      "sign": null,
-      "verifyUpdateCodeSignature": false
+    "icon": "public/icons/icon-512.png",
+    "sign": null,
+    "signAndEditExecutable": false,
+    "verifyUpdateCodeSignature": false
     },
     "nsis": {
       "artifactName": "POS-System-Setup-${version}.${ext}",
@@ -113,9 +114,9 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "POS System",
-      "installerIcon": "public/icons/icon-512.ico",
-      "uninstallerIcon": "public/icons/icon-512.ico",
-      "license": "LICENSE"
+    "installerIcon": "public/icons/icon-512.ico",
+    "uninstallerIcon": "public/icons/icon-512.ico",
+    "license": "LICENSE"
     },
     "linux": {
       "target": [

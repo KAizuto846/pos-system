@@ -35,19 +35,24 @@ export async function GET(request: Request) {
     // Apply date range filter
     if (dateFrom || dateTo) {
       const dateFilter: Record<string, Date> = {};
-      if (dateFrom) {
-        const start = new Date(dateFrom);
-        if (!isNaN(start.getTime())) {
-          start.setHours(0, 0, 0, 0);
-          dateFilter.gte = start;
+      // Fechas tipo "YYYY-MM-DD" se interpretan como día local completo
+      const parseLocal = (value: string, endOfDay: boolean): Date | null => {
+        if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+          const [y, m, d] = value.split("-").map(Number);
+          return endOfDay
+            ? new Date(y, m - 1, d, 23, 59, 59, 999)
+            : new Date(y, m - 1, d, 0, 0, 0, 0);
         }
+        const parsed = new Date(value);
+        return isNaN(parsed.getTime()) ? null : parsed;
+      };
+      if (dateFrom) {
+        const start = parseLocal(dateFrom, false);
+        if (start) dateFilter.gte = start;
       }
       if (dateTo) {
-        const end = new Date(dateTo);
-        if (!isNaN(end.getTime())) {
-          end.setHours(23, 59, 59, 999);
-          dateFilter.lte = end;
-        }
+        const end = parseLocal(dateTo, true);
+        if (end) dateFilter.lte = end;
       }
       if (Object.keys(dateFilter).length > 0) {
         where.startDate = dateFilter;
@@ -99,8 +104,20 @@ export async function POST(request: Request) {
       );
     }
 
-    const start = new Date(startDate);
-    const end = new Date(endDate);
+    // Fechas tipo "YYYY-MM-DD" se interpretan como día local completo;
+    // si vienen con hora (ISO), se usan tal cual
+    const parseDate = (value: string, endOfDay: boolean): Date => {
+      if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+        const [y, m, d] = value.split("-").map(Number);
+        return endOfDay
+          ? new Date(y, m - 1, d, 23, 59, 59, 999)
+          : new Date(y, m - 1, d, 0, 0, 0, 0);
+      }
+      return new Date(value);
+    };
+
+    const start = parseDate(startDate, false);
+    const end = parseDate(endDate, true);
 
     if (isNaN(start.getTime()) || isNaN(end.getTime())) {
       return Response.json(
@@ -109,7 +126,7 @@ export async function POST(request: Request) {
       );
     }
 
-    // Calculate sales for this user in the date range
+    // Calcular ventas para este usuario en el rango
     const sales = await prisma.sale.findMany({
       where: {
         userId,
@@ -117,26 +134,35 @@ export async function POST(request: Request) {
       },
       include: {
         paymentMethod: true,
+        items: {
+          include: { product: true },
+        },
       },
       orderBy: { createdAt: "asc" },
     });
 
     const totalSales = sales.length;
-    const totalAmount = sales.reduce((sum: number, s: any) => sum + s.total, 0);
+    const totalAmount = sales.reduce((sum, s) => sum + s.total, 0);
+    const totalCost = sales.reduce(
+      (sum, s) =>
+        sum + s.items.reduce((sub, i) => sub + (i.quantity * (i.product?.cost || 0)), 0),
+      0
+    );
 
-    // Calculate refunds for this user in the date range
+    // Reembolsos para este usuario en el rango
     const refunds = await prisma.refund.findMany({
       where: {
         userId,
         createdAt: { gte: start, lte: end },
       },
+      include: { product: true, sale: true },
     });
 
     const totalRefunds = refunds.length;
-    const refundAmount = refunds.reduce((sum: number, r: any) => sum + r.amount, 0);
+    const refundAmount = refunds.reduce((sum, r) => sum + r.amount, 0);
     const netAmount = totalAmount - refundAmount;
 
-    // Build payment method breakdown
+    // Desglose por método de pago
     const pmMap: Record<string, { count: number; total: number }> = {};
     for (const sale of sales) {
       const name = sale.paymentMethod?.name || "Sin método";
@@ -149,20 +175,95 @@ export async function POST(request: Request) {
 
     const byPaymentMethod = JSON.stringify(pmMap);
 
-    // Create the shift report record
-    const report = await prisma.shiftReport.create({
-      data: {
+    // Desglose de productos vendidos
+    const productsMap = new Map<
+      number,
+      { productId: number; name: string; barcode: string; quantity: number; price: number; cost: number }
+    >();
+    for (const sale of sales) {
+      for (const item of sale.items) {
+        const pid = item.productId;
+        const existing = productsMap.get(pid);
+        if (existing) {
+          existing.quantity += item.quantity;
+        } else {
+          productsMap.set(pid, {
+            productId: pid,
+            name: item.product?.name || `#${pid}`,
+            barcode: item.product?.barcode || "",
+            quantity: item.quantity,
+            price: item.price,
+            cost: item.product?.cost || 0,
+          });
+        }
+      }
+    }
+
+    // Desglose de ingresos/egresos (caja fuerte)
+    const entries = await prisma.cashEntry.findMany({
+      where: {
+        userId,
+        recordedAt: { gte: start, lte: end },
+      },
+      include: { paymentMethod: true },
+      orderBy: { recordedAt: "asc" },
+    });
+
+    const entriesDetail = entries.map((e) => ({
+      type: e.type,
+      category: e.category,
+      amount: e.amount,
+      description: e.description,
+      paymentMethod: e.paymentMethod?.name || null,
+      recordedAt: e.recordedAt,
+    }));
+
+    const details = JSON.stringify({
+      products: Array.from(productsMap.values()).sort((a, b) => b.quantity - a.quantity),
+      entries: entriesDetail,
+      refunds: refunds.map((r) => ({
+        amount: r.amount,
+        quantity: r.quantity,
+        reason: r.reason,
+        productName: r.product?.name || null,
+        saleId: r.saleId,
+        createdAt: r.createdAt,
+      })),
+    });
+
+    const data = {
+      userId,
+      startDate: start,
+      endDate: end,
+      totalSales,
+      totalAmount,
+      totalCost,
+      totalRefunds,
+      refundAmount,
+      netAmount,
+      byPaymentMethod,
+      details,
+    };
+
+    // Evitar duplicados: si ya existe un reporte del mismo usuario con el mismo rango,
+    // se actualiza con los datos frescos en lugar de crear otro
+    const existing = await prisma.shiftReport.findFirst({
+      where: {
         userId,
         startDate: start,
         endDate: end,
-        totalSales,
-        totalAmount,
-        totalRefunds,
-        refundAmount,
-        netAmount,
-        byPaymentMethod,
       },
     });
+
+    let report;
+    if (existing) {
+      report = await prisma.shiftReport.update({
+        where: { id: existing.id },
+        data,
+      });
+    } else {
+      report = await prisma.shiftReport.create({ data });
+    }
 
     return Response.json(report, { status: 201 });
   } catch (error) {

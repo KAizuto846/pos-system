@@ -4,8 +4,9 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Plus, Eye, CheckCircle, Package, Search,
   Calendar, Clock, Calculator, Trash2, Columns, PlusCircle,
-  Download, Image as ImageIcon, FileText, AlertCircle, History,
+  Download, Image as ImageIcon, FileText, AlertCircle, History, AlertTriangle, RefreshCcw, X,
 } from 'lucide-react';
+import toast from 'react-hot-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -43,6 +44,7 @@ import {
   SelectItem,
 } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { Checkbox } from '@/components/ui/checkbox';
 
 // ─── Types ───
 interface Supplier {
@@ -51,6 +53,8 @@ interface Supplier {
 
 interface Product {
   id: number; name: string; barcode: string; stock: number; active: boolean;
+  price?: number; cost?: number;
+  productLines?: Array<{ supplierId: number; supplierPrice: number | null; isPrimary: boolean }>;
 }
 
 interface SoldProduct {
@@ -58,17 +62,30 @@ interface SoldProduct {
   price: number; cost: number; stock: number; minStock: number;
   department: { id: number; name: string } | null;
   supplierPrice: number | null; totalSold: number;
+  source?: 'ventas' | 'pendiente';
 }
 
 interface ProductSearchResult {
   id: number; name: string; barcode: string;
   price: number; cost: number; stock: number; minStock: number;
   department: { id: number; name: string } | null;
+  productLines?: Array<{ supplierId: number; supplierPrice: number | null; isPrimary: boolean }>;
 }
 
 interface OrderItem {
   id: number; productId: number; quantity: number;
   product: Product; receivedQuantity: number; notes: string;
+  costPrice?: number | null; extra?: boolean;
+}
+
+interface ReceiveExtra {
+  key: string;
+  productId: number;
+  name: string;
+  quantity: string;
+  costPrice: string;
+  price: string;
+  expiresAt: string;
 }
 
 interface Order {
@@ -94,6 +111,21 @@ const EXTRA_COLUMN_OPTIONS: { label: string; key: string }[] = [
   { label: 'Departamento', key: 'department' },
   { label: 'Texto personalizado', key: 'custom_text' },
 ];
+
+// Columnas disponibles para la exportación PNG/PDF del pedido
+const EXPORT_COLUMN_OPTIONS: { key: string; label: string; required?: boolean }[] = [
+  { key: 'index', label: '#' },
+  { key: 'barcode', label: 'Código', required: true },
+  { key: 'name', label: 'Nombre', required: true },
+  { key: 'quantity', label: 'Cantidad', required: true },
+  { key: 'received', label: 'Recibido' },
+  { key: 'pending', label: 'Pendiente' },
+  { key: 'price', label: 'Precio Venta' },
+  { key: 'supplierPrice', label: 'P. Proveedor' },
+  { key: 'profit', label: 'Ganancia' },
+];
+
+const DEFAULT_EXPORT_COLUMNS = ['index', 'barcode', 'name', 'quantity', 'received', 'pending'];
 
 // ─── Helpers ───
 function formatDate(dateStr: string) {
@@ -148,6 +180,14 @@ export default function OrdersPage() {
   const [exporting, setExporting] = useState(false);
   const [receiveQuantities, setReceiveQuantities] = useState<Record<number, number>>({});
   const [receiveLoading, setReceiveLoading] = useState(false);
+  const [receiveBatches, setReceiveBatches] = useState<Record<number, string>>({});
+  const [receiveCosts, setReceiveCosts] = useState<Record<number, string>>({});
+  const [receivePrices, setReceivePrices] = useState<Record<number, string>>({});
+  const [receiveExtras, setReceiveExtras] = useState<ReceiveExtra[]>([]);
+  const [extraSearch, setExtraSearch] = useState('');
+  const [extraResults, setExtraResults] = useState<ProductSearchResult[]>([]);
+  const [extraSearching, setExtraSearching] = useState(false);
+  const [reorderLoading, setReorderLoading] = useState(false);
 
   // ── Create form ──
   const [formSupplierId, setFormSupplierId] = useState('');
@@ -170,6 +210,7 @@ export default function OrdersPage() {
   const [manualColumns, setManualColumns] = useState<Record<string, Record<string, string>>>({});
   const [pendingItems, setPendingItems] = useState<SoldProduct[] | null>(null);
   const [loadingPending, setLoadingPending] = useState(false);
+  const [exportCols, setExportCols] = useState<Set<string>>(new Set(DEFAULT_EXPORT_COLUMNS));
 
   // ── Manual product search state ──
   const [showManualAdd, setShowManualAdd] = useState(false);
@@ -235,10 +276,30 @@ export default function OrdersPage() {
       const res = await fetch(`/api/orders/sales-summary?${params}`);
       const data = await res.json();
       if (!res.ok) { setFormError(data.error || 'Error'); return; }
-      setSoldProducts(data.products || []);
-      setSalesInfo({ totalProducts: data.totalProducts, totalUnits: data.totalUnits });
+      const sales = (data.products || []) as SoldProduct[];
       const init: Record<string, number> = {};
-      (data.products || []).forEach((p: SoldProduct) => { init[String(p.productId)] = p.totalSold; });
+      sales.forEach((p: SoldProduct) => { init[String(p.productId)] = p.totalSold; });
+
+      // Pendientes de pedidos pasados: para productos donde este proveedor es SECUNDARIO
+      // (o que no estén en las ventas del principal), se sugiere solo lo que falta por recibir
+      let merged = sales;
+      try {
+        const pendRes = await fetch(`/api/orders/pending-items?supplierId=${formSupplierId}`);
+        const pendData = await pendRes.json();
+        if (pendRes.ok && Array.isArray(pendData.products)) {
+          const pendProducts = pendData.products as Array<SoldProduct & { pendingQuantity: number }>;
+          const existingIds = new Set(sales.map(p => p.productId));
+          const newProds = pendProducts.filter(p => !existingIds.has(p.productId));
+          if (newProds.length > 0) {
+            merged = [...sales, ...newProds.map(p => ({ ...p, totalSold: p.pendingQuantity, source: 'pendiente' as const }))];
+            newProds.forEach(p => { init[String(p.productId)] = p.pendingQuantity; });
+          }
+          setPendingItems(pendProducts);
+        }
+      } catch {}
+
+      setSoldProducts(merged);
+      setSalesInfo({ totalProducts: merged.length, totalUnits: Object.values(init).reduce((s, n) => s + n, 0) });
       setQuantities(init);
     } catch { setFormError('Error de conexión'); }
     finally { setCalculating(false); }
@@ -285,18 +346,24 @@ export default function OrdersPage() {
         });
         if (!res.ok) throw new Error('Error al buscar productos');
         const data = await res.json();
-        setManualResults((data.products || []).map((p: ProductSearchResult) => ({
-          productId: p.id,
-          name: p.name,
-          barcode: p.barcode,
-          price: p.price,
-          cost: p.cost,
-          stock: p.stock,
-          minStock: p.minStock,
-          department: p.department || null,
-          supplierPrice: null,
-          totalSold: 0,
-        })));
+        const supplierPid = formSupplierId ? parseInt(formSupplierId) : null;
+        setManualResults((data.products || []).map((p: ProductSearchResult) => {
+          const lines = p.productLines || [];
+          const line = lines.find(l => l.supplierId === supplierPid && l.isPrimary)
+            ?? lines.find(l => l.supplierId === supplierPid);
+          return {
+            productId: p.id,
+            name: p.name,
+            barcode: p.barcode,
+            price: p.price,
+            cost: p.cost,
+            stock: p.stock,
+            minStock: p.minStock,
+            department: p.department || null,
+            supplierPrice: line?.supplierPrice ?? null,
+            totalSold: 0,
+          };
+        }));
       } catch (error) {
         if (!(error instanceof DOMException && error.name === 'AbortError')) {
           setManualResults([]);
@@ -310,7 +377,7 @@ export default function OrdersPage() {
       clearTimeout(timer);
       controller.abort();
     };
-  }, [manualSearch, showManualAdd]);
+  }, [manualSearch, showManualAdd, formSupplierId]);
 
   const addManualProduct = (product: SoldProduct) => {
     // Check if already in the list
@@ -387,35 +454,141 @@ export default function OrdersPage() {
   const openReceiveDialog = (order: Order) => {
     setSelectedOrder(order);
     const init: Record<number, number> = {};
-    order.items.forEach(i => { init[i.id] = i.receivedQuantity; });
+    const initCost: Record<number, string> = {};
+    const initPrice: Record<number, string> = {};
+    const initBatch: Record<number, string> = {};
+    order.items.forEach(i => {
+      init[i.id] = i.receivedQuantity;
+      const line = i.product?.productLines?.find(l => l.supplierId === order.supplierId && l.isPrimary)
+        ?? i.product?.productLines?.find(l => l.supplierId === order.supplierId);
+      initCost[i.id] = String(i.costPrice ?? line?.supplierPrice ?? i.product?.cost ?? 0);
+      initPrice[i.id] = String(i.product?.price ?? 0);
+      initBatch[i.id] = '';
+    });
     setReceiveQuantities(init);
+    setReceiveCosts(initCost);
+    setReceivePrices(initPrice);
+    setReceiveBatches(initBatch);
+    setReceiveExtras([]);
+    setExtraSearch('');
+    setExtraResults([]);
     setReceiveOpen(true);
+  };
+
+  // Aplica un % de aumento: el precio de venta queda entero, el costo con 2 decimales
+  const applyPercentToItem = (itemId: number, percent: string) => {
+    const pct = parseFloat(percent);
+    if (!Number.isFinite(pct)) return;
+    const cost = parseFloat(receiveCosts[itemId] ?? '0') || 0;
+    const price = parseFloat(receivePrices[itemId] ?? '0') || 0;
+    setReceiveCosts(prev => ({ ...prev, [itemId]: (cost * (1 + pct / 100)).toFixed(2) }));
+    setReceivePrices(prev => ({ ...prev, [itemId]: String(Math.round(price * (1 + pct / 100))) }));
+  };
+
+  const extraProfit = receiveExtras.reduce((s, e) => {
+    const qty = parseInt(e.quantity) || 0;
+    const cost = parseFloat(e.costPrice) || 0;
+    const price = parseFloat(e.price) || 0;
+    return s + qty * (price - cost);
+  }, 0);
+
+  const extraTotalCost = receiveExtras.reduce((s, e) => {
+    const qty = parseInt(e.quantity) || 0;
+    const cost = parseFloat(e.costPrice) || 0;
+    return s + qty * cost;
+  }, 0);
+
+  const handleExtraSearch = (q: string) => {
+    setExtraSearch(q);
+    if (!q.trim()) { setExtraResults([]); return; }
+    setExtraSearching(true);
+    fetch(`/api/products?q=${encodeURIComponent(q)}&limit=6`)
+      .then(r => r.json())
+      .then(d => setExtraResults(d.products || []))
+      .catch(() => setExtraResults([]))
+      .finally(() => setExtraSearching(false));
+  };
+
+  const addExtraProduct = (p: ProductSearchResult) => {
+    setReceiveExtras(prev => [
+      ...prev,
+      {
+        key: `extra-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        productId: p.id,
+        name: p.name,
+        quantity: '1',
+        costPrice: String(p.cost ?? 0),
+        price: String(p.price ?? 0),
+        expiresAt: '',
+      },
+    ]);
+    setExtraSearch('');
+    setExtraResults([]);
+  };
+
+  const updateExtra = (key: string, field: keyof ReceiveExtra, value: string) => {
+    setReceiveExtras(prev => prev.map(e => e.key === key ? { ...e, [field]: value } : e));
+  };
+
+  const removeExtra = (key: string) => {
+    setReceiveExtras(prev => prev.filter(e => e.key !== key));
   };
 
   const handleReceive = async () => {
     if (!selectedOrder) return;
     setReceiveLoading(true);
     try {
-      const res = await fetch(`/api/orders/${selectedOrder.id}`, {
-        method: 'PUT',
+      const res = await fetch(`/api/orders/${selectedOrder.id}/receive`, {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           items: selectedOrder.items.map(i => ({
-            id: i.id,
-            productId: i.productId,
-            quantity: i.quantity,
-            receivedQuantity: receiveQuantities[i.id] || 0,
-            notes: i.notes,
+            orderItemId: i.id,
+            receivedQuantity: receiveQuantities[i.id] ?? i.receivedQuantity,
+            expiresAt: (receiveBatches[i.id] || '').trim() || null,
+            costPrice: receiveCosts[i.id] !== undefined ? parseFloat(receiveCosts[i.id]) : null,
+            price: receivePrices[i.id] !== undefined ? parseFloat(receivePrices[i.id]) : null,
+          })),
+          extras: receiveExtras.map(e => ({
+            productId: e.productId,
+            quantity: parseInt(e.quantity) || 0,
+            costPrice: e.costPrice ? parseFloat(e.costPrice) : null,
+            price: e.price ? parseFloat(e.price) : null,
+            expiresAt: e.expiresAt.trim() || null,
           })),
         }),
       });
-      if (res.ok) {
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast.error(data.error || 'Error al recibir pedido');
+      } else {
+        toast.success('Recepción guardada');
         setReceiveOpen(false);
         setSelectedOrder(null);
         fetchOrders(orderPage);
       }
-    } catch {}
+    } catch {
+      toast.error('Error al recibir pedido');
+    }
     setReceiveLoading(false);
+  };
+
+  const handleReorderMissing = async () => {
+    if (!selectedOrder) return;
+    setReorderLoading(true);
+    try {
+      const res = await fetch(`/api/orders/${selectedOrder.id}/reorder-missing`, { method: 'POST' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast.error(data.error || 'Error al repedir faltantes');
+      } else {
+        toast.success('Pedido de faltantes creado');
+        fetchOrders(orderPage);
+      }
+    } catch {
+      toast.error('Error al repedir faltantes');
+    }
+    setReorderLoading(false);
   };
 
   // ── Edit items ──
@@ -458,18 +631,56 @@ export default function OrdersPage() {
         year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
       });
 
+      // Columnas seleccionadas para el export (mínimo: código, nombre, cantidad)
+      const cols = EXPORT_COLUMN_OPTIONS.filter(c => exportCols.has(c.key));
+      const headerCells = cols.map(c => {
+        const align = c.key === 'index' || c.key === 'quantity' || c.key === 'received' || c.key === 'pending'
+          ? ' class="center"'
+          : (c.key === 'price' || c.key === 'supplierPrice' || c.key === 'profit' ? ' class="right"' : '');
+        return `<th${align}>${c.label}</th>`;
+      }).join('');
+
       // Build a standalone HTML document for export
+      let totalProfit = 0;
+      const hasProfitCol = cols.some(c => c.key === 'profit');
       const rowsHtml = items.map((item, idx) => {
         const pending = Math.max(0, item.quantity - item.receivedQuantity);
-        return `<tr>
-          <td style="padding:6px 8px;border-bottom:1px solid #334155;text-align:center;font-family:monospace;font-size:12px;color:#94a3b8">${idx + 1}</td>
-          <td style="padding:6px 8px;border-bottom:1px solid #334155;font-family:monospace;font-size:12px;color:#94a3b8">${item.product?.barcode || '—'}</td>
-          <td style="padding:6px 8px;border-bottom:1px solid #334155;font-size:14px;color:#e2e8f0">${item.product?.name || `#${item.productId}`}</td>
-          <td style="padding:6px 8px;border-bottom:1px solid #334155;text-align:center;font-size:14px;color:#e2e8f0">${item.quantity}</td>
-          <td style="padding:6px 8px;border-bottom:1px solid #334155;text-align:center;font-size:14px;color:#94a3b8">${item.receivedQuantity}</td>
-          <td style="padding:6px 8px;border-bottom:1px solid #334155;text-align:center;font-size:14px;color:${pending > 0 ? '#fbbf24' : '#34d399'}">${pending > 0 ? pending : '✓'}</td>
-        </tr>`;
+        const line = item.product?.productLines?.find(l => l.supplierId === supplier?.id && l.isPrimary)
+          ?? item.product?.productLines?.find(l => l.supplierId === supplier?.id);
+        const unitCost = item.costPrice ?? line?.supplierPrice ?? item.product?.cost ?? 0;
+        const unitProfit = (item.product?.price ?? 0) - unitCost;
+        const lineProfit = unitProfit * item.quantity;
+        totalProfit += lineProfit;
+
+        const styles: Record<string, string> = {
+          padding: '6px 8px',
+          borderBottom: '1px solid #334155',
+          fontSize: '14px',
+          color: '#e2e8f0',
+        };
+        const cell = (extra: Record<string, string>) =>
+          `<td style="${Object.entries({ ...styles, ...extra }).map(([k, v]) => `${k}:${v}`).join(';')}">${extra.content}</td>`;
+
+        return `<tr>` + cols.map(c => {
+          switch (c.key) {
+            case 'index': return cell({ textAlign: 'center', fontFamily: 'monospace', fontSize: '12px', color: '#94a3b8', content: String(idx + 1) });
+            case 'barcode': return cell({ fontFamily: 'monospace', fontSize: '12px', color: '#94a3b8', content: item.product?.barcode || '—' });
+            case 'name': return cell({ content: item.product?.name || `#${item.productId}` });
+            case 'quantity': return cell({ textAlign: 'center', content: String(item.quantity) });
+            case 'received': return cell({ textAlign: 'center', fontSize: '14px', color: '#94a3b8', content: String(item.receivedQuantity) });
+            case 'pending': return cell({ textAlign: 'center', fontSize: '14px', color: pending > 0 ? '#fbbf24' : '#34d399', content: pending > 0 ? String(pending) : '✓' });
+            case 'price': return cell({ textAlign: 'right', fontFamily: 'monospace', fontSize: '12px', color: '#94a3b8', content: (item.product?.price ?? 0) > 0 ? '$' + (item.product?.price ?? 0).toFixed(2) : '—' });
+            case 'supplierPrice': return cell({ textAlign: 'right', fontFamily: 'monospace', fontSize: '12px', color: '#94a3b8', content: unitCost > 0 ? '$' + unitCost.toFixed(2) : '—' });
+            case 'profit': return cell({ textAlign: 'right', fontFamily: 'monospace', fontSize: '12px', color: lineProfit >= 0 ? '#34d399' : '#f87171', content: (lineProfit >= 0 ? '+' : '') + '$' + lineProfit.toFixed(2) });
+            default: return '';
+          }
+        }).join('') + '</tr>';
       }).join('');
+
+      const profitFooter = hasProfitCol ? `<tfoot><tr>
+        <td colspan="${cols.length - 1}" style="padding:8px;text-align:right;font-size:14px;color:#e2e8f0;border-top:2px solid #334155">Ganancia neta estimada:</td>
+        <td style="padding:8px;text-align:right;font-size:15px;font-weight:600;font-family:monospace;color:${totalProfit >= 0 ? '#34d399' : '#f87171'};border-top:2px solid #334155">${totalProfit >= 0 ? '+' : ''}$${totalProfit.toFixed(2)}</td>
+      </tr></tfoot>` : '';
 
       const htmlContent = `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Pedido #${id}</title>
@@ -484,6 +695,7 @@ export default function OrdersPage() {
   table { width:100%; border-collapse:collapse; }
   th { padding:8px; background:#1e293b; font-size:12px; text-align:left; color:#94a3b8; border-bottom:2px solid #334155; }
   th.center { text-align:center; }
+  th.right { text-align:right; }
   .footer { text-align:center; font-size:10px; color:#64748b; margin-top:16px; }
   @media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }
 </style></head><body>
@@ -494,9 +706,10 @@ export default function OrdersPage() {
   ${notes ? `<div class="notes">Notas: ${notes}</div>` : ''}
   <table>
     <thead><tr>
-      <th class="center">#</th><th>Código</th><th>Nombre</th><th class="center">Cantidad</th><th class="center">Recibido</th><th class="center">Pendiente</th>
+      ${headerCells}
     </tr></thead>
     <tbody>${rowsHtml}</tbody>
+    ${profitFooter}
   </table>
   <div class="footer">Generado por POS System — ${new Date().toLocaleString('es-MX')}</div>
 </div>
@@ -562,6 +775,15 @@ export default function OrdersPage() {
     .filter(([pid]) => !hiddenRows.has(parseInt(pid)))
     .reduce((s, [, q]) => s + q, 0);
 
+  // Ganancia neta de lo agregado manualmente: productos sin sugerencia automática
+  // o piezas extra por encima de la sugerencia (totalSold), descontando el precio proveedor
+  const unitCostOf = (p: SoldProduct) => p.supplierPrice ?? p.cost;
+  const manualNetProfit = visibleProducts.reduce((sum, p) => {
+    const qty = quantities[String(p.productId)] || 0;
+    const extras = Math.max(0, qty - (p.totalSold || 0));
+    return sum + (p.price - unitCostOf(p)) * extras;
+  }, 0);
+
   return (
     <div className="space-y-6">
       {/* ── Header ── */}
@@ -587,6 +809,18 @@ export default function OrdersPage() {
               <div className="space-y-5 py-4">
                 {formError && (
                   <div className="rounded-md bg-red-600/20 border border-red-600/50 px-4 py-3 text-sm text-red-400">{formError}</div>
+                )}
+
+                {/* Contador de ganancia neta (productos manuales / piezas extra) */}
+                {orderedCount > 0 && (
+                  <div className="flex justify-end">
+                    <div className={`rounded-lg border px-4 py-2 text-right ${manualNetProfit >= 0 ? 'border-emerald-600/50 bg-emerald-900/30' : 'border-red-600/50 bg-red-900/30'}`}>
+                      <p className="text-[10px] uppercase tracking-wide text-slate-400">Ganancia neta (manual/extras)</p>
+                      <p className={`text-xl font-bold ${manualNetProfit >= 0 ? 'text-emerald-300' : 'text-red-400'}`}>
+                        {formatCurrency(manualNetProfit)}
+                      </p>
+                    </div>
+                  </div>
                 )}
 
                 {/* Proveedor */}
@@ -719,7 +953,12 @@ export default function OrdersPage() {
                                 </TableCell>
                                 <TableCell className="text-center text-xs text-slate-500 font-mono">{idx + 1}</TableCell>
                                 <TableCell className="font-mono text-xs text-slate-400">{product.barcode || '—'}</TableCell>
-                                <TableCell className="text-sm text-slate-200">{product.name}</TableCell>
+                                <TableCell className="text-sm text-slate-200">
+                                  {product.name}
+                                  {product.source === 'pendiente' && (
+                                    <Badge variant="outline" className="ml-2 text-amber-400 border-amber-600 text-[10px]">pendiente</Badge>
+                                  )}
+                                </TableCell>
                                 <TableCell className="text-center">
                                   <Input type="number" min="0" value={quantities[String(product.productId)] || 0}
                                     onChange={e => { const v = parseInt(e.target.value) || 0; setQuantities(prev => ({ ...prev, [String(product.productId)]: Math.max(0, v) })); }}
@@ -924,14 +1163,14 @@ export default function OrdersPage() {
 
       {/* ── Receive Dialog ── */}
       <Dialog open={receiveOpen} onOpenChange={o => { setReceiveOpen(o); if (!o) setSelectedOrder(null); }}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <CheckCircle className="h-5 w-5 text-emerald-400" />
               Recibir Pedido #{selectedOrder?.id}
             </DialogTitle>
             <DialogDescription>
-              Ingresa las cantidades recibidas para cada producto. Las que no se reciban quedarán como pendientes.
+              Ingresa cantidades recibidas, caducidad (opcional), y ajusta precios si es necesario. Las piezas no recibidas quedan como pendientes.
             </DialogDescription>
           </DialogHeader>
           {selectedOrder && (
@@ -943,21 +1182,25 @@ export default function OrdersPage() {
                 <Table>
                   <TableHeader>
                     <TableRow className="bg-slate-800/80">
-                      <TableHead>Código</TableHead>
-                      <TableHead>Nombre</TableHead>
+                      <TableHead>Producto</TableHead>
                       <TableHead className="text-center">Pedido</TableHead>
-                      <TableHead className="text-center w-28">Recibido</TableHead>
-                      <TableHead className="text-center">Pendiente</TableHead>
+                      <TableHead className="text-center w-20">Recibido</TableHead>
+                      <TableHead className="text-center w-24">Caduca (MM/AAAA)</TableHead>
+                      <TableHead className="text-center w-28">P. Proveedor</TableHead>
+                      <TableHead className="text-center w-24">Aumento %</TableHead>
+                      <TableHead className="text-center w-24">P. Venta</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {selectedOrder.items.map(item => {
+                    {selectedOrder.items.filter(i => !i.extra).map(item => {
                       const received = receiveQuantities[item.id] ?? item.receivedQuantity;
                       const pending = Math.max(0, item.quantity - received);
                       return (
                         <TableRow key={item.id}>
-                          <TableCell className="font-mono text-xs text-slate-400">{item.product?.barcode || '—'}</TableCell>
-                          <TableCell className="text-sm font-medium text-slate-200">{item.product?.name || `#${item.productId}`}</TableCell>
+                          <TableCell>
+                            <div className="text-sm font-medium text-slate-200">{item.product?.name || `#${item.productId}`}</div>
+                            <div className="font-mono text-xs text-slate-500">{item.product?.barcode || '—'}</div>
+                          </TableCell>
                           <TableCell className="text-center text-slate-300">{item.quantity}</TableCell>
                           <TableCell className="text-center">
                             <Input
@@ -966,9 +1209,40 @@ export default function OrdersPage() {
                               onChange={e => setReceiveQuantities(prev => ({ ...prev, [item.id]: Math.min(item.quantity, Math.max(0, parseInt(e.target.value) || 0)) }))}
                               className="w-20 h-8 text-center mx-auto"
                             />
+                            {pending > 0 && <div className="text-[10px] text-amber-400 mt-0.5">{pending} faltan</div>}
                           </TableCell>
                           <TableCell className="text-center">
-                            {pending > 0 ? <Badge variant="secondary" className="bg-amber-900/40 text-amber-400">{pending}</Badge> : <span className="text-emerald-400">✓</span>}
+                            <Input
+                              type="text"
+                              value={receiveBatches[item.id] ?? ''}
+                              onChange={e => setReceiveBatches(prev => ({ ...prev, [item.id]: e.target.value }))}
+                              placeholder="MM/AAAA"
+                              className="w-24 h-8 text-center mx-auto text-xs"
+                            />
+                          </TableCell>
+                          <TableCell className="text-center">
+                            <Input
+                              type="number" step="0.01" min="0"
+                              value={receiveCosts[item.id] ?? ''}
+                              onChange={e => setReceiveCosts(prev => ({ ...prev, [item.id]: e.target.value }))}
+                              className="w-24 h-8 text-center mx-auto text-xs"
+                            />
+                          </TableCell>
+                          <TableCell className="text-center">
+                            <Input
+                              type="number" step="0.01" min="0"
+                              placeholder="0"
+                              onChange={e => applyPercentToItem(item.id, e.target.value)}
+                              className="w-20 h-8 text-center mx-auto text-xs"
+                            />
+                          </TableCell>
+                          <TableCell className="text-center">
+                            <Input
+                              type="number" step="1" min="0"
+                              value={receivePrices[item.id] ?? ''}
+                              onChange={e => setReceivePrices(prev => ({ ...prev, [item.id]: e.target.value }))}
+                              className="w-24 h-8 text-center mx-auto text-xs"
+                            />
                           </TableCell>
                         </TableRow>
                       );
@@ -976,11 +1250,91 @@ export default function OrdersPage() {
                   </TableBody>
                 </Table>
               </div>
-              
+
+              {/* Extras (piezas que llegaron sin pedirse) */}
+              <div className="rounded-md border border-red-800/60 bg-red-950/20 p-3 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="text-sm font-medium text-red-300 flex items-center gap-2">
+                      <AlertTriangle className="h-4 w-4" /> Piezas extras (no pedidas)
+                    </span>
+                    <p className="text-[11px] text-red-300/70 mt-0.5">
+                      Se descuentan de la ganancia neta. Faltante: el costo de las piezas no recibidas se recupera al costo total.
+                    </p>
+                  </div>
+                  {receiveExtras.length > 0 && (
+                    <div className="text-right">
+                      <div className={`text-sm font-bold ${extraProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                        Ganancia neta: {formatCurrency(extraProfit)}
+                      </div>
+                      <div className="text-[11px] text-slate-400">Costo total: {formatCurrency(extraTotalCost)}</div>
+                    </div>
+                  )}
+                </div>
+
+                {receiveExtras.map(extra => (
+                  <div key={extra.key} className="grid grid-cols-12 gap-2 items-end rounded-md border border-red-800 bg-red-950/40 p-2">
+                    <div className="col-span-3">
+                      <Label className="text-[10px] text-red-300/80">Producto</Label>
+                      <div className="text-sm text-red-100 font-medium truncate">{extra.name}</div>
+                    </div>
+                    <div className="col-span-2">
+                      <Label className="text-[10px] text-red-300/80">Cantidad</Label>
+                      <Input type="number" min="1" value={extra.quantity} onChange={e => updateExtra(extra.key, 'quantity', e.target.value)} className="h-8 text-xs" />
+                    </div>
+                    <div className="col-span-2">
+                      <Label className="text-[10px] text-red-300/80">Caduca (MM/AAAA)</Label>
+                      <Input type="text" value={extra.expiresAt} onChange={e => updateExtra(extra.key, 'expiresAt', e.target.value)} placeholder="opcional" className="h-8 text-xs" />
+                    </div>
+                    <div className="col-span-2">
+                      <Label className="text-[10px] text-red-300/80">P. Proveedor</Label>
+                      <Input type="number" step="0.01" min="0" value={extra.costPrice} onChange={e => updateExtra(extra.key, 'costPrice', e.target.value)} className="h-8 text-xs" />
+                    </div>
+                    <div className="col-span-2">
+                      <Label className="text-[10px] text-red-300/80">P. Venta</Label>
+                      <Input type="number" step="1" min="0" value={extra.price} onChange={e => updateExtra(extra.key, 'price', e.target.value)} className="h-8 text-xs" />
+                    </div>
+                    <div className="col-span-1 flex justify-end">
+                      <button type="button" onClick={() => removeExtra(extra.key)} className="text-red-400 hover:text-red-300 transition-colors" title="Quitar extra">
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+                    <Input
+                      placeholder="Buscar producto extra por nombre o código..."
+                      value={extraSearch}
+                      onChange={e => handleExtraSearch(e.target.value)}
+                      className="pl-9 h-8 text-xs"
+                    />
+                    {extraResults.length > 0 && (
+                      <div className="absolute z-10 mt-1 w-full rounded-md border border-slate-700 bg-slate-900 shadow-lg">
+                        {extraResults.map(p => (
+                          <button
+                            key={p.id}
+                            type="button"
+                            onClick={() => addExtraProduct(p)}
+                            className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left text-xs text-slate-200 hover:bg-slate-800 transition-colors"
+                          >
+                            <span className="truncate">{p.name}</span>
+                            <span className="font-mono text-slate-500 shrink-0">{p.barcode || '—'}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  {extraSearching && <span className="text-xs text-slate-500 py-2">Buscando...</span>}
+                </div>
+              </div>
+
               {/* Totals */}
               {(() => {
-                const totalPedido = selectedOrder.items.reduce((s, i) => s + i.quantity, 0);
-                const totalRecibido = selectedOrder.items.reduce((s, i) => s + (receiveQuantities[i.id] ?? i.receivedQuantity), 0);
+                const totalPedido = selectedOrder.items.filter(i => !i.extra).reduce((s, i) => s + i.quantity, 0);
+                const totalRecibido = selectedOrder.items.filter(i => !i.extra).reduce((s, i) => s + (receiveQuantities[i.id] ?? i.receivedQuantity), 0);
                 const totalPendiente = totalPedido - totalRecibido;
                 return (
                   <div className="flex justify-between text-sm px-1">
@@ -1015,14 +1369,42 @@ export default function OrdersPage() {
           </DialogHeader>
           {selectedOrder && (
             <>
-              {/* Export buttons */}
-              <div className="flex gap-2 justify-end">
-                <Button variant="outline" size="sm" onClick={() => handleExport('png')} disabled={exporting} className="text-xs">
-                  <ImageIcon className="h-3.5 w-3.5 mr-1" />{exporting ? '...' : 'PNG'}
-                </Button>
-                <Button variant="outline" size="sm" onClick={() => handleExport('pdf')} disabled={exporting} className="text-xs">
-                  <FileText className="h-3.5 w-3.5 mr-1" />{exporting ? '...' : 'PDF'}
-                </Button>
+              {/* Export buttons + column selector */}
+              <div className="flex flex-col gap-2">
+                <div className="flex gap-2 justify-end">
+                  {selectedOrder.status !== 'received' && selectedOrder.status !== 'cancelled' && (
+                    <Button variant="outline" size="sm" onClick={handleReorderMissing} disabled={reorderLoading} className="text-xs border-amber-600/50 text-amber-400 hover:bg-amber-500/10">
+                      <RefreshCcw className="h-3.5 w-3.5 mr-1" />{reorderLoading ? '...' : 'Repedir faltantes'}
+                    </Button>
+                  )}
+                  <Button variant="outline" size="sm" onClick={() => handleExport('png')} disabled={exporting} className="text-xs">
+                    <ImageIcon className="h-3.5 w-3.5 mr-1" />{exporting ? '...' : 'PNG'}
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => handleExport('pdf')} disabled={exporting} className="text-xs">
+                    <FileText className="h-3.5 w-3.5 mr-1" />{exporting ? '...' : 'PDF'}
+                  </Button>
+                </div>
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2 justify-end rounded-md border border-slate-700 bg-slate-800/60 px-3 py-2">
+                  <span className="text-xs text-slate-400">Columnas del export:</span>
+                  {EXPORT_COLUMN_OPTIONS.map(opt => (
+                    <label key={opt.key} className="flex items-center gap-1.5 text-xs text-slate-300 cursor-pointer select-none">
+                      <Checkbox
+                        checked={exportCols.has(opt.key)}
+                        disabled={opt.required}
+                        onCheckedChange={() => {
+                          setExportCols(prev => {
+                            const next = new Set(prev);
+                            if (next.has(opt.key)) next.delete(opt.key);
+                            else next.add(opt.key);
+                            return next;
+                          });
+                        }}
+                        className="h-3.5 w-3.5 border-slate-600 data-[state=checked]:bg-emerald-600 data-[state=checked]:border-emerald-600"
+                      />
+                      {opt.label}
+                    </label>
+                  ))}
+                </div>
               </div>
 
               {/* Exportable content */}
@@ -1050,11 +1432,17 @@ export default function OrdersPage() {
                   <TableBody>
                     {selectedOrder.items.map((item, idx) => {
                       const pending = Math.max(0, item.quantity - item.receivedQuantity);
+                      const isExtra = item.extra === true;
                       return (
-                        <TableRow key={item.id}>
-                          <TableCell className="text-xs text-slate-400 font-mono">{idx + 1}</TableCell>
+                        <TableRow key={item.id} className={isExtra ? 'bg-red-950/40' : pending > 0 ? 'bg-amber-950/20' : ''}>
+                          <TableCell className="text-xs text-slate-400 font-mono">
+                            {isExtra ? <AlertTriangle className="h-3.5 w-3.5 text-red-400 inline mr-1" /> : `${idx + 1}.`}
+                          </TableCell>
                           <TableCell className="text-xs text-slate-400 font-mono">{item.product?.barcode || '—'}</TableCell>
-                          <TableCell className="text-sm text-slate-200">{item.product?.name || `#${item.productId}`}</TableCell>
+                          <TableCell className={`text-sm ${isExtra ? 'text-red-300' : 'text-slate-200'}`}>
+                            {item.product?.name || `#${item.productId}`}
+                            {isExtra && <span className="ml-2 text-[10px] font-bold text-red-400 uppercase">Extra</span>}
+                          </TableCell>
                           <TableCell className="text-center text-slate-200">{item.quantity}</TableCell>
                           <TableCell className="text-center text-slate-300">{item.receivedQuantity}</TableCell>
                           <TableCell className="text-center">{pending > 0 ? <span className="text-amber-400">{pending}</span> : <span className="text-emerald-400">✓</span>}</TableCell>

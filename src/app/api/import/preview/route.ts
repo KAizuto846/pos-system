@@ -18,17 +18,18 @@ export async function POST(request: NextRequest) {
     const isDBF = fileName.endsWith('.dbf');
     const isCSV = fileName.endsWith('.csv');
     const isXLSX = fileName.endsWith('.xlsx') || fileName.endsWith('.xls');
+    const isJSON = fileName.endsWith('.json');
 
-    if (!isDBF && !isCSV && !isXLSX) {
+    if (!isDBF && !isCSV && !isXLSX && !isJSON) {
       return NextResponse.json(
-        { error: 'Formato no soportado. Solo se aceptan archivos .dbf, .csv, .xlsx o .xls' },
+        { error: 'Formato no soportado. Solo se aceptan archivos .dbf, .csv, .xlsx, .xls o .json' },
         { status: 400 }
       );
     }
 
     let columns: string[] = [];
     let rows: Record<string, unknown>[] = [];
-    let fileType: 'dbf' | 'csv' | 'xlsx' = 'csv';
+    let fileType: 'dbf' | 'csv' | 'xlsx' | 'json' = 'csv';
 
     if (isDBF) {
       fileType = 'dbf';
@@ -69,6 +70,17 @@ export async function POST(request: NextRequest) {
       const data = XLSX.utils.sheet_to_json(sheet);
       columns = Object.keys(data[0] || {});
       rows = data as Record<string, unknown>[];
+    } else if (isJSON) {
+      fileType = 'json';
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      const data = Array.isArray(parsed)
+        ? parsed
+        : Array.isArray(parsed.products)
+          ? parsed.products
+          : [];
+      rows = data as Record<string, unknown>[];
+      columns = Array.from(new Set(rows.flatMap(r => Object.keys(r))));
     } else {
       fileType = 'csv';
       const text = await file.text();

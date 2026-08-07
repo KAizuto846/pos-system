@@ -134,6 +134,7 @@ model Product {
   saleItems      SaleItem[]
   orderItems     SupplierOrderItem[]
   refunds        Refund[]
+  batches        ProductBatch[]
 
   @@index([barcode])
   @@index([departmentId])
@@ -141,6 +142,22 @@ model Product {
   @@index([name])
   @@index([createdAt])
   @@map("products")
+}
+
+// Lote de inventario con caducidad opcional. La suma de quantities de los lotes
+// nunca excede el stock total del producto; el sobrante es stock libre.
+model ProductBatch {
+  id        Int       @id @default(autoincrement())
+  productId Int       @map("product_id")
+  product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  quantity  Int
+  expiresAt DateTime? @map("expires_at")
+  costPrice Float     @default(0) @map("cost_price")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@index([productId])
+  @@index([expiresAt])
+  @@map("product_batches")
 }
 
 model Customer {
@@ -247,6 +264,8 @@ model SupplierOrderItem {
   quantity           Int
   receivedQuantity   Int           @default(0) @map("received_quantity")
   received           Boolean       @default(false)
+  extra              Boolean       @default(false)
+  costPrice          Float?        @map("cost_price")
   notes              String        @default("")
   createdAt          DateTime      @default(now()) @map("created_at")
   updatedAt          DateTime      @updatedAt @map("updated_at")
@@ -308,10 +327,12 @@ model ShiftReport {
   endDate         DateTime @map("end_date")
   totalSales      Int      @default(0) @map("total_sales")
   totalAmount     Float    @default(0) @map("total_amount")
+  totalCost       Float    @default(0) @map("total_cost")
   totalRefunds    Int      @default(0) @map("total_refunds")
   refundAmount    Float    @default(0) @map("refund_amount")
   netAmount       Float    @default(0) @map("net_amount")
   byPaymentMethod String   @default("{}") @map("by_payment_method")
+  details         String   @default("{}")
   notes           String   @default("")
   createdAt       DateTime @default(now()) @map("created_at")
 

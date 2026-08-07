@@ -35,7 +35,7 @@ export async function GET(request: Request) {
       return Response.json({ error: "Fechas inválidas" }, { status: 400 });
     }
 
-    // Obtener ventas en el rango, agrupadas por producto del proveedor (multi-supplier via ProductLine)
+    // Obtener ventas en el rango, agrupadas por producto del proveedor (solo si el proveedor es el PRINCIPAL via ProductLine)
     const saleItems = await prisma.saleItem.findMany({
       where: {
         sale: {
@@ -47,7 +47,7 @@ export async function GET(request: Request) {
         product: {
           active: true,
           productLines: {
-            some: { supplierId: sid },
+            some: { supplierId: sid, isPrimary: true },
           },
         },
       },
@@ -55,6 +55,9 @@ export async function GET(request: Request) {
         product: {
           include: {
             department: true,
+            productLines: {
+              select: { supplierId: true, supplierPrice: true, isPrimary: true },
+            },
           },
         },
       },
@@ -83,6 +86,9 @@ export async function GET(request: Request) {
       if (existing) {
         existing.totalSold += item.quantity;
       } else {
+        const lines = item.product.productLines || [];
+        const line = lines.find(l => l.supplierId === sid && l.isPrimary)
+          ?? lines.find(l => l.supplierId === sid);
         grouped.set(pid, {
           productId: pid,
           name: item.product.name,
@@ -92,7 +98,7 @@ export async function GET(request: Request) {
           stock: item.product.stock,
           minStock: item.product.minStock,
           department: item.product.department,
-          supplierPrice: null, // Se podría obtener de ProductLine
+          supplierPrice: line?.supplierPrice ?? null,
           totalSold: item.quantity,
         });
       }

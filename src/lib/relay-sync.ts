@@ -6,7 +6,7 @@
 
 import { prisma } from "@/lib/prisma";
 import type { SyncLogEntry } from "@/lib/sync-engine";
-import { resolveServerDeviceId } from "@/lib/sync-utils";
+import { getLocalBaseUrl, resolveServerDeviceId } from "@/lib/sync-utils";
 
 const KEY_RELAY_URL = "relayUrl";
 const KEY_RELAY_SECRET = "relaySecret";
@@ -103,15 +103,6 @@ export async function testRelayConnection(
 }
 
 // ─── Sync ────────────────────────────────────────────────────
-// URL del servidor local. En Electron se setea PORT; en dev/web se lee del .env.
-function getLocalBaseUrl(): string {
-  const envUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.AUTH_URL;
-  if (envUrl && /^https?:\/\//i.test(envUrl)) {
-    return envUrl.replace(/\/+$/, "");
-  }
-  return `http://localhost:${process.env.PORT || 3000}`;
-}
-
 async function localPush(changes: SyncLogEntry[], secret: string) {
   const localUrl = `${getLocalBaseUrl()}/api/sync/push`;
   const headers: Record<string, string> = { "Content-Type": "application/json" };

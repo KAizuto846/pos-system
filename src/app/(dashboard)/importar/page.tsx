@@ -20,7 +20,7 @@ interface PreviewData {
   totalRows: number;
   previewRows: Record<string, unknown>[];
   fileName: string;
-  fileType: 'dbf' | 'csv' | 'xlsx';
+  fileType: 'dbf' | 'csv' | 'xlsx' | 'json';
 }
 
 interface FieldMapping {
@@ -42,6 +42,7 @@ const FIELD_OPTIONS: Record<string, Array<{ value: string; label: string; requir
     { value: 'cost', label: 'Costo' },
     { value: 'stock', label: 'Stock actual' },
     { value: 'minStock', label: 'Stock mínimo' },
+    { value: 'active', label: 'Activo (si/no)' },
     { value: 'department', label: 'Departamento' },
     { value: 'supplier', label: 'Proveedor' },
     { value: 'supplierPrice', label: 'Precio proveedor' },
@@ -72,6 +73,7 @@ const ASPEL_AUTO_MAP: Record<string, Record<string, string>> = {
   existencia: { name: 'stock', note: '' },
   codigo_barras: { name: 'barcode', note: '' },
   precio_venta: { name: 'price', note: '' },
+  activo: { name: 'active', note: 'si/no' },
   precio: { name: 'price', note: '' },
   costo_promedio: { name: 'cost', note: '' },
   costo_ultimo: { name: 'cost', note: '' },
@@ -127,8 +129,8 @@ export default function ImportPage() {
     if (!selectedFile) return;
 
     const ext = selectedFile.name.split('.').pop()?.toLowerCase();
-    if (ext !== 'dbf' && ext !== 'csv' && ext !== 'xlsx' && ext !== 'xls') {
-      toast.error('Solo se aceptan archivos .dbf, .csv, .xlsx o .xls');
+    if (ext !== 'dbf' && ext !== 'csv' && ext !== 'xlsx' && ext !== 'xls' && ext !== 'json') {
+      toast.error('Solo se aceptan archivos .dbf, .csv, .xlsx o .json');
       return;
     }
 
@@ -162,8 +164,16 @@ export default function ImportPage() {
       for (const col of data.columns) {
         const colLower = col.toLowerCase().replace(/\s+/g, '_');
         const aspelMatch = ASPEL_AUTO_MAP[colLower];
-        if (aspelMatch && fieldKeys.includes(aspelMatch.name)) {
-          autoMappings.push({ sourceField: col, targetField: aspelMatch.name });
+        let targetName = aspelMatch?.name;
+        // 'proveedor' es el proveedor del producto en importaciones de productos
+        if (colLower === 'proveedor' && entityType === 'products') {
+          targetName = 'supplier';
+        }
+        if (targetName && fieldKeys.includes(targetName)) {
+          autoMappings.push({ sourceField: col, targetField: targetName });
+        } else if (fieldKeys.includes(colLower)) {
+          // Coincidencia directa (ej. export JSON del propio sistema)
+          autoMappings.push({ sourceField: col, targetField: colLower });
         }
       }
 
@@ -368,7 +378,7 @@ export default function ImportPage() {
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".dbf,.csv,.xlsx,.xls"
+                  accept=".dbf,.csv,.xlsx,.xls,.json"
                   className="hidden"
                   onChange={(e) => handleFileSelect(e.target.files?.[0] ?? null)}
                 />
@@ -395,7 +405,7 @@ export default function ImportPage() {
                     <p className="mt-3 text-sm font-medium text-slate-400">
                       Arrastra o haz clic para subir
                     </p>
-                        <p className="mt-1 text-xs text-slate-600">DBF (Aspel SAE/INVENTARIOS), CSV o Excel</p>
+                        <p className="mt-1 text-xs text-slate-600">DBF (Aspel SAE/INVENTARIOS), CSV, Excel o JSON exportado</p>
                   </>
                 )}
               </div>
@@ -680,7 +690,9 @@ export default function ImportPage() {
               Eliminar todo el inventario
             </DialogTitle>
             <DialogDescription className="text-slate-400">
-              Esta accion eliminara TODOS los productos, ventas relacionadas, lineas de productos y pedidos.
+              Esta accion eliminara TODO el negocio: productos, ventas, reembolsos,
+              pedidos a proveedores, clientes, movimientos de caja y reportes de turno.
+              Se conservan usuarios, métodos de pago, departamentos y proveedores.
               Esta operacion NO se puede deshacer.
             </DialogDescription>
           </DialogHeader>

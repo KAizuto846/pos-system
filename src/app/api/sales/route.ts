@@ -4,6 +4,7 @@ import { saleSchema } from "@/lib/validations";
 import { broadcast } from "@/lib/broadcast";
 import { logChange } from "@/lib/sync-engine";
 import { getDeviceId } from "@/lib/sync-utils";
+import { consumeBatch } from "@/lib/stock";
 import type { Prisma } from "@prisma/client";
 
 function positiveInt(value: string | null, fallback: number) {
@@ -145,6 +146,9 @@ export async function POST(request: Request) {
             `Stock insuficiente para ${product.name}. Disponible: ${product.stock}, requerido: ${item.quantity}`
           );
         }
+
+        // Consume batches FIFO by expiration (stock total already decremented above)
+        await consumeBatch(tx, item.productId, item.quantity);
       }
 
       // Create the sale

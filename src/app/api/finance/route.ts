@@ -20,16 +20,32 @@ export async function GET(request: Request) {
     if (to) dateFilter.lte = new Date(to + "T23:59:59.999Z");
 
     const whereDate = Object.keys(dateFilter).length > 0 ? { createdAt: dateFilter } : {};
+    // Entradas de caja filtran por recordedAt (no createdAt)
+    const whereEntryDate = Object.keys(dateFilter).length > 0 ? { recordedAt: dateFilter } : {};
 
     switch (action) {
       case "summary": {
+        const paymentMethods = await prisma.paymentMethod.findMany({
+          where: { active: true },
+          orderBy: { name: "asc" },
+        });
+        // Caja fuerte = metodos con affectsCash + entradas sin metodo
+        const affectsCashIds = paymentMethods.filter((pm) => pm.affectsCash).map((pm) => pm.id);
+        const cashMethodFilter = {
+          OR: [
+            { paymentMethodId: null },
+            ...(affectsCashIds.length > 0 ? [{ paymentMethodId: { in: affectsCashIds } }] : []),
+          ],
+        };
+
         const [
           salesAgg,
           saleItems,
           incomeByCategory,
           expenseByCategory,
-          allIncome,
-          allExpense,
+          salesByMethod,
+          entriesByMethod,
+          entriesNoMethod,
         ] = await Promise.all([
           prisma.sale.aggregate({
             _sum: { total: true },
@@ -38,25 +54,36 @@ export async function GET(request: Request) {
           }),
           prisma.saleItem.findMany({
             where: { sale: whereDate },
-            select: { quantity: true, product: { select: { cost: true } } },
+            select: {
+              quantity: true,
+              product: { select: { cost: true } },
+              sale: { select: { paymentMethodId: true } },
+            },
           }),
           prisma.cashEntry.groupBy({
             by: ["category"],
-            where: { type: "INCOME" },
+            where: { type: "INCOME", ...whereEntryDate, ...cashMethodFilter },
             _sum: { amount: true },
           }),
           prisma.cashEntry.groupBy({
             by: ["category"],
-            where: { type: { in: ["EXPENSE", "TRANSFER"] } },
+            where: { type: { in: ["EXPENSE", "TRANSFER"] }, ...whereEntryDate, ...cashMethodFilter },
             _sum: { amount: true },
           }),
-          prisma.cashEntry.aggregate({
-            _sum: { amount: true },
-            where: { type: "INCOME" },
+          prisma.sale.groupBy({
+            by: ["paymentMethodId"],
+            where: { ...whereDate, paymentMethodId: { not: null } },
+            _sum: { total: true },
+            _count: true,
           }),
-          prisma.cashEntry.aggregate({
+          prisma.cashEntry.groupBy({
+            by: ["paymentMethodId", "type"],
+            where: { paymentMethodId: { not: null }, ...whereEntryDate },
             _sum: { amount: true },
-            where: { type: { in: ["EXPENSE", "TRANSFER"] } },
+          }),
+          prisma.cashEntry.findMany({
+            where: { paymentMethodId: null, ...whereEntryDate },
+            select: { type: true, amount: true },
           }),
         ]);
 
@@ -65,7 +92,6 @@ export async function GET(request: Request) {
           (sum, item) => sum + item.product.cost * item.quantity,
           0
         );
-        const cashBalance = (allIncome._sum.amount || 0) - (allExpense._sum.amount || 0);
 
         // Build category map
         const incomeByCat: Record<string, number> = {};
@@ -73,21 +99,91 @@ export async function GET(request: Request) {
         const expenseByCat: Record<string, number> = {};
         for (const c of expenseByCategory) expenseByCat[c.category] = c._sum.amount || 0;
 
-        // Total profits available for withdrawal = sales profit - profit_withdrawals
+        // Caja: SOLO metodos que afectan caja (affectsCash) + entradas sin metodo.
+        // Ventas con metodo que NO afecta caja (tarjeta, etc.) van a su apartado,
+        // no a la caja fuerte.
+        const pmById = new Map(paymentMethods.map((pm) => [pm.id, pm]));
+        const affectsCashSet = new Set(affectsCashIds);
+
+        let cashIncome = 0;
+        let cashExpense = 0;
+        for (const e of entriesNoMethod) {
+          if (e.type === "INCOME") cashIncome += e.amount;
+          else cashExpense += e.amount;
+        }
+        for (const e of entriesByMethod) {
+          if (!e.paymentMethodId || !affectsCashSet.has(e.paymentMethodId)) continue;
+          if (e.type === "INCOME") cashIncome += e._sum.amount || 0;
+          else cashExpense += e._sum.amount || 0;
+        }
+        const cashBalance = cashIncome - cashExpense;
+
+        // Ingresos/egresos por metodo (todas las entradas, sin importar affectsCash)
+        const incomeByMethod: Record<number, number> = {};
+        const expenseByMethod: Record<number, number> = {};
+        for (const e of entriesByMethod) {
+          if (!e.paymentMethodId) continue;
+          if (e.type === "INCOME") incomeByMethod[e.paymentMethodId] = (incomeByMethod[e.paymentMethodId] || 0) + (e._sum.amount || 0);
+          else expenseByMethod[e.paymentMethodId] = (expenseByMethod[e.paymentMethodId] || 0) + (e._sum.amount || 0);
+        }
+
+        // Costo y ventas por metodo
+        const costByMethod: Record<number, number> = {};
+        for (const item of saleItems) {
+          if (item.sale.paymentMethodId) {
+            costByMethod[item.sale.paymentMethodId] = (costByMethod[item.sale.paymentMethodId] || 0) + item.product.cost * item.quantity;
+          }
+        }
+        const revenueByMethod: Record<number, number> = {};
+        const countByMethod: Record<number, number> = {};
+        for (const s of salesByMethod) {
+          if (s.paymentMethodId) {
+            revenueByMethod[s.paymentMethodId] = s._sum.total || 0;
+            countByMethod[s.paymentMethodId] = s._count;
+          }
+        }
+
+        // Reglas del usuario:
+        // - El ingreso SIEMPRE entra como ganancia neta (los depositos manuales suman).
+        // - Todo egreso retira PRIMERO de la ganancia neta y despues del costo total.
+        //   Los retiros de tipo profit_withdrawal descuentan solo ganancia.
+        const manualIncome = (incomeByCat["manual_deposit"] || 0) + (incomeByCat["other"] || 0);
         const profitWithdrawn = expenseByCat["profit_withdrawal"] || 0;
-        const profitCostWithdrawn = expenseByCat["profit_cost_withdrawal"] || 0;
+        const combinedExpenses =
+          (expenseByCat["profit_cost_withdrawal"] || 0) +
+          (expenseByCat["operating_expense"] || 0) +
+          (expenseByCat["purchase"] || 0) +
+          (expenseByCat["other"] || 0) +
+          (expenseByCat["transfer"] || 0);
+
         const grossProfit = totalRevenue - totalCost;
-        
-        // profit_withdrawal: deducts ONLY from profit
-        // profit_cost_withdrawal: deducts from profit first, then from cost remainder
-        // Effective: profit decreases by profit_withdrawal + min(profit_cost_withdrawal, remaining_profit)
-        const remainingProfit = grossProfit - profitWithdrawn;
-        const profitFromCombined = Math.min(profitCostWithdrawn, Math.max(0, remainingProfit));
-        const costFromCombined = Math.max(0, profitCostWithdrawn - profitFromCombined);
-        
-        const netProfit = grossProfit - profitWithdrawn - profitFromCombined;
+        const profitBase = grossProfit + manualIncome;
+        const remainingProfit = profitBase - profitWithdrawn;
+        const profitFromCombined = Math.min(combinedExpenses, Math.max(0, remainingProfit));
+        const costFromCombined = Math.max(0, combinedExpenses - profitFromCombined);
+
+        const netProfit = profitBase - profitWithdrawn - profitFromCombined;
         const netCost = totalCost - costFromCombined;
         const effectiveRevenue = netProfit + netCost;
+
+        // Apartado por metodo de pago: ventas, costo total, ganancia neta y disponible
+        const byPaymentMethod = paymentMethods.map((pm) => {
+          const revenue = revenueByMethod[pm.id] || 0;
+          const cost = costByMethod[pm.id] || 0;
+          const available = (incomeByMethod[pm.id] || 0) - (expenseByMethod[pm.id] || 0);
+          return {
+            id: pm.id,
+            name: pm.name,
+            affectsCash: pm.affectsCash,
+            sales: {
+              count: countByMethod[pm.id] || 0,
+              revenue,
+              totalCost: cost,
+              profit: revenue - cost,
+            },
+            available,
+          };
+        });
 
         return Response.json({
           period: { from: from || "all", to: to || "all" },
@@ -102,18 +198,19 @@ export async function GET(request: Request) {
               profitOnly: profitWithdrawn,
               profitFromCombined,
               costFromCombined,
-              total: profitWithdrawn + profitCostWithdrawn,
+              total: profitWithdrawn + combinedExpenses,
             },
-            availableProfit: Math.max(0, grossProfit - profitWithdrawn - profitFromCombined),
-            combinedAvailable: Math.max(0, (totalRevenue - totalCost) - profitWithdrawn - profitCostWithdrawn),
+            availableProfit: Math.max(0, netProfit),
+            combinedAvailable: Math.max(0, profitBase - profitWithdrawn - combinedExpenses),
           },
           cash: {
             balance: cashBalance,
             incomeByCategory: incomeByCat,
             expenseByCategory: expenseByCat,
-            incomeTotal: allIncome._sum.amount || 0,
-            expenseTotal: allExpense._sum.amount || 0,
+            incomeTotal: cashIncome,
+            expenseTotal: cashExpense,
           },
+          byPaymentMethod,
         });
       }
 
@@ -123,15 +220,36 @@ export async function GET(request: Request) {
         const skip = (page - 1) * limit;
         const search = searchParams.get("q") || "";
         const deptId = searchParams.get("departmentId");
+        const supplierId = searchParams.get("supplierId");
+        const priceMin = searchParams.get("priceMin");
+        const priceMax = searchParams.get("priceMax");
+        const costMin = searchParams.get("costMin");
+        const costMax = searchParams.get("costMax");
+        const stockMin = searchParams.get("stockMin");
+        const stockMax = searchParams.get("stockMax");
+        const minStockMin = searchParams.get("minStockMin");
+        const minStockMax = searchParams.get("minStockMax");
+        const active = searchParams.get("active");
 
-        const where: Record<string, unknown> = { active: true };
+        const where: Record<string, unknown> = {};
         if (search) {
           where.OR = [
             { name: { contains: search } },
             { barcode: { contains: search } },
           ];
         }
-        if (deptId) where.departmentId = parseInt(deptId);
+        if (deptId && deptId !== "all") where.departmentId = parseInt(deptId);
+        if (supplierId && supplierId !== "all") where.supplierId = parseInt(supplierId);
+        if (priceMin) where.price = { ...(where.price as object || {}), gte: parseFloat(priceMin) };
+        if (priceMax) where.price = { ...(where.price as object || {}), lte: parseFloat(priceMax) };
+        if (costMin) where.cost = { ...(where.cost as object || {}), gte: parseFloat(costMin) };
+        if (costMax) where.cost = { ...(where.cost as object || {}), lte: parseFloat(costMax) };
+        if (stockMin) where.stock = { ...(where.stock as object || {}), gte: parseInt(stockMin) };
+        if (stockMax) where.stock = { ...(where.stock as object || {}), lte: parseInt(stockMax) };
+        if (minStockMin) where.minStock = { ...(where.minStock as object || {}), gte: parseInt(minStockMin) };
+        if (minStockMax) where.minStock = { ...(where.minStock as object || {}), lte: parseInt(minStockMax) };
+        if (active === "true") where.active = true;
+        if (active === "false") where.active = false;
 
         const [products, total] = await Promise.all([
           prisma.product.findMany({
@@ -143,6 +261,7 @@ export async function GET(request: Request) {
               price: true,
               cost: true,
               stock: true,
+              minStock: true,
               department: { select: { name: true } },
               supplier: { select: { name: true } },
             },
@@ -162,6 +281,7 @@ export async function GET(request: Request) {
           profit: p.price - p.cost,
           margin: p.price > 0 ? ((p.price - p.cost) / p.price * 100).toFixed(1) : "0",
           stock: p.stock,
+          minStock: p.minStock,
           department: p.department?.name || null,
           supplier: p.supplier?.name || null,
         }));

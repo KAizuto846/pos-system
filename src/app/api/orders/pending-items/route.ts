@@ -36,6 +36,9 @@ export async function GET(request: Request) {
             product: {
               include: {
                 department: true,
+                productLines: {
+                  select: { supplierId: true, supplierPrice: true, isPrimary: true },
+                },
               },
             },
           },
@@ -54,6 +57,7 @@ export async function GET(request: Request) {
         price: number;
         cost: number;
         department: { id: number; name: string } | null;
+        supplierPrice: number | null;
         pendingQuantity: number;
       }
     >();
@@ -68,6 +72,9 @@ export async function GET(request: Request) {
         if (existing) {
           existing.pendingQuantity += pending;
         } else {
+          const lines = item.product.productLines || [];
+          const line = lines.find(l => l.supplierId === sid && l.isPrimary)
+            ?? lines.find(l => l.supplierId === sid);
           pendingMap.set(pid, {
             productId: pid,
             name: item.product.name,
@@ -76,6 +83,7 @@ export async function GET(request: Request) {
             price: item.product.price,
             cost: item.product.cost,
             department: item.product.department,
+            supplierPrice: line?.supplierPrice ?? null,
             pendingQuantity: pending,
           });
         }
@@ -92,8 +100,8 @@ export async function GET(request: Request) {
     return Response.json({
       supplierId: sid,
       supplierName,
-      totalOrdersWithPending: orders.filter((o: any) =>
-        o.items.some((i: any) => i.quantity > i.receivedQuantity)
+      totalOrdersWithPending: orders.filter((o) =>
+        o.items.some((i) => i.quantity > i.receivedQuantity)
       ).length,
       products,
     });

@@ -20,13 +20,22 @@ export async function GET(request: Request) {
     const skip = (page - 1) * limit;
     const departmentId = searchParams.get("departmentId");
     const supplierId = searchParams.get("supplierId");
+    const priceMin = searchParams.get("priceMin");
+    const priceMax = searchParams.get("priceMax");
+    const costMin = searchParams.get("costMin");
+    const costMax = searchParams.get("costMax");
+    const stockMin = searchParams.get("stockMin");
+    const stockMax = searchParams.get("stockMax");
+    const minStockMin = searchParams.get("minStockMin");
+    const minStockMax = searchParams.get("minStockMax");
+    const active = searchParams.get("active");
     const isPosView = searchParams.get("view") === "pos";
 
     const where: Prisma.ProductWhereInput = {};
 
     if (q) {
       where.OR = [
-        { barcode: { equals: q } },
+        { barcode: { contains: q } },
         { name: { contains: q } },
       ];
     }
@@ -40,6 +49,33 @@ export async function GET(request: Request) {
         some: { supplierId: parseInt(supplierId) },
       };
     }
+
+    if (priceMin || priceMax) {
+      where.price = {};
+      if (priceMin) where.price.gte = parseFloat(priceMin);
+      if (priceMax) where.price.lte = parseFloat(priceMax);
+    }
+
+    if (costMin || costMax) {
+      where.cost = {};
+      if (costMin) where.cost.gte = parseFloat(costMin);
+      if (costMax) where.cost.lte = parseFloat(costMax);
+    }
+
+    if (stockMin || stockMax) {
+      where.stock = {};
+      if (stockMin) where.stock.gte = parseInt(stockMin);
+      if (stockMax) where.stock.lte = parseInt(stockMax);
+    }
+
+    if (minStockMin || minStockMax) {
+      where.minStock = {};
+      if (minStockMin) where.minStock.gte = parseInt(minStockMin);
+      if (minStockMax) where.minStock.lte = parseInt(minStockMax);
+    }
+
+    if (active === "true") where.active = true;
+    if (active === "false") where.active = false;
 
     const productQuery = isPosView
       ? prisma.product.findMany({
@@ -63,7 +99,7 @@ export async function GET(request: Request) {
         })
       : prisma.product.findMany({
           where,
-          include: { department: true, supplier: true, productLines: { include: { supplier: true } } },
+          include: { department: true, supplier: true, productLines: { include: { supplier: true } }, batches: true },
           orderBy: { name: "asc" as const },
           skip,
           take: limit,

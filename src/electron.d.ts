@@ -61,6 +61,9 @@ interface Window {
       serverIP?: string;
       deviceName?: string;
       businessName?: string;
+      platform?: string;
     }>;
+    openDiagnostics: () => Promise<{ ok: boolean; error?: string }>;
+    openFirewall: () => Promise<{ ok: boolean; error?: string }>;
   };
 }
