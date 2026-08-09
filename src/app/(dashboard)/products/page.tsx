@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { Plus, Pencil, Trash2, PackageOpen, Search, Download, X, Check } from 'lucide-react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { Plus, Pencil, Trash2, PackageOpen, Search, Download, X, Check, ChevronDown, ChevronUp } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -176,6 +176,22 @@ export default function ProductsPage() {
   // Gestión de piezas
   const [pieceBoxes, setPieceBoxes] = useState<PieceBox[]>([]);
   const [pieceBusy, setPieceBusy] = useState<number | null>(null);
+  const [piecesOpen, setPiecesOpen] = useState(true);
+  const [piecesFilter, setPiecesFilter] = useState('');
+
+  const filteredPieceBoxes = useMemo(() => {
+    const q = piecesFilter.trim().toLowerCase();
+    if (!q) return pieceBoxes;
+    return pieceBoxes.filter(
+      (box) =>
+        box.name.toLowerCase().includes(q) ||
+        box.barcode.toLowerCase().includes(q) ||
+        (box.piece !== null &&
+          (box.piece.name.toLowerCase().includes(q) || box.piece.barcode.toLowerCase().includes(q)))
+    );
+  }, [pieceBoxes, piecesFilter]);
+
+  const [editingPiece, setEditingPiece] = useState<{ id: number; name: string; barcode: string; price: string; cost: string } | null>(null);
 
   const LIMIT = 50;
 
@@ -283,6 +299,7 @@ export default function ProductsPage() {
     setFormProductLines([]);
     setFormBatches([]);
     setFormError('');
+    setEditingPiece(null);
   };
 
   const addBatchRow = () => {
@@ -454,10 +471,29 @@ export default function ProductsPage() {
       return;
     }
 
+    // Guardar precio/costo de la unidad suelta (pieza) si aplica
+    if (editingPiece) {
+      const pieceBody: Record<string, unknown> = {
+        price: parseFloat(editingPiece.price),
+      };
+      if (editingPiece.cost) pieceBody.cost = parseFloat(editingPiece.cost);
+      const pieceRes = await fetch(`/api/products/${editingPiece.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(pieceBody),
+      });
+      if (!pieceRes.ok) {
+        const pieceData = await pieceRes.json().catch(() => ({}));
+        setFormError(pieceData.error || 'Error al guardar el precio de la pieza');
+        return;
+      }
+    }
+
     setEditOpen(false);
     resetForm();
     setSelectedProduct(null);
     fetchProducts(1);
+    fetchPieces();
   };
 
   const handleDelete = async () => {
@@ -627,6 +663,20 @@ export default function ProductsPage() {
       }]);
     } else {
       setFormProductLines([]);
+    }
+
+    // Pieza por unidad suelta (si el producto es una caja gestionada con pieza)
+    const box = pieceBoxes.find((b) => b.id === product.id);
+    if (box && box.piece) {
+      setEditingPiece({
+        id: box.piece.id,
+        name: box.piece.name,
+        barcode: box.piece.barcode,
+        price: String(box.piece.price),
+        cost: box.piece.cost ? String(box.piece.cost) : '',
+      });
+    } else {
+      setEditingPiece(null);
     }
 
     setEditOpen(true);
@@ -909,72 +959,104 @@ export default function ProductsPage() {
       {/* Gestión de piezas */}
       <Card className="border-slate-700 bg-slate-800">
         <CardHeader className="pb-3">
-          <CardTitle className="text-base flex items-center gap-2">
-            <PackageOpen className="h-4 w-4 text-sky-400" />
-            Gestión de piezas
-          </CardTitle>
-          <p className="text-xs text-slate-500">
-            Los productos cuyo nombre termina en <span className="font-mono text-slate-400">C/(N)</span> (ej. "Paracetamol C/10")
-            se consideran cajas. Abrir una caja consume 1 de stock y genera "Pieza de ..." con código <span className="font-mono text-slate-400">S+</span>.
-            Al vender piezas sin stock se abre una caja automáticamente.
-          </p>
-        </CardHeader>
-        <CardContent className="p-0">
-          {pieceBoxes.length === 0 ? (
-            <p className="px-4 pb-4 text-xs text-slate-500 italic">Sin productos de caja detectados</p>
-          ) : (
-            <div className="divide-y divide-slate-700/70">
-              {pieceBoxes.map((box) => (
-                <div key={box.id} className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium text-slate-100 text-sm truncate">{box.name}</span>
-                      {!box.piecesTracked && (
-                        <Badge variant="secondary" className="text-[10px]">revertido</Badge>
-                      )}
-                      {box.detected && (
-                        <Badge variant="outline" className="text-[10px] border-sky-700 text-sky-400">detectado</Badge>
-                      )}
-                    </div>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      Piezas por caja: <span className="text-slate-300">{box.piecesPerUnit ?? '—'}</span> · Stock de caja:{' '}
-                      <span className={box.stock < 1 ? 'text-red-400' : 'text-slate-300'}>{box.stock}</span> · Cajas abiertas:{' '}
-                      <span className="text-slate-300">{box.openedBoxes}</span>
-                      {box.piece && (
-                        <> · Pieza: <span className="text-slate-300">{box.piece.stock} uds</span> (${box.piece.price.toFixed(2)}·{box.piece.barcode})</>
-                      )}
-                    </p>
-                  </div>
-                  <div className="flex gap-2 shrink-0">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="border-sky-700/50 text-sky-400 hover:bg-sky-500/10"
-                      disabled={pieceBusy === box.id || box.stock < 1 || !box.piecesPerUnit}
-                      title={box.stock < 1 ? 'Sin stock de caja' : 'Abrir una caja y generar piezas'}
-                      onClick={() => handleGeneratePieces(box)}
-                    >
-                      <PackageOpen className="h-3.5 w-3.5 mr-1.5" />
-                      Abrir caja
-                    </Button>
-                    {(box.piecesTracked || box.piece) && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="border-red-700/50 text-red-400 hover:bg-red-500/10"
-                        disabled={pieceBusy === box.id}
-                        onClick={() => handleRevertPieces(box)}
-                      >
-                        <X className="h-3.5 w-3.5 mr-1.5" />
-                        Revertir
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
+          <button
+            type="button"
+            className="w-full flex items-center justify-between gap-2 text-left"
+            onClick={() => setPiecesOpen((v) => !v)}
+          >
+            <CardTitle className="text-base flex items-center gap-2">
+              <PackageOpen className="h-4 w-4 text-sky-400" />
+              Gestión de piezas
+              <Badge variant="outline" className="text-[10px] border-slate-600 text-slate-400">
+                {pieceBoxes.length} cajas
+              </Badge>
+            </CardTitle>
+            {piecesOpen ? (
+              <ChevronUp className="h-4 w-4 text-slate-400" />
+            ) : (
+              <ChevronDown className="h-4 w-4 text-slate-400" />
+            )}
+          </button>
+          {piecesOpen && (
+            <p className="text-xs text-slate-500">
+              Los productos cuyo nombre termina en <span className="font-mono text-slate-400">C/(N)</span> (ej. "Paracetamol C/10")
+              se consideran cajas. Abrir una caja consume 1 de stock y genera "Pieza de ..." con código <span className="font-mono text-slate-400">S+</span>.
+              Al vender piezas sin stock se abre una caja automáticamente.
+            </p>
           )}
-        </CardContent>
+        </CardHeader>
+        {piecesOpen && (
+          <CardContent className="p-0">
+            {pieceBoxes.length === 0 ? (
+              <p className="px-4 pb-4 text-xs text-slate-500 italic">Sin productos de caja detectados</p>
+            ) : (
+              <>
+                <div className="px-4 pt-2 pb-3">
+                  <Input
+                    placeholder="Buscar caja o pieza por nombre o código..."
+                    value={piecesFilter}
+                    onChange={(e) => setPiecesFilter(e.target.value)}
+                    className="h-8 text-xs bg-slate-900 border-slate-700"
+                  />
+                </div>
+                <div className="divide-y divide-slate-700/70">
+                  {filteredPieceBoxes.length === 0 ? (
+                    <p className="px-4 py-3 text-xs text-slate-500 italic">Sin resultados para: {piecesFilter}</p>
+                  ) : (
+                    filteredPieceBoxes.map((box) => (
+                      <div key={box.id} className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-slate-100 text-sm truncate">{box.name}</span>
+                            {!box.piecesTracked && (
+                              <Badge variant="secondary" className="text-[10px]">revertido</Badge>
+                            )}
+                            {box.detected && (
+                              <Badge variant="outline" className="text-[10px] border-sky-700 text-sky-400">detectado</Badge>
+                            )}
+                          </div>
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            Piezas por caja: <span className="text-slate-300">{box.piecesPerUnit ?? '—'}</span> · Stock de caja:{' '}
+                            <span className={box.stock < 1 ? 'text-red-400' : 'text-slate-300'}>{box.stock}</span> · Cajas abiertas:{' '}
+                            <span className="text-slate-300">{box.openedBoxes}</span>
+                            {box.piece && (
+                              <> · Pieza: <span className="text-slate-300">{box.piece.stock} uds</span> (${box.piece.price.toFixed(2)}·{box.piece.barcode})</>
+                            )}
+                          </p>
+                        </div>
+                        <div className="flex gap-2 shrink-0">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="border-sky-700/50 text-sky-400 hover:bg-sky-500/10"
+                            disabled={pieceBusy === box.id || box.stock < 1 || !box.piecesPerUnit}
+                            title={box.stock < 1 ? 'Sin stock de caja' : 'Abrir una caja y generar piezas'}
+                            onClick={() => handleGeneratePieces(box)}
+                          >
+                            <PackageOpen className="h-3.5 w-3.5 mr-1.5" />
+                            Abrir caja
+                          </Button>
+                          {(box.piecesTracked || box.piece) && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="border-red-700/50 text-red-400 hover:bg-red-500/10"
+                              disabled={pieceBusy === box.id}
+                              onClick={() => handleRevertPieces(box)}
+                            >
+                              <X className="h-3.5 w-3.5 mr-1.5" />
+                              Revertir
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </>
+            )}
+          </CardContent>
+        )}
       </Card>
 
       {/* Table */}
@@ -1076,7 +1158,7 @@ export default function ProductsPage() {
 
       {/* Edit Dialog */}
       <Dialog open={editOpen} onOpenChange={(o) => { setEditOpen(o); if (!o) { resetForm(); setSelectedProduct(null); } }}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Editar Producto</DialogTitle>
             <DialogDescription>Actualiza la información del producto</DialogDescription>
@@ -1106,6 +1188,38 @@ export default function ProductsPage() {
                   <Input type="number" step="0.01" min="0" value={formCost} onChange={(e) => setFormCost(e.target.value)} />
                 </div>
               </div>
+              {editingPiece && (
+                <div className="space-y-3 rounded-md border border-sky-800/60 bg-sky-950/20 p-3">
+                  <div>
+                    <Label className="text-slate-300">Precio por unidad suelta</Label>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      Se guarda en {editingPiece.name} ({editingPiece.barcode})
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Precio</Label>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={editingPiece.price}
+                        onChange={(e) => setEditingPiece((p) => p && { ...p, price: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Costo</Label>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={editingPiece.cost}
+                        onChange={(e) => setEditingPiece((p) => p && { ...p, cost: e.target.value })}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Stock</Label>

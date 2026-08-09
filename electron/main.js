@@ -191,10 +191,13 @@ function ensureEnv() {
   const userEnv = path.join(USER_DATA, '.env');
   if (!fs.existsSync(userEnv)) {
     const dbUrl = `file:${DB_PATH}`;
+    // IMPORTANTE: NO definir AUTH_URL. Con trustHost:true NextAuth deriva la
+    // URL base del Host de cada request; si AUTH_URL existe, el login redirige
+    // siempre a esa URL y desde el telefono apunta al localhost del telefono
+    // (la pagina nunca termina de cargar).
     const envContent = [
       `DATABASE_URL="${dbUrl}"`,
       `AUTH_SECRET="pos-system-secret"`,
-      `AUTH_URL="http://localhost:${config.serverPort || 3000}"`,
       `NEXT_PUBLIC_APP_URL="http://localhost:${config.serverPort || 3000}"`,
     ].join('\n');
     fs.writeFileSync(userEnv, envContent, 'utf8');
@@ -212,7 +215,6 @@ function getServerEnv() {
     HOSTNAME: '0.0.0.0',
     DATABASE_URL: `file:${DB_PATH}`,
     AUTH_SECRET: 'pos-system-secret',
-    AUTH_URL: `http://localhost:${port}`,
     NEXT_PUBLIC_APP_URL: `http://localhost:${port}`,
     ELECTRON_RUN_AS_NODE: '1',
     DEVICE_ID: config.deviceName || os.hostname(),
@@ -228,6 +230,13 @@ function getServerEnv() {
       }
     });
   } catch (e) {}
+
+  // El login (NextAuth trustHost) construye las URLs base con el Host de cada
+  // request. AUTH_URL/NEXTAUTH_URL fuerzan SIEMPRE esa URL y rompen el acceso
+  // desde el telefono (redirige al localhost DEL TELEFONO). Se eliminan aun si
+  // quedaron en instalaciones anteriores con install.ps1 o configuracion vieja.
+  delete env.AUTH_URL;
+  delete env.NEXTAUTH_URL;
 
   // Always force absolute DB path so SQLite works in packaged app
   // Use forward slashes for cross-platform SQLite compatibility

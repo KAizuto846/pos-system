@@ -15,11 +15,13 @@ interface ReceiveItem {
 }
 
 interface ExtraItem {
-  productId: number;
+  productId: number | null;
   quantity: number;
   costPrice?: number | null;
   price?: number | null;
   expiresAt?: string | null;
+  name?: string | null;
+  barcode?: string | null;
 }
 
 export async function POST(
@@ -42,6 +44,10 @@ export async function POST(
     const body = await request.json();
     const items: ReceiveItem[] = body.items || [];
     const extras: ExtraItem[] = body.extras || [];
+    const paymentMethodId =
+      typeof body.paymentMethodId === "number" ? body.paymentMethodId : null;
+    const totalNote =
+      typeof body.totalNote === "number" && body.totalNote >= 0 ? body.totalNote : null;
 
     if (items.length === 0 && extras.length === 0) {
       return Response.json(
@@ -205,9 +211,56 @@ export async function POST(
 
       // Piezas extras: productos que llegaron sin haberse pedido (se descuentan de ganancia)
       for (const extra of extras) {
-        const { productId, quantity } = extra;
+        const { quantity } = extra;
+        let { productId } = extra;
         if (!Number.isInteger(quantity) || quantity <= 0) {
-          throw new Error(`Cantidad inválida para producto extra ${productId}`);
+          throw new Error(`Cantidad inválida para producto extra`);
+        }
+        // Extra sin inventario (fantasma): se crea el producto al recibir
+        if (!productId) {
+          const name = (extra.name || "").trim();
+          if (!name) {
+            throw new Error("El producto extra sin inventario debe tener nombre");
+          }
+          const barcodeBase = (extra.barcode || "").trim() || `FX-${orderId}-${Date.now()}`;
+          let barcode = barcodeBase;
+          const existingBarcode = await tx.product.findFirst({ where: { barcode } });
+          if (existingBarcode) barcode = `${barcode}-${existingBarcode.id}`;
+          const price = typeof extra.price === "number" && extra.price >= 0 ? extra.price : 0;
+          const ghostCost =
+            typeof extra.costPrice === "number" && extra.costPrice >= 0
+              ? extra.costPrice
+              : 0;
+          const created = await tx.product.create({
+            data: {
+              name,
+              barcode,
+              price,
+              cost: ghostCost,
+              stock: 0,
+              minStock: 1,
+              active: true,
+            },
+          });
+          void logChange(getDeviceId(), "CREATE", "product", created.id, {
+            id: created.id,
+            name,
+            barcode,
+            price,
+            cost: ghostCost,
+            stock: 0,
+            minStock: 1,
+            active: true,
+          });
+          await tx.productLine.create({
+            data: {
+              productId: created.id,
+              supplierId: order.supplierId,
+              supplierPrice: ghostCost,
+              isPrimary: true,
+            },
+          });
+          productId = created.id;
         }
         const product = productMap.get(productId);
         if (!product) {
@@ -288,16 +341,22 @@ export async function POST(
     // las piezas extras descuentan de la ganancia neta.
     if (purchaseCost > 0 || extraCost > 0) {
       const userId = parseInt(session.user.id, 10);
+      // Si el usuario indicó el total de la nota pagada, ese es el monto que
+      // describe la compra de las piezas del pedido (lo demás va a extras).
+      const noteAmount = totalNote !== null ? totalNote : purchaseCost;
       const entries = [];
-      if (purchaseCost > 0) {
+      if (noteAmount > 0) {
         entries.push(
           prisma.cashEntry.create({
             data: {
               type: "EXPENSE",
               category: "purchase",
-              amount: purchaseCost,
-              description: `Compra pedido #${orderId} — ${order.supplier.name}`,
+              amount: noteAmount,
+              description: `Compra pedido #${orderId} — ${order.supplier.name}${
+                totalNote !== null ? ` (nota: $${totalNote.toFixed(2)})` : ""
+              }`,
               userId,
+              paymentMethodId,
             },
           })
         );
@@ -311,6 +370,7 @@ export async function POST(
               amount: extraCost,
               description: `Extras recibidas pedido #${orderId} — ${order.supplier.name}`,
               userId,
+              paymentMethodId,
             },
           })
         );
@@ -397,6 +457,8 @@ export async function POST(
       id: orderId,
       items,
       extras,
+      paymentMethodId,
+      totalNote,
       status: updatedOrder.status,
     });
     return Response.json(updatedOrder);

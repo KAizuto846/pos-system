@@ -5,7 +5,7 @@ import {
   DollarSign, TrendingUp, TrendingDown, Wallet, Calendar,
   Plus, ArrowUpFromLine, ArrowDownToLine, History, RefreshCw,
   Loader2, Search, Package, Filter, Clock, Landmark,
-  ArrowRightLeft
+  ArrowRightLeft, Download, Upload, RotateCcw
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Button } from '@/components/ui/button';
@@ -150,6 +150,14 @@ export default function FinancePage() {
   const [cashRecordedTime, setCashRecordedTime] = useState('');
   const [cashLoading, setCashLoading] = useState(false);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
+
+  // CSV export/import + reset
+  const [importOpen, setImportOpen] = useState(false);
+  const [importCsv, setImportCsv] = useState('');
+  const [importLoading, setImportLoading] = useState(false);
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetPassword, setResetPassword] = useState('');
+  const [resetLoading, setResetLoading] = useState(false);
 
   const buildDateFilter = useCallback(() => {
     let from = dateFrom;
@@ -357,6 +365,90 @@ export default function FinancePage() {
     ]).catch(() => {}).finally(() => setLoading(false));
   };
 
+  const handleExportCsv = async () => {
+    try {
+      const res = await fetch('/api/finance/csv');
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast.error(data.error || 'Error al exportar CSV');
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'finanzas.csv';
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success('CSV exportado');
+    } catch {
+      toast.error('Error al exportar CSV');
+    }
+  };
+
+  const handleImportCsv = async () => {
+    if (!importCsv.trim()) {
+      toast.error('Pega o carga un archivo CSV primero');
+      return;
+    }
+    setImportLoading(true);
+    try {
+      const res = await fetch('/api/finance/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ csv: importCsv }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || 'Error al importar CSV');
+        return;
+      }
+      toast.success(data.message);
+      if (data.errors && data.errors.length > 0) {
+        const preview = data.errors.slice(0, 3).map((e: { row: number; reason: string }) => `#${e.row}: ${e.reason}`).join(' · ');
+        toast.error(`Filas con error: ${preview}${data.errors.length > 3 ? ' …' : ''}`);
+      }
+      setImportOpen(false);
+      setImportCsv('');
+      refreshAll();
+    } catch {
+      toast.error('Error al importar CSV');
+    } finally {
+      setImportLoading(false);
+    }
+  };
+
+  const handleResetFinance = async () => {
+    if (!resetPassword) {
+      toast.error('Ingresa la contraseña de administrador');
+      return;
+    }
+    if (!window.confirm(
+      '¿Reiniciar las finanzas? Se eliminarán TODOS los registros de caja (ingresos, egresos y transferencias). Los productos y las ventas no se tocan.'
+    )) return;
+    setResetLoading(true);
+    try {
+      const res = await fetch('/api/finance/reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: resetPassword }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || 'Error al reiniciar finanzas');
+        return;
+      }
+      toast.success(data.message);
+      setResetOpen(false);
+      setResetPassword('');
+      refreshAll();
+    } catch {
+      toast.error('Error al reiniciar finanzas');
+    } finally {
+      setResetLoading(false);
+    }
+  };
+
   if (!isAdmin) {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-slate-500">
@@ -393,6 +485,18 @@ export default function FinancePage() {
           <p className="text-sm text-slate-400 mt-1">Control de caja, ventas, ganancias y desgloce de productos</p>
         </div>
         <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={handleExportCsv} title="Exportar finanzas a CSV">
+            <Download className="mr-2 h-4 w-4" />
+            CSV
+          </Button>
+          <Button variant="outline" onClick={() => setImportOpen(true)} title="Importar registros desde CSV">
+            <Upload className="mr-2 h-4 w-4" />
+            Importar
+          </Button>
+          <Button variant="outline" className="border-red-700/50 text-red-400 hover:bg-red-500/10" onClick={() => setResetOpen(true)} title="Reiniciar finanzas (requiere contraseña admin)">
+            <RotateCcw className="mr-2 h-4 w-4" />
+            Reiniciar
+          </Button>
           <Button onClick={() => openCashDialog('INCOME')} className="bg-emerald-600 hover:bg-emerald-500">
             <ArrowUpFromLine className="mr-2 h-4 w-4" />
             Ingreso
@@ -1065,6 +1169,80 @@ export default function FinancePage() {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Import CSV Dialog */}
+      <Dialog open={importOpen} onOpenChange={o => { setImportOpen(o); if (!o) setImportCsv(''); }}>
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Importar CSV</DialogTitle>
+            <DialogDescription>
+              Columnas: tipo, categoria, monto, descripcion, metodo_pago, usuario, fecha.
+              El CSV puede traer o no la fila de encabezado (tipo, categoria, monto...).
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Input
+              type="file"
+              accept=".csv,text/csv"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                setImportCsv(await file.text());
+                e.target.value = '';
+              }}
+              className="border-slate-600 bg-slate-800 text-slate-200"
+            />
+            <Label className="text-xs text-slate-500">O pega el contenido del CSV:</Label>
+            <textarea
+              value={importCsv}
+              onChange={e => setImportCsv(e.target.value)}
+              placeholder={'tipo,categoria,monto,descripcion,metodo_pago,usuario,fecha\nEXPENSE,purchase,150,Compra mercancía,Caja,,\nINCOME,manual_deposit,50,Depósito,,\n'}
+              rows={8}
+              className="w-full rounded-md border border-slate-600 bg-slate-800 p-3 text-xs text-slate-200 font-mono outline-none focus:border-slate-400"
+            />
+          </div>
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button variant="secondary" disabled={importLoading}>Cancelar</Button>
+            </DialogClose>
+            <Button onClick={handleImportCsv} disabled={importLoading || !importCsv.trim()}>
+              {importLoading ? 'Importando...' : 'Importar CSV'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Reset Finance Dialog */}
+      <Dialog open={resetOpen} onOpenChange={o => { setResetOpen(o); if (!o) setResetPassword(''); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reiniciar Finanzas</DialogTitle>
+            <DialogDescription>
+              Se eliminarán TODOS los registros de caja (ingresos, egresos y transferencias).
+              Esta acción requiere la contraseña de un administrador y no se puede deshacer.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="reset-password">Contraseña de administrador</Label>
+            <Input
+              id="reset-password"
+              type="password"
+              value={resetPassword}
+              onChange={e => setResetPassword(e.target.value)}
+              placeholder="••••••••"
+              className="border-slate-600 bg-slate-800 text-slate-200"
+            />
+          </div>
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button variant="secondary" disabled={resetLoading}>Cancelar</Button>
+            </DialogClose>
+            <Button className="bg-red-600 hover:bg-red-500" onClick={handleResetFinance} disabled={resetLoading || !resetPassword}>
+              {resetLoading ? 'Reiniciando...' : 'Reiniciar finanzas'}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

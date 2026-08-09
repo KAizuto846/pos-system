@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Plus, Eye, CheckCircle, Package, Search,
   Calendar, Clock, Calculator, Trash2, Columns, PlusCircle,
-  Download, Image as ImageIcon, FileText, AlertCircle, History, AlertTriangle, RefreshCcw, X,
+  Download, Image as ImageIcon, FileText, AlertCircle, History, AlertTriangle, X,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useSession } from 'next-auth/react';
@@ -84,7 +84,7 @@ interface OrderItem {
 
 interface ReceiveExtra {
   key: string;
-  productId: number;
+  productId: number | null;
   name: string;
   quantity: string;
   costPrice: string;
@@ -202,7 +202,13 @@ export default function OrdersPage() {
   const [extraSearch, setExtraSearch] = useState('');
   const [extraResults, setExtraResults] = useState<ProductSearchResult[]>([]);
   const [extraSearching, setExtraSearching] = useState(false);
-  const [reorderLoading, setReorderLoading] = useState(false);
+  const [extraGhostName, setExtraGhostName] = useState('');
+  const [extraGhostQty, setExtraGhostQty] = useState('1');
+  const [extraGhostCost, setExtraGhostCost] = useState('0');
+  const [extraGhostPrice, setExtraGhostPrice] = useState('0');
+  const [paymentMethods, setPaymentMethods] = useState<Array<{ id: number; name: string; affectsCash: boolean }>>([]);
+  const [receivePaymentMethodId, setReceivePaymentMethodId] = useState('');
+  const [receiveNoteTotal, setReceiveNoteTotal] = useState('');
 
   // ── Create form ──
   const [formSupplierId, setFormSupplierId] = useState('');
@@ -274,6 +280,10 @@ export default function OrdersPage() {
     const initialLoad = setTimeout(() => {
       fetchOrders(1, controller.signal);
       fetchSuppliers();
+      fetch('/api/payment-methods')
+        .then(r => r.json())
+        .then(d => { if (Array.isArray(d)) setPaymentMethods(d); })
+        .catch(() => {});
     }, 0);
     return () => {
       clearTimeout(initialLoad);
@@ -536,31 +546,17 @@ export default function OrdersPage() {
     setReceiveExtras([]);
     setExtraSearch('');
     setExtraResults([]);
+    setExtraGhostName(''); setExtraGhostQty('1'); setExtraGhostCost('0'); setExtraGhostPrice('0');
+    setReceivePaymentMethodId('');
+    setReceiveNoteTotal('');
     setReceiveOpen(true);
   };
-
-  const extraProfit = receiveExtras.reduce((s, e) => {
-    const qty = parseInt(e.quantity) || 0;
-    const cost = parseFloat(e.costPrice) || 0;
-    const price = parseFloat(e.price) || 0;
-    return s + qty * (price - cost);
-  }, 0);
 
   const extraTotalCost = receiveExtras.reduce((s, e) => {
     const qty = parseInt(e.quantity) || 0;
     const cost = parseFloat(e.costPrice) || 0;
     return s + qty * cost;
   }, 0);
-
-  // Pérdida por piezas no recibidas (quedan pendientes y nunca entraron a venta)
-  const receivePendingLoss = selectedOrder
-    ? selectedOrder.items.filter(i => !i.extra).reduce((s, i) => {
-        const recv = receiveQuantities[i.id] ?? i.receivedQuantity;
-        const cost = i.costPrice ?? i.product?.cost ?? 0;
-        return s + Math.max(0, i.quantity - recv) * cost;
-      }, 0)
-    : 0;
-  const receiveNetAfterLoss = extraProfit - receivePendingLoss;
 
   const handleExtraSearch = (q: string) => {
     setExtraSearch(q);
@@ -590,6 +586,23 @@ export default function OrdersPage() {
     setExtraResults([]);
   };
 
+  const addExtraGhost = () => {
+    if (!extraGhostName.trim()) return;
+    setReceiveExtras(prev => [
+      ...prev,
+      {
+        key: `extra-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        productId: null,
+        name: extraGhostName.trim(),
+        quantity: extraGhostQty || '1',
+        costPrice: extraGhostCost || '0',
+        price: extraGhostPrice || '0',
+        expiresAt: '',
+      },
+    ]);
+    setExtraGhostName(''); setExtraGhostQty('1'); setExtraGhostCost('0'); setExtraGhostPrice('0');
+  };
+
   const updateExtra = (key: string, field: keyof ReceiveExtra, value: string) => {
     setReceiveExtras(prev => prev.map(e => e.key === key ? { ...e, [field]: value } : e));
   };
@@ -615,11 +628,14 @@ export default function OrdersPage() {
           })),
           extras: receiveExtras.map(e => ({
             productId: e.productId,
+            name: e.productId === null ? e.name : undefined,
             quantity: parseInt(e.quantity) || 0,
             costPrice: e.costPrice ? parseFloat(e.costPrice) : null,
             price: e.price ? parseFloat(e.price) : null,
             expiresAt: e.expiresAt.trim() || null,
           })),
+          paymentMethodId: receivePaymentMethodId && receivePaymentMethodId !== '__none__' ? parseInt(receivePaymentMethodId) : null,
+          totalNote: receiveNoteTotal ? parseFloat(receiveNoteTotal) : null,
         }),
       });
       if (!res.ok) {
@@ -635,24 +651,6 @@ export default function OrdersPage() {
       toast.error('Error al recibir pedido');
     }
     setReceiveLoading(false);
-  };
-
-  const handleReorderMissing = async () => {
-    if (!selectedOrder) return;
-    setReorderLoading(true);
-    try {
-      const res = await fetch(`/api/orders/${selectedOrder.id}/reorder-missing`, { method: 'POST' });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        toast.error(data.error || 'Error al repedir faltantes');
-      } else {
-        toast.success('Pedido de faltantes creado');
-        fetchOrders(orderPage);
-      }
-    } catch {
-      toast.error('Error al repedir faltantes');
-    }
-    setReorderLoading(false);
   };
 
   // Marca un pedido "en espera" como listo
@@ -707,9 +705,9 @@ export default function OrdersPage() {
     });
   };
 
-  const addEditedItem = (productId: number, name: string, barcode: string) => {
+  const addEditedItem = (p: ProductSearchResult) => {
     if (!selectedOrder) return;
-    const existing = selectedOrder.items.find(i => i.productId === productId && i.id > 0);
+    const existing = selectedOrder.items.find(i => i.productId === p.id && i.id > 0);
     if (existing) {
       setSelectedOrder({
         ...selectedOrder,
@@ -718,13 +716,15 @@ export default function OrdersPage() {
         ),
       });
     } else {
+      const orderLine = (p.productLines || []).find(l => l.supplierId === selectedOrder.supplierId);
       setSelectedOrder({
         ...selectedOrder,
         items: [...selectedOrder.items, {
           id: -Date.now(),
-          productId,
+          productId: p.id,
           quantity: 1,
-          product: { id: productId, name, barcode, price: 0, cost: 0, stock: 0, active: true },
+          product: { id: p.id, name: p.name, barcode: p.barcode, price: p.price, cost: p.cost, stock: 0, active: true },
+          costPrice: orderLine?.supplierPrice ?? p.cost,
           receivedQuantity: 0,
           notes: '',
         }],
@@ -1562,18 +1562,12 @@ export default function OrdersPage() {
                       <AlertTriangle className="h-4 w-4" /> Piezas extras (no pedidas)
                     </span>
                     <p className="text-[11px] text-red-300/70 mt-0.5">
-                      Se descuentan de la ganancia neta. Faltante: el costo de las piezas no recibidas se recupera al costo total.
+                      Estas piezas restan de la ganancia neta. Al confirmar se descuentan en finanzas.
                     </p>
                   </div>
                   {receiveExtras.length > 0 && (
                     <div className="text-right">
-                      <div className={`text-sm font-bold ${extraProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                        Ganancia neta: {formatCurrency(extraProfit)}
-                      </div>
                       <div className="text-[11px] text-slate-400">Costo total: {formatCurrency(extraTotalCost)}</div>
-                      <div className={`text-xs font-semibold mt-0.5 ${receiveNetAfterLoss >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                        Ganancia Neta − Pérdidas Totales: {formatCurrency(receiveNetAfterLoss)}
-                      </div>
                     </div>
                   )}
                 </div>
@@ -1582,7 +1576,12 @@ export default function OrdersPage() {
                   <div key={extra.key} className="grid grid-cols-12 gap-2 items-end rounded-md border border-red-800 bg-red-950/40 p-2">
                     <div className="col-span-3">
                       <Label className="text-[10px] text-red-300/80">Producto</Label>
-                      <div className="text-sm text-red-100 font-medium truncate">{extra.name}</div>
+                      <div className="text-sm text-red-100 font-medium truncate flex items-center gap-1.5">
+                        <span className="truncate">{extra.name}</span>
+                        {extra.productId === null && (
+                          <span className="shrink-0 rounded bg-sky-950/60 px-1.5 py-0.5 text-[10px] text-sky-400 border border-sky-700/50">sin inventario</span>
+                        )}
+                      </div>
                     </div>
                     <div className="col-span-2">
                       <Label className="text-[10px] text-red-300/80">Cantidad</Label>
@@ -1635,6 +1634,58 @@ export default function OrdersPage() {
                   </div>
                   {extraSearching && <span className="text-xs text-slate-500 py-2">Buscando...</span>}
                 </div>
+
+                <div className="rounded-md border border-sky-800/60 bg-sky-950/20 p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium text-slate-300">Agregar extra sin inventario</span>
+                  </div>
+                  <div className="grid grid-cols-12 gap-2">
+                    <div className="col-span-6">
+                      <Input placeholder="Nombre del producto..." value={extraGhostName} onChange={e => setExtraGhostName(e.target.value)} className="h-8 text-xs" />
+                    </div>
+                    <div className="col-span-2">
+                      <Input placeholder="Cantidad" type="number" min="1" value={extraGhostQty} onChange={e => setExtraGhostQty(e.target.value)} className="h-8 text-xs" />
+                    </div>
+                    <div className="col-span-2">
+                      <Input placeholder="Costo" type="number" step="0.01" min="0" value={extraGhostCost} onChange={e => setExtraGhostCost(e.target.value)} className="h-8 text-xs" />
+                    </div>
+                    <div className="col-span-2">
+                      <Input placeholder="P. venta" type="number" step="0.01" min="0" value={extraGhostPrice} onChange={e => setExtraGhostPrice(e.target.value)} className="h-8 text-xs" />
+                    </div>
+                  </div>
+                  <Button type="button" size="sm" variant="outline" className="h-8 text-xs border-sky-700/50 text-sky-400 hover:bg-sky-500/10" onClick={addExtraGhost} disabled={!extraGhostName.trim()}>
+                    <PlusCircle className="h-3 w-3 mr-1" />Agregar extra
+                  </Button>
+                </div>
+              </div>
+
+              {/* Total de la nota + método de pago */}
+              <div className="rounded-md border border-slate-700 bg-slate-800/40 p-3 space-y-3">
+                <span className="text-sm font-medium text-slate-300">Total de la nota pagada</span>
+                <p className="text-[11px] text-slate-500">
+                  Si indicas el total pagado de la nota, ese monto descuenta el costo de las piezas en finanzas;
+                  los extras restan de la ganancia neta. Opcional.
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label className="text-[10px] text-slate-500">Total nota (USD)</Label>
+                    <Input type="number" step="0.01" min="0" value={receiveNoteTotal} onChange={e => setReceiveNoteTotal(e.target.value)} placeholder="0.00" className="h-8 text-xs text-right" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-[10px] text-slate-500">Método de pago</Label>
+                    <Select value={receivePaymentMethodId} onValueChange={setReceivePaymentMethodId}>
+                      <SelectTrigger className="h-8 text-xs">
+                        <SelectValue placeholder="Seleccionar..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none__">Sin método</SelectItem>
+                        {paymentMethods.map(pm => (
+                          <SelectItem key={pm.id} value={String(pm.id)}>{pm.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
               </div>
 
               {/* Totals */}
@@ -1678,11 +1729,6 @@ export default function OrdersPage() {
               {/* Export buttons + column selector */}
               <div className="flex flex-col gap-2">
                 <div className="flex gap-2 justify-end">
-                  {selectedOrder.status !== 'received' && selectedOrder.status !== 'cancelled' && (
-                    <Button variant="outline" size="sm" onClick={handleReorderMissing} disabled={reorderLoading} className="text-xs border-amber-600/50 text-amber-400 hover:bg-amber-500/10">
-                      <RefreshCcw className="h-3.5 w-3.5 mr-1" />{reorderLoading ? '...' : 'Repedir faltantes'}
-                    </Button>
-                  )}
                   {selectedOrder.status === 'on_hold' && (
                     <Button variant="outline" size="sm" onClick={() => setOrderReady(selectedOrder)} className="text-xs border-emerald-600/50 text-emerald-400 hover:bg-emerald-500/10">
                       <Clock className="h-3.5 w-3.5 mr-1" />Marcar como listo
@@ -1874,7 +1920,7 @@ export default function OrdersPage() {
                             <button
                               key={p.id}
                               type="button"
-                              onClick={() => addEditedItem(p.id, p.name, p.barcode)}
+                              onClick={() => addEditedItem(p)}
                               className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left text-xs text-slate-200 hover:bg-slate-800 transition-colors"
                             >
                               <span className="truncate">{p.name}</span>
