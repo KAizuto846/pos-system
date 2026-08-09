@@ -2,9 +2,12 @@
 
 import { useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
+import QRCode from 'qrcode';
+import toast from 'react-hot-toast';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Server, Monitor, Wifi, Database } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Server, Monitor, Wifi, Database, Smartphone, Copy } from 'lucide-react';
 
 export default function SettingsPage() {
   const { data: session } = useSession();
@@ -20,6 +23,15 @@ export default function SettingsPage() {
     serverIP: '',
     deviceName: '',
   });
+  const [lanUrl, setLanUrl] = useState('');
+  const [qrDataUrl, setQrDataUrl] = useState('');
+
+  useEffect(() => {
+    if (!lanUrl) return;
+    QRCode.toDataURL(lanUrl, { width: 220, margin: 1 })
+      .then(setQrDataUrl)
+      .catch(() => setQrDataUrl(''));
+  }, [lanUrl]);
 
   useEffect(() => {
     fetch('/api/version')
@@ -51,6 +63,7 @@ export default function SettingsPage() {
           serverIP: cfg.serverIP || '',
           deviceName: cfg.deviceName || '',
         });
+        if (cfg.serverIP) setLanUrl(`http://${cfg.serverIP}:${cfg.serverPort || 3000}`);
       });
     } else {
       // Modo web: leer config persistida en la DB (setup web)
@@ -74,6 +87,13 @@ export default function SettingsPage() {
             deviceName: localStorage.getItem('pos-device-name') || 'Equipo-1',
           });
         });
+      // IP LAN real del servidor (modo web / Linux)
+      fetch('/api/server-info')
+        .then(r => r.json())
+        .then((info) => {
+          if (info?.url) setLanUrl(info.url);
+        })
+        .catch(() => {});
     }
   }, []);
 
@@ -168,6 +188,45 @@ export default function SettingsPage() {
               <span className="text-slate-400">Usuario:</span>
               <span className="text-slate-200">{session?.user?.name || '—'}</span>
             </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-slate-700 bg-slate-800">
+          <CardHeader>
+            <CardTitle className="text-lg text-slate-100 flex items-center gap-2">
+              <Smartphone className="h-5 w-5 text-sky-400" />
+              Acceso desde el Teléfono
+            </CardTitle>
+            <CardDescription>Escanea el QR o copia la dirección para entrar desde tu celular (misma red WiFi)</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {lanUrl ? (
+              <div className="flex flex-col sm:flex-row items-center gap-4">
+                {qrDataUrl && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={qrDataUrl} alt="QR de acceso" className="h-44 w-44 rounded-lg border border-slate-600 bg-white p-2" />
+                )}
+                <div className="flex-1 space-y-3">
+                  <div className="rounded-md border border-slate-700 bg-slate-900/60 px-3 py-2 font-mono text-sm text-sky-300 break-all">
+                    {lanUrl}
+                  </div>
+                  <Button type="button" variant="outline" size="sm" onClick={() => {
+                    navigator.clipboard.writeText(lanUrl)
+                      .then(() => toast.success('URL copiada'))
+                      .catch(() => toast.error('No se pudo copiar'));
+                  }}>
+                    <Copy className="h-3.5 w-3.5 mr-2" />Copiar URL
+                  </Button>
+                  <p className="text-xs text-slate-500">
+                    El teléfono debe estar en la misma red. Si no entra, revisa el Firewall de Windows (puerto TCP {config.serverPort}).
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-slate-500">
+                No se pudo detectar la IP de red. Revisa la conexión del equipo y vuelve a abrir la aplicación.
+              </p>
+            )}
           </CardContent>
         </Card>
 

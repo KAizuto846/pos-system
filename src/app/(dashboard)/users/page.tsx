@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Plus, Pencil, Trash2, Power, PowerOff } from 'lucide-react';
+import { Plus, Pencil, Trash2, Power, PowerOff, ClipboardList, Search, X } from 'lucide-react';
+import toast from 'react-hot-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -48,6 +49,24 @@ interface User {
   createdAt: string;
 }
 
+interface WishlistItem {
+  id: number;
+  userId: number;
+  productId: number | null;
+  name: string;
+  quantity: number | null;
+  notes: string;
+  product?: { id: number; name: string; barcode: string; price: number } | null;
+}
+
+interface ProductSearchResult {
+  id: number;
+  name: string;
+  barcode: string;
+  price: number;
+  stock: number;
+}
+
 export default function UsersPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
@@ -64,6 +83,91 @@ export default function UsersPage() {
   const [formError, setFormError] = useState('');
   const [formLoading, setFormLoading] = useState(false);
 
+  // ── Wishlist (lista de medicamentos/productos que la persona necesita) ──
+  const [wishlistOpen, setWishlistOpen] = useState(false);
+  const [wishlist, setWishlist] = useState<WishlistItem[]>([]);
+  const [wishlistLoading, setWishlistLoading] = useState(false);
+  const [wishSearch, setWishSearch] = useState('');
+  const [wishResults, setWishResults] = useState<ProductSearchResult[]>([]);
+  const [wishSearching, setWishSearching] = useState(false);
+  const [wishName, setWishName] = useState('');
+  const [wishQuantity, setWishQuantity] = useState('');
+  const [wishNotes, setWishNotes] = useState('');
+  const [wishAdding, setWishAdding] = useState(false);
+
+  const loadWishlist = async (userId: number) => {
+    setWishlistLoading(true);
+    try {
+      const res = await fetch(`/api/users/${userId}/wishlist`);
+      const data = await res.json();
+      setWishlist(res.ok ? data.items || [] : []);
+    } catch {
+      setWishlist([]);
+    } finally {
+      setWishlistLoading(false);
+    }
+  };
+
+  const openWishlist = (user: User) => {
+    setSelectedUser(user);
+    setWishlistOpen(true);
+    setWishSearch('');
+    setWishResults([]);
+    setWishName('');
+    setWishQuantity('');
+    setWishNotes('');
+    loadWishlist(user.id);
+  };
+
+  const addWishlistItem = async (productId: number | null) => {
+    if (!selectedUser) return;
+    setWishAdding(true);
+    try {
+      const res = await fetch(`/api/users/${selectedUser.id}/wishlist`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          productId,
+          name: productId === null ? wishName.trim() : undefined,
+          quantity: wishQuantity ? parseInt(wishQuantity) : undefined,
+          notes: wishNotes.trim() || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || 'Error al agregar');
+        return;
+      }
+      toast.success('Agregado a la lista');
+      setWishName('');
+      setWishQuantity('');
+      setWishNotes('');
+      setWishSearch('');
+      setWishResults([]);
+      loadWishlist(selectedUser.id);
+    } catch {
+      toast.error('Error de conexión');
+    } finally {
+      setWishAdding(false);
+    }
+  };
+
+  const removeWishlistItem = async (itemId: number) => {
+    if (!selectedUser) return;
+    try {
+      const res = await fetch(`/api/users/${selectedUser.id}/wishlist/${itemId}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) {
+        toast.error('No se pudo eliminar');
+        return;
+      }
+      setWishlist((prev) => prev.filter((i) => i.id !== itemId));
+    } catch {
+      toast.error('Error de conexión');
+    }
+  };
+
   const fetchUsers = () => {
     setLoading(true);
     fetch('/api/users')
@@ -78,6 +182,32 @@ export default function UsersPage() {
   useEffect(() => {
     fetchUsers();
   }, []);
+
+  useEffect(() => {
+    if (!wishlistOpen || wishSearch.trim().length < 2) {
+      setWishResults([]);
+      return;
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      setWishSearching(true);
+      try {
+        const res = await fetch(`/api/products?q=${encodeURIComponent(wishSearch.trim())}&limit=8`, {
+          signal: controller.signal,
+        });
+        const data = await res.json();
+        setWishResults(res.ok ? data.products || [] : []);
+      } catch {
+        setWishResults([]);
+      } finally {
+        if (!controller.signal.aborted) setWishSearching(false);
+      }
+    }, 300);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [wishSearch, wishlistOpen]);
 
   const resetForm = () => {
     setFormName('');
@@ -295,6 +425,9 @@ export default function UsersPage() {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
+                        <Button variant="ghost" size="icon" onClick={() => openWishlist(user)} title="Lista de medicamentos/productos que necesita">
+                          <ClipboardList className="h-4 w-4 text-sky-400" />
+                        </Button>
                         <Button variant="ghost" size="icon" onClick={() => toggleActive(user)} title="Toggle active">
                           {user.active ? <PowerOff className="h-4 w-4 text-red-400" /> : <Power className="h-4 w-4 text-emerald-400" />}
                         </Button>
@@ -378,6 +511,140 @@ export default function UsersPage() {
             <Button variant="destructive" onClick={handleDelete}>
               Delete
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Lista de medicamentos/productos que la persona necesita */}
+      <Dialog open={wishlistOpen} onOpenChange={(o) => { setWishlistOpen(o); if (!o) setSelectedUser(null); }}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ClipboardList className="h-5 w-5 text-sky-400" />
+              Lista de medicamentos — {selectedUser?.name}
+            </DialogTitle>
+            <DialogDescription>
+              Productos que esta persona necesita. Cuando un pedido recibido contenga algo de esta lista,
+              aparecerá una alerta hasta que confirmes que su pedido llegó.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            {/* Agregar desde inventario */}
+            <div className="rounded-md border border-slate-700 bg-slate-800/40 p-3 space-y-2">
+              <Label className="text-xs text-slate-400">Agregar producto del inventario</Label>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <Input
+                  placeholder="Buscar por nombre o código..."
+                  value={wishSearch}
+                  onChange={(e) => setWishSearch(e.target.value)}
+                  className="pl-9"
+                />
+              </div>
+              {wishSearch.trim().length >= 2 && (
+                <div className="max-h-40 overflow-y-auto space-y-1">
+                  {wishSearching ? (
+                    <p className="text-sm text-slate-400 py-2 text-center">Buscando...</p>
+                  ) : wishResults.length === 0 ? (
+                    <p className="text-sm text-slate-500 py-2 text-center">Sin resultados</p>
+                  ) : (
+                    wishResults.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => addWishlistItem(p.id)}
+                        disabled={wishAdding}
+                        className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-md hover:bg-slate-700/60 transition-colors text-left"
+                      >
+                        <div>
+                          <div className="text-sm text-slate-200">{p.name}</div>
+                          <div className="text-xs text-slate-500 font-mono">{p.barcode || '—'}</div>
+                        </div>
+                        <Plus className="h-4 w-4 text-emerald-400 shrink-0" />
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Agregar manual (producto que no está en inventario) */}
+            <div className="rounded-md border border-slate-700 bg-slate-800/40 p-3 space-y-2">
+              <Label className="text-xs text-slate-400">Agregar manualmente</Label>
+              <div className="grid grid-cols-12 gap-2">
+                <div className="col-span-6">
+                  <Input placeholder="Nombre del medicamento/producto" value={wishName} onChange={(e) => setWishName(e.target.value)} />
+                </div>
+                <div className="col-span-2">
+                  <Input type="number" min="1" placeholder="Cant." value={wishQuantity} onChange={(e) => setWishQuantity(e.target.value)} />
+                </div>
+                <div className="col-span-4">
+                  <Input placeholder="Notas (opcional)" value={wishNotes} onChange={(e) => setWishNotes(e.target.value)} />
+                </div>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="text-emerald-400 border-emerald-700/60 hover:bg-emerald-500/10"
+                disabled={wishAdding || !wishName.trim()}
+                onClick={() => addWishlistItem(null)}
+              >
+                <Plus className="h-3.5 w-3.5 mr-1" />Agregar a la lista
+              </Button>
+            </div>
+
+            {/* Lista actual */}
+            <div className="space-y-2">
+              <Label className="text-xs text-slate-400">Lista actual ({wishlist.length})</Label>
+              {wishlistLoading ? (
+                <div className="space-y-2">
+                  {Array.from({ length: 3 }).map((_, i) => (
+                    <Skeleton key={i} className="h-10 w-full bg-slate-700" />
+                  ))}
+                </div>
+              ) : wishlist.length === 0 ? (
+                <p className="text-sm text-slate-500 py-3 text-center border border-dashed border-slate-700 rounded-md">
+                  Sin productos en la lista
+                </p>
+              ) : (
+                <div className="space-y-1.5">
+                  {wishlist.map((item) => (
+                    <div key={item.id} className="flex items-center justify-between gap-2 rounded-md border border-slate-700 bg-slate-800/60 px-3 py-2">
+                      <div className="min-w-0">
+                        <div className="text-sm text-slate-200 truncate">
+                          {item.product ? item.product.name : item.name}
+                          {item.quantity && <span className="ml-1.5 text-xs text-slate-400">×{item.quantity}</span>}
+                          {!item.productId && (
+                            <span className="ml-2 rounded bg-amber-950/60 px-1.5 py-0.5 text-[10px] text-amber-400 border border-amber-700/50">sin inventario</span>
+                          )}
+                        </div>
+                        {(item.notes || item.product?.barcode) && (
+                          <div className="text-[11px] text-slate-500 truncate">
+                            {item.product?.barcode ? `${item.product.barcode} · ` : ''}{item.notes}
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeWishlistItem(item.id)}
+                        className="text-red-400 hover:text-red-300 shrink-0"
+                        title="Quitar de la lista"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button variant="secondary">Cerrar</Button>
+            </DialogClose>
           </DialogFooter>
         </DialogContent>
       </Dialog>

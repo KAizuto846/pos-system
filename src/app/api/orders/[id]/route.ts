@@ -24,23 +24,80 @@ export async function PUT(
     }
 
     const body = await request.json();
-    const { status, items, notes } = body;
+    const { status, items, notes, removedItemIds } = body;
 
-    // If items are provided, update them (editing quantities/notes)
+    // If items are provided, update them (editing quantities/notes, adding or removing rows)
     if (items && Array.isArray(items)) {
       await initializePrisma();
+
+      interface ItemChange {
+        op: "CREATE" | "UPDATE" | "DELETE";
+        id: number;
+        data: Record<string, unknown>;
+      }
+      const itemChanges: ItemChange[] = [];
+
       await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
         for (const item of items) {
-          await tx.supplierOrderItem.update({
-            where: { id: item.id },
-            data: {
-              quantity: item.quantity ?? undefined,
-              receivedQuantity: item.receivedQuantity ?? undefined,
-              notes: item.notes ?? undefined,
-            },
+          if (typeof item.id === "number" && Number.isFinite(item.id) && item.id > 0) {
+            await tx.supplierOrderItem.update({
+              where: { id: item.id },
+              data: {
+                quantity: item.quantity ?? undefined,
+                receivedQuantity: item.receivedQuantity ?? undefined,
+                notes: item.notes ?? undefined,
+              },
+            });
+            itemChanges.push({
+              op: "UPDATE",
+              id: item.id,
+              data: {
+                quantity: item.quantity ?? undefined,
+                receivedQuantity: item.receivedQuantity ?? undefined,
+                notes: item.notes ?? undefined,
+              },
+            });
+          } else {
+            // Item nuevo (agregado desde el detalle del pedido)
+            const isGhost = typeof item.productId !== "number";
+            const created = await tx.supplierOrderItem.create({
+              data: {
+                supplierOrderId: orderId,
+                productId: isGhost ? null : item.productId,
+                productName: isGhost ? String(item.name || "").trim() : "",
+                productBarcode: isGhost ? String(item.barcode || "").trim() : "",
+                quantity: item.quantity ?? 1,
+                costPrice: typeof item.cost === "number" ? item.cost : null,
+              },
+            });
+            itemChanges.push({
+              op: "CREATE",
+              id: created.id,
+              data: {
+                id: created.id,
+                supplierOrderId: orderId,
+                productId: created.productId,
+                productName: created.productName,
+                productBarcode: created.productBarcode,
+                quantity: created.quantity,
+                costPrice: created.costPrice,
+              },
+            });
+          }
+        }
+        if (Array.isArray(removedItemIds) && removedItemIds.length > 0) {
+          await tx.supplierOrderItem.deleteMany({
+            where: { id: { in: removedItemIds } },
           });
+          for (const removedId of removedItemIds as number[]) {
+            itemChanges.push({ op: "DELETE", id: removedId, data: {} });
+          }
         }
       });
+
+      for (const change of itemChanges) {
+        void logChange(getDeviceId(), change.op, "supplierorderitem", change.id, change.data);
+      }
 
       const order = await prisma.supplierOrder.findUnique({
         where: { id: orderId },
@@ -50,7 +107,6 @@ export async function PUT(
         },
       });
 
-      void logChange(getDeviceId(), "UPDATE", "order", orderId, { items });
       return Response.json(order);
     }
 

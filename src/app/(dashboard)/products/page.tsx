@@ -104,6 +104,29 @@ interface FormBatch {
   removed?: boolean;
 }
 
+interface PieceBox {
+  id: number;
+  name: string;
+  barcode: string;
+  stock: number;
+  price: number;
+  cost: number;
+  minStock: number;
+  piecesPerUnit: number | null;
+  piecesTracked: boolean;
+  detected: boolean;
+  openedBoxes: number;
+  piece: {
+    id: number;
+    name: string;
+    barcode: string;
+    stock: number;
+    price: number;
+    cost: number;
+    active: boolean;
+  } | null;
+}
+
 export default function ProductsPage() {
   const productsAbortRef = useRef<AbortController | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
@@ -149,6 +172,10 @@ export default function ProductsPage() {
 
   // Stock adjust
   const [stockAdjust, setStockAdjust] = useState('');
+
+  // Gestión de piezas
+  const [pieceBoxes, setPieceBoxes] = useState<PieceBox[]>([]);
+  const [pieceBusy, setPieceBusy] = useState<number | null>(null);
 
   const LIMIT = 50;
 
@@ -221,6 +248,7 @@ export default function ProductsPage() {
   useEffect(() => {
     fetchDepartments();
     fetchSuppliers();
+    fetchPieces();
     return () => productsAbortRef.current?.abort();
   }, []);
 
@@ -457,6 +485,65 @@ export default function ProductsPage() {
       setStockAdjust('');
       setSelectedProduct(null);
       fetchProducts(1);
+    }
+  };
+
+  const fetchPieces = useCallback(() => {
+    fetch('/api/pieces')
+      .then((res) => res.json())
+      .then((data) => {
+        if (Array.isArray(data.boxes)) setPieceBoxes(data.boxes);
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleGeneratePieces = async (box: PieceBox) => {
+    setPieceBusy(box.id);
+    try {
+      const res = await fetch('/api/pieces/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ productId: box.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || 'Error al generar piezas');
+        return;
+      }
+      toast.success(`Caja abierta: ${data.pieces} piezas generadas`);
+      fetchProducts(1);
+      fetchPieces();
+    } catch {
+      toast.error('Error al generar piezas');
+    } finally {
+      setPieceBusy(null);
+    }
+  };
+
+  const handleRevertPieces = async (box: PieceBox) => {
+    const confirmed = window.confirm(
+      `¿Revertir las piezas de "${box.name}"? Se restaurará el stock de caja y se dejará de gestionar como piezas.`
+    );
+    if (!confirmed) return;
+    setPieceBusy(box.id);
+    try {
+      const res = await fetch('/api/pieces/revert', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ productId: box.id }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast.error(data.error || 'Error al revertir piezas');
+        return;
+      }
+      toast.success('Piezas revertidas');
+      fetchProducts(1);
+      fetchPieces();
+    } catch {
+      toast.error('Error al revertir piezas');
+    } finally {
+      setPieceBusy(null);
     }
   };
 
@@ -818,6 +905,77 @@ export default function ProductsPage() {
           </div>
         </div>
       </div>
+
+      {/* Gestión de piezas */}
+      <Card className="border-slate-700 bg-slate-800">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <PackageOpen className="h-4 w-4 text-sky-400" />
+            Gestión de piezas
+          </CardTitle>
+          <p className="text-xs text-slate-500">
+            Los productos cuyo nombre termina en <span className="font-mono text-slate-400">C/(N)</span> (ej. "Paracetamol C/10")
+            se consideran cajas. Abrir una caja consume 1 de stock y genera "Pieza de ..." con código <span className="font-mono text-slate-400">S+</span>.
+            Al vender piezas sin stock se abre una caja automáticamente.
+          </p>
+        </CardHeader>
+        <CardContent className="p-0">
+          {pieceBoxes.length === 0 ? (
+            <p className="px-4 pb-4 text-xs text-slate-500 italic">Sin productos de caja detectados</p>
+          ) : (
+            <div className="divide-y divide-slate-700/70">
+              {pieceBoxes.map((box) => (
+                <div key={box.id} className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-slate-100 text-sm truncate">{box.name}</span>
+                      {!box.piecesTracked && (
+                        <Badge variant="secondary" className="text-[10px]">revertido</Badge>
+                      )}
+                      {box.detected && (
+                        <Badge variant="outline" className="text-[10px] border-sky-700 text-sky-400">detectado</Badge>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Piezas por caja: <span className="text-slate-300">{box.piecesPerUnit ?? '—'}</span> · Stock de caja:{' '}
+                      <span className={box.stock < 1 ? 'text-red-400' : 'text-slate-300'}>{box.stock}</span> · Cajas abiertas:{' '}
+                      <span className="text-slate-300">{box.openedBoxes}</span>
+                      {box.piece && (
+                        <> · Pieza: <span className="text-slate-300">{box.piece.stock} uds</span> (${box.piece.price.toFixed(2)}·{box.piece.barcode})</>
+                      )}
+                    </p>
+                  </div>
+                  <div className="flex gap-2 shrink-0">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="border-sky-700/50 text-sky-400 hover:bg-sky-500/10"
+                      disabled={pieceBusy === box.id || box.stock < 1 || !box.piecesPerUnit}
+                      title={box.stock < 1 ? 'Sin stock de caja' : 'Abrir una caja y generar piezas'}
+                      onClick={() => handleGeneratePieces(box)}
+                    >
+                      <PackageOpen className="h-3.5 w-3.5 mr-1.5" />
+                      Abrir caja
+                    </Button>
+                    {(box.piecesTracked || box.piece) && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="border-red-700/50 text-red-400 hover:bg-red-500/10"
+                        disabled={pieceBusy === box.id}
+                        onClick={() => handleRevertPieces(box)}
+                      >
+                        <X className="h-3.5 w-3.5 mr-1.5" />
+                        Revertir
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Table */}
       <Card className="border-slate-700 bg-slate-800">

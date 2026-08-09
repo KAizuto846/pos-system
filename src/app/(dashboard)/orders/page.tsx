@@ -64,6 +64,8 @@ interface SoldProduct {
   department: { id: number; name: string } | null;
   supplierPrice: number | null; totalSold: number;
   source?: 'ventas' | 'pendiente';
+  // Producto sin inventario (fantasma): se rellena como si existiera
+  ghost?: boolean;
 }
 
 interface ProductSearchResult {
@@ -74,9 +76,10 @@ interface ProductSearchResult {
 }
 
 interface OrderItem {
-  id: number; productId: number; quantity: number;
-  product: Product; receivedQuantity: number; notes: string;
+  id: number; productId: number | null; quantity: number;
+  product: Product | null; receivedQuantity: number; notes: string;
   costPrice?: number | null; extra?: boolean;
+  productName?: string; productBarcode?: string;
 }
 
 interface ReceiveExtra {
@@ -230,6 +233,13 @@ export default function OrdersPage() {
   const [manualResults, setManualResults] = useState<SoldProduct[]>([]);
   const [manualSearching, setManualSearching] = useState(false);
 
+  // ── Producto sin inventario (fantasma) ──
+  const [ghostName, setGhostName] = useState('');
+  const [ghostBarcode, setGhostBarcode] = useState('');
+  const [ghostPrice, setGhostPrice] = useState('0');
+  const [ghostCost, setGhostCost] = useState('0');
+  const [ghostQty, setGhostQty] = useState('1');
+
   // ── Fetchers ──
   const fetchOrders = useCallback(async (pageNum = 1, signal?: AbortSignal) => {
     await Promise.resolve();
@@ -277,6 +287,7 @@ export default function OrdersPage() {
     setSoldProducts([]); setQuantities({}); setHiddenRows(new Set());
     setSalesInfo(null); setFormError(''); setExtraColumns([]); setPendingItems(null);
     setManualColumns({}); setCustomColumnName('');
+    setGhostName(''); setGhostBarcode(''); setGhostPrice('0'); setGhostCost('0'); setGhostQty('1');
   };
 
   // ── Calculate sales ──
@@ -448,7 +459,23 @@ export default function OrdersPage() {
     setFormError('');
     const items = Object.entries(quantities)
       .filter(([pid, qty]) => qty > 0 && !hiddenRows.has(parseInt(pid)))
-      .map(([productId, quantity]) => ({ productId: parseInt(productId), quantity }));
+      .map(([pid, quantity]) => {
+        const productId = parseInt(pid);
+        if (productId < 0) {
+          // Producto fantasma: se envía con sus datos rellenados
+          const ghost = soldProducts.find((p) => p.productId === productId && p.ghost);
+          if (!ghost) return null;
+          return {
+            name: ghost.name,
+            barcode: ghost.barcode,
+            price: ghost.price,
+            cost: ghost.cost,
+            quantity,
+          };
+        }
+        return { productId, quantity };
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null);
     if (items.length === 0) { setFormError('No hay productos con cantidad > 0'); return; }
     setFormLoading(true);
     const res = await fetch('/api/orders', {
@@ -463,6 +490,28 @@ export default function OrdersPage() {
     setCreateOpen(false); resetForm(); fetchOrders(1);
   };
 
+  const addGhostProduct = () => {
+    const name = ghostName.trim();
+    if (!name) { setFormError('Indica el nombre del producto'); return; }
+    const qty = Math.max(1, parseInt(ghostQty) || 1);
+    const id = -Math.floor(Math.random() * 1_000_000) - 1;
+    setSoldProducts(prev => [...prev, {
+      productId: id,
+      name,
+      barcode: ghostBarcode.trim(),
+      price: parseFloat(ghostPrice) || 0,
+      cost: parseFloat(ghostCost) || 0,
+      stock: 0,
+      minStock: 0,
+      department: null,
+      supplierPrice: parseFloat(ghostCost) || 0,
+      totalSold: 0,
+      ghost: true,
+    }]);
+    setQuantities(prev => ({ ...prev, [String(id)]: qty }));
+    setGhostName(''); setGhostBarcode(''); setGhostPrice('0'); setGhostCost('0'); setGhostQty('1');
+  };
+
   // ── Partial receive ──
   const openReceiveDialog = (order: Order) => {
     setSelectedOrder(order);
@@ -475,7 +524,9 @@ export default function OrdersPage() {
       const line = i.product?.productLines?.find(l => l.supplierId === order.supplierId && l.isPrimary)
         ?? i.product?.productLines?.find(l => l.supplierId === order.supplierId);
       initCost[i.id] = String(i.costPrice ?? line?.supplierPrice ?? i.product?.cost ?? 0);
-      initPrice[i.id] = String(i.product?.price ?? 0);
+      // Producto fantasma: recuperar el precio de venta guardado en las notas
+      const priceMatch = (i.notes || '').match(/P\. venta:\s*([\d.]+)/);
+      initPrice[i.id] = priceMatch ? priceMatch[1] : String(i.product?.price ?? 0);
       initBatch[i.id] = '';
     });
     setReceiveQuantities(init);
@@ -500,6 +551,16 @@ export default function OrdersPage() {
     const cost = parseFloat(e.costPrice) || 0;
     return s + qty * cost;
   }, 0);
+
+  // Pérdida por piezas no recibidas (quedan pendientes y nunca entraron a venta)
+  const receivePendingLoss = selectedOrder
+    ? selectedOrder.items.filter(i => !i.extra).reduce((s, i) => {
+        const recv = receiveQuantities[i.id] ?? i.receivedQuantity;
+        const cost = i.costPrice ?? i.product?.cost ?? 0;
+        return s + Math.max(0, i.quantity - recv) * cost;
+      }, 0)
+    : 0;
+  const receiveNetAfterLoss = extraProfit - receivePendingLoss;
 
   const handleExtraSearch = (q: string) => {
     setExtraSearch(q);
@@ -618,6 +679,14 @@ export default function OrdersPage() {
     }
   };
 
+  // ── Edit mode: añadir/quitar items ──
+  const [editItemSearch, setEditItemSearch] = useState('');
+  const [editItemResults, setEditItemResults] = useState<ProductSearchResult[]>([]);
+  const [editGhostName, setEditGhostName] = useState('');
+  const [editGhostQty, setEditGhostQty] = useState('1');
+  const [editGhostPrice, setEditGhostPrice] = useState('0');
+  const [removedItemIds, setRemovedItemIds] = useState<number[]>([]);
+
   // ── Edit items ──
   const updateOrderItem = (itemId: number, field: string, value: string | number) => {
     if (!selectedOrder) return;
@@ -629,22 +698,127 @@ export default function OrdersPage() {
     });
   };
 
+  const removeEditedItem = (itemId: number) => {
+    if (!selectedOrder) return;
+    setRemovedItemIds(prev => [...prev, itemId]);
+    setSelectedOrder({
+      ...selectedOrder,
+      items: selectedOrder.items.filter(i => i.id !== itemId),
+    });
+  };
+
+  const addEditedItem = (productId: number, name: string, barcode: string) => {
+    if (!selectedOrder) return;
+    const existing = selectedOrder.items.find(i => i.productId === productId && i.id > 0);
+    if (existing) {
+      setSelectedOrder({
+        ...selectedOrder,
+        items: selectedOrder.items.map(i =>
+          i.id === existing.id ? { ...i, quantity: i.quantity + 1 } : i
+        ),
+      });
+    } else {
+      setSelectedOrder({
+        ...selectedOrder,
+        items: [...selectedOrder.items, {
+          id: -Date.now(),
+          productId,
+          quantity: 1,
+          product: { id: productId, name, barcode, price: 0, cost: 0, stock: 0, active: true },
+          receivedQuantity: 0,
+          notes: '',
+        }],
+      });
+    }
+    setEditItemSearch('');
+    setEditItemResults([]);
+  };
+
+  const addEditedGhost = () => {
+    if (!selectedOrder || !editGhostName.trim()) return;
+    setSelectedOrder({
+      ...selectedOrder,
+      items: [...selectedOrder.items, {
+        id: -Date.now() - 1,
+        productId: null,
+        productName: editGhostName.trim(),
+        productBarcode: '',
+        quantity: Math.max(1, parseInt(editGhostQty) || 1),
+        product: null,
+        receivedQuantity: 0,
+        notes: `P. venta: ${parseFloat(editGhostPrice) || 0}`,
+      }],
+    });
+    setEditGhostName('');
+    setEditGhostQty('1');
+    setEditGhostPrice('0');
+  };
+
+  // Búsqueda de productos en modo edición
+  useEffect(() => {
+    if (!editMode || editItemSearch.trim().length < 2) {
+      setEditItemResults([]);
+      return;
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/products?q=${encodeURIComponent(editItemSearch.trim())}&limit=6`, {
+          signal: controller.signal,
+        });
+        const data = await res.json();
+        setEditItemResults(res.ok ? data.products || [] : []);
+      } catch {
+        setEditItemResults([]);
+      }
+    }, 300);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [editItemSearch, editMode]);
+
   const saveEditedItems = async () => {
     if (!selectedOrder) return;
     setFormLoading(true);
     try {
-      await fetch(`/api/orders/${selectedOrder.id}`, {
+      const res = await fetch(`/api/orders/${selectedOrder.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          items: selectedOrder.items.map(i => ({
-            id: i.id, productId: i.productId, quantity: i.quantity,
-            receivedQuantity: i.receivedQuantity, notes: i.notes,
-          })),
+          items: selectedOrder.items.map(i => {
+            const base = {
+              id: i.id > 0 ? i.id : undefined,
+              productId: i.productId ?? undefined,
+              name: i.productId === null ? (i.productName || '') : undefined,
+              barcode: i.productId === null ? (i.productBarcode || '') : undefined,
+              quantity: i.quantity,
+              receivedQuantity: i.receivedQuantity,
+              notes: i.notes,
+              cost: i.productId === null ? (i.costPrice ?? undefined) : undefined,
+            };
+            if (base.id === undefined) {
+              const { id, ...rest } = base;
+              return rest;
+            }
+            return base;
+          }),
+          removedItemIds,
         }),
       });
-      setEditMode(false); fetchOrders(orderPage);
-    } catch {}
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || 'Error al guardar');
+        return;
+      }
+      toast.success('Cambios guardados');
+      setEditMode(false);
+      setRemovedItemIds([]);
+      setEditItemResults([]);
+      fetchOrders(orderPage);
+    } catch {
+      toast.error('Error al guardar');
+    }
     setFormLoading(false);
   };
 
@@ -691,8 +865,8 @@ export default function OrdersPage() {
         return `<tr>` + cols.map(c => {
           switch (c.key) {
             case 'index': return cell({ textAlign: 'center', fontFamily: 'monospace', fontSize: '12px', color: '#94a3b8', content: String(idx + 1) });
-            case 'barcode': return cell({ fontFamily: 'monospace', fontSize: '12px', color: '#94a3b8', content: item.product?.barcode || '—' });
-            case 'name': return cell({ content: item.product?.name || `#${item.productId}` });
+            case 'barcode': return cell({ fontFamily: 'monospace', fontSize: '12px', color: '#94a3b8', content: item.product?.barcode || item.productBarcode || '—' });
+            case 'name': return cell({ content: item.product?.name || item.productName || `#${item.productId ?? '?'}` });
             case 'quantity': return cell({ textAlign: 'center', content: String(item.quantity) });
             case 'received': return cell({ textAlign: 'center', fontSize: '14px', color: '#94a3b8', content: String(item.receivedQuantity) });
             case 'pending': return cell({ textAlign: 'center', fontSize: '14px', color: pending > 0 ? '#fbbf24' : '#34d399', content: pending > 0 ? String(pending) : '✓' });
@@ -778,8 +952,8 @@ export default function OrdersPage() {
           rows.push(cols.map(c => {
             switch (c.key) {
               case 'index': return String(idx + 1);
-              case 'barcode': return item.product?.barcode || '—';
-              case 'name': return item.product?.name || `#${item.productId}`;
+              case 'barcode': return item.product?.barcode || item.productBarcode || '—';
+              case 'name': return item.product?.name || item.productName || `#${item.productId ?? '?'}`;
               case 'quantity': return String(item.quantity);
               case 'received': return String(item.receivedQuantity);
               case 'pending': return pending > 0 ? String(pending) : '0';
@@ -827,6 +1001,12 @@ export default function OrdersPage() {
     })
     .filter((p) => p.qty > 0);
   const estimatedLoss = lossBreakdown.reduce((sum, p) => sum + p.total, 0);
+
+  // Ganancia neta proyectada del pedido y resultado tras restar las pérdidas
+  const projectedProfit = visibleProducts
+    .filter((p) => (quantities[String(p.productId)] || 0) > 0)
+    .reduce((s, p) => s + (quantities[String(p.productId)] || 0) * (p.price - unitCostOf(p)), 0);
+  const netAfterLoss = projectedProfit - estimatedLoss;
 
   return (
     <div className="space-y-6">
@@ -882,6 +1062,18 @@ export default function OrdersPage() {
                         <p className="mt-1 text-[10px] text-slate-500">
                           Total invertido en piezas que no han salido por venta (precio proveedor). Información simbólica.
                         </p>
+                        <div className="mt-2 space-y-1 border-t border-red-800/60 pt-2">
+                          <div className="flex items-center justify-between gap-3 text-[11px] text-slate-400">
+                            <span>Ganancia Neta (proyectada)</span>
+                            <span className="font-mono text-emerald-400">{formatCurrency(projectedProfit)}</span>
+                          </div>
+                          <div className="flex items-center justify-between gap-3 text-xs font-semibold">
+                            <span className="text-slate-200">Ganancia Neta − Pérdidas Totales</span>
+                            <span className={`font-mono ${netAfterLoss >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                              {formatCurrency(netAfterLoss)}
+                            </span>
+                          </div>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -1019,6 +1211,9 @@ export default function OrdersPage() {
                                 <TableCell className="font-mono text-xs text-slate-400">{product.barcode || '—'}</TableCell>
                                 <TableCell className="text-sm text-slate-200">
                                   {product.name}
+                                  {product.ghost && (
+                                    <Badge variant="outline" className="ml-2 text-sky-400 border-sky-700 text-[10px]">sin inventario</Badge>
+                                  )}
                                   {product.source === 'pendiente' && (
                                     <Badge variant="outline" className="ml-2 text-amber-400 border-amber-600 text-[10px]">pendiente</Badge>
                                   )}
@@ -1102,7 +1297,7 @@ export default function OrdersPage() {
                         autoFocus
                       />
                     </div>
-                    <div className="max-h-60 overflow-y-auto space-y-1">
+<div className="max-h-60 overflow-y-auto space-y-1">
                       {manualSearching ? (
                         <div className="text-center py-4 text-sm text-slate-400">Buscando...</div>
                       ) : manualResults.length === 0 && manualSearch.length >= 2 ? (
@@ -1127,11 +1322,43 @@ export default function OrdersPage() {
                       )}
                     </div>
                   </div>
-                  <DialogFooter>
-                    <DialogClose asChild><Button type="button" variant="secondary">Cancelar</Button></DialogClose>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
+
+                  {/* Producto sin inventario (fantasma) */}
+                  <div className="rounded-md border border-dashed border-sky-700/60 bg-sky-950/20 p-3 space-y-2">
+                    <div>
+                      <span className="text-sm font-medium text-sky-300 flex items-center gap-2">
+                        <PlusCircle className="h-4 w-4" /> Producto sin inventario
+                      </span>
+                      <p className="text-[11px] text-sky-300/70 mt-0.5">
+                        Rellénalo como si lo tuvieras: se guarda en el pedido y al confirmar su recepción se crea solo en el inventario.
+                      </p>
+                    </div>
+                    <div className="grid grid-cols-12 gap-2">
+                      <div className="col-span-5">
+                        <Input placeholder="Nombre *" value={ghostName} onChange={e => setGhostName(e.target.value)} />
+                      </div>
+                      <div className="col-span-4">
+                        <Input placeholder="Código (opcional)" value={ghostBarcode} onChange={e => setGhostBarcode(e.target.value)} />
+                      </div>
+                      <div className="col-span-3">
+                        <Input type="number" min="1" placeholder="Cantidad" value={ghostQty} onChange={e => setGhostQty(e.target.value)} />
+                      </div>
+                      <div className="col-span-6">
+                        <Input type="number" step="0.01" min="0" placeholder="P. Proveedor (costo)" value={ghostCost} onChange={e => setGhostCost(e.target.value)} />
+                      </div>
+                      <div className="col-span-6">
+                        <Input type="number" step="0.01" min="0" placeholder="Precio de venta" value={ghostPrice} onChange={e => setGhostPrice(e.target.value)} />
+                      </div>
+                    </div>
+<Button type="button" size="sm" variant="outline" className="text-sky-300 border-sky-700/60 hover:bg-sky-500/10" onClick={addGhostProduct} disabled={!ghostName.trim()}>
+                      <PlusCircle className="h-3.5 w-3.5 mr-1" />Agregar al pedido
+                    </Button>
+                  </div>
+              <DialogFooter>
+                <DialogClose asChild><Button type="button" variant="secondary">Cancelar</Button></DialogClose>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
 
               <DialogFooter className="border-t border-slate-700 pt-4">
                 <DialogClose asChild><Button type="button" variant="secondary">Cancelar</Button></DialogClose>
@@ -1203,7 +1430,7 @@ export default function OrdersPage() {
                         {order.status === 'on_hold' && (
                           <Button variant="ghost" size="icon" onClick={() => setOrderReady(order)} title="Marcar como listo"><Clock className="h-4 w-4 text-amber-400" /></Button>
                         )}
-                        {order.status !== 'received' && order.status !== 'on_hold' && (
+                        {order.status !== 'received' && order.status !== 'cancelled' && (
                           <Button variant="ghost" size="icon" onClick={() => openReceiveDialog(order)} title="Recibir productos"><CheckCircle className="h-4 w-4 text-emerald-400" /></Button>
                         )}
                       </div>
@@ -1275,11 +1502,15 @@ export default function OrdersPage() {
                     {selectedOrder.items.filter(i => !i.extra).map(item => {
                       const received = receiveQuantities[item.id] ?? item.receivedQuantity;
                       const pending = Math.max(0, item.quantity - received);
+                      const itemName = item.product?.name || item.productName || `#${item.productId ?? '?'}`;
                       return (
                         <TableRow key={item.id}>
                           <TableCell>
-                            <div className="text-sm font-medium text-slate-200">{item.product?.name || `#${item.productId}`}</div>
-                            <div className="font-mono text-xs text-slate-500">{item.product?.barcode || '—'}</div>
+                            <div className="text-sm font-medium text-slate-200">{itemName}</div>
+                            <div className="font-mono text-xs text-slate-500">
+                              {item.product?.barcode || item.productBarcode || '—'}
+                              {!item.product && <span className="ml-2 rounded bg-sky-950/60 px-1.5 py-0.5 text-[10px] text-sky-400 border border-sky-700/50">se creará al recibir</span>}
+                            </div>
                           </TableCell>
                           <TableCell className="text-center text-slate-300">{item.quantity}</TableCell>
                           <TableCell className="text-center">
@@ -1340,6 +1571,9 @@ export default function OrdersPage() {
                         Ganancia neta: {formatCurrency(extraProfit)}
                       </div>
                       <div className="text-[11px] text-slate-400">Costo total: {formatCurrency(extraTotalCost)}</div>
+                      <div className={`text-xs font-semibold mt-0.5 ${receiveNetAfterLoss >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                        Ganancia Neta − Pérdidas Totales: {formatCurrency(receiveNetAfterLoss)}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1428,7 +1662,7 @@ export default function OrdersPage() {
       </Dialog>
 
       {/* ── Order Detail Dialog (with Export) ── */}
-      <Dialog open={detailOpen} onOpenChange={o => { setDetailOpen(o); if (!o) { setSelectedOrder(null); setEditMode(false); setExportOpen(false); } }}>
+      <Dialog open={detailOpen} onOpenChange={o => { setDetailOpen(o); if (!o) { setSelectedOrder(null); setEditMode(false); setExportOpen(false); setRemovedItemIds([]); setEditItemResults([]); } }}>
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -1529,10 +1763,11 @@ export default function OrdersPage() {
                           <TableCell className="text-xs text-slate-400 font-mono">
                             {isExtra ? <AlertTriangle className="h-3.5 w-3.5 text-red-400 inline mr-1" /> : `${idx + 1}.`}
                           </TableCell>
-                          <TableCell className="text-xs text-slate-400 font-mono">{item.product?.barcode || '—'}</TableCell>
+                          <TableCell className="text-xs text-slate-400 font-mono">{item.product?.barcode || item.productBarcode || '—'}</TableCell>
                           <TableCell className={`text-sm ${isExtra ? 'text-red-300' : 'text-slate-200'}`}>
-                            {item.product?.name || `#${item.productId}`}
+                            {item.product?.name || item.productName || `#${item.productId ?? '?'}`}
                             {isExtra && <span className="ml-2 text-[10px] font-bold text-red-400 uppercase">Extra</span>}
+                            {!item.product && !isExtra && <span className="ml-2 text-[10px] font-bold text-sky-400 uppercase">Sin inventario</span>}
                           </TableCell>
                           <TableCell className="text-center text-slate-200">{item.quantity}</TableCell>
                           <TableCell className="text-center text-slate-300">{item.receivedQuantity}</TableCell>
@@ -1551,9 +1786,9 @@ export default function OrdersPage() {
               {/* Edit mode */}
               <div className="flex items-center justify-between mt-4">
                 <h4 className="text-sm font-medium text-slate-300">Productos ({selectedOrder.items.length})</h4>
-                {selectedOrder.status !== 'received' && (
+                {selectedOrder.status !== 'received' && selectedOrder.status !== 'cancelled' && (
                   <Button type="button" variant={editMode ? 'default' : 'outline'} size="sm" onClick={() => setEditMode(!editMode)}>
-                    {editMode ? 'Cancelar edición' : 'Editar cantidades'}
+                    {editMode ? 'Cancelar edición' : 'Editar pedido'}
                   </Button>
                 )}
               </div>
@@ -1568,6 +1803,7 @@ export default function OrdersPage() {
                       <TableHead className="text-center">Recibido</TableHead>
                       <TableHead className="text-center">Pendiente</TableHead>
                       <TableHead>Notas</TableHead>
+                      {editMode && <TableHead className="w-10"></TableHead>}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -1575,8 +1811,11 @@ export default function OrdersPage() {
                       const pending = Math.max(0, item.quantity - item.receivedQuantity);
                       return (
                         <TableRow key={item.id}>
-                          <TableCell className="font-mono text-xs text-slate-400">{item.product?.barcode || '—'}</TableCell>
-                          <TableCell className="text-sm font-medium text-slate-200">{item.product?.name || `#${item.productId}`}</TableCell>
+                          <TableCell className="font-mono text-xs text-slate-400">{item.product?.barcode || item.productBarcode || '—'}</TableCell>
+                          <TableCell className="text-sm font-medium text-slate-200">
+                            {item.product?.name || item.productName || `#${item.productId ?? '?'}`}
+                            {!item.product && <span className="ml-2 rounded bg-sky-950/60 px-1.5 py-0.5 text-[10px] text-sky-400 border border-sky-700/50">sin inventario</span>}
+                          </TableCell>
                           <TableCell className="text-center">
                             {editMode ? (
                               <Input type="number" min="0" value={item.quantity} onChange={e => updateOrderItem(item.id, 'quantity', e.target.value)} className="w-20 h-8 text-center mx-auto" />
@@ -1585,16 +1824,83 @@ export default function OrdersPage() {
                           <TableCell className="text-center text-slate-300">{item.receivedQuantity}</TableCell>
                           <TableCell className="text-center">{pending > 0 ? <span className="text-amber-400">{pending}</span> : <span className="text-emerald-400">✓</span>}</TableCell>
                           <TableCell>
-                            {editMode ? (
+                            {editMode && item.receivedQuantity > 0 ? (
+                              <span className="text-xs text-slate-500">{item.notes || '—'}</span>
+                            ) : editMode ? (
                               <Input value={item.notes} onChange={e => updateOrderItem(item.id, 'notes', e.target.value)} className="h-8 text-sm" placeholder="Notas..." />
                             ) : <span className="text-xs text-slate-400">{item.notes || '—'}</span>}
                           </TableCell>
+                          {editMode && (
+                            <TableCell className="text-center">
+                              <button
+                                type="button"
+                                onClick={() => removeEditedItem(item.id)}
+                                disabled={item.receivedQuantity > 0}
+                                className="text-red-400 hover:text-red-300 disabled:opacity-30 transition-colors"
+                                title={item.receivedQuantity > 0 ? 'No se puede quitar: ya tiene piezas recibidas' : 'Quitar del pedido'}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </TableCell>
+                          )}
                         </TableRow>
                       );
                     })}
                   </TableBody>
                 </Table>
               </div>
+
+              {/* Agregar items en modo edición */}
+              {editMode && (
+                <div className="rounded-md border border-slate-700 bg-slate-800/40 p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium text-slate-300">Agregar producto</span>
+                    {selectedOrder.supplierId > 0 && (
+                      <span className="text-[10px] text-slate-500">El costo se toma del proveedor del pedido</span>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    <div className="relative flex-1">
+                      <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+                      <Input
+                        placeholder="Buscar por nombre o código..."
+                        value={editItemSearch}
+                        onChange={e => { setEditItemSearch(e.target.value); }}
+                        className="pl-9 h-8 text-xs"
+                      />
+                      {editItemResults.length > 0 && (
+                        <div className="absolute z-10 mt-1 w-full rounded-md border border-slate-700 bg-slate-900 shadow-lg max-h-48 overflow-y-auto">
+                          {editItemResults.map(p => (
+                            <button
+                              key={p.id}
+                              type="button"
+                              onClick={() => addEditedItem(p.id, p.name, p.barcode)}
+                              className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left text-xs text-slate-200 hover:bg-slate-800 transition-colors"
+                            >
+                              <span className="truncate">{p.name}</span>
+                              <span className="font-mono text-slate-500 shrink-0">{p.barcode || '—'}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <Button type="button" size="sm" variant="outline" className="h-8 text-xs" onClick={addEditedGhost} disabled={!editGhostName.trim()}>
+                      <PlusCircle className="h-3 w-3 mr-1" />Agregar fantasma
+                    </Button>
+                  </div>
+                  <div className="grid grid-cols-12 gap-2">
+                    <div className="col-span-6">
+                      <Input placeholder="Nombre (sin inventario)..." value={editGhostName} onChange={e => setEditGhostName(e.target.value)} className="h-8 text-xs" />
+                    </div>
+                    <div className="col-span-3">
+                      <Input placeholder="Cantidad" type="number" min="1" value={editGhostQty} onChange={e => setEditGhostQty(e.target.value)} className="h-8 text-xs" />
+                    </div>
+                    <div className="col-span-3">
+                      <Input placeholder="P. venta" type="number" step="0.01" min="0" value={editGhostPrice} onChange={e => setEditGhostPrice(e.target.value)} className="h-8 text-xs" />
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {editMode && (
                 <Button className="w-full" onClick={saveEditedItems} disabled={formLoading}>

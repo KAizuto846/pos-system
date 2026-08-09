@@ -68,6 +68,7 @@ export async function GET(request: Request) {
         if (pending <= 0) continue;
 
         const pid = item.productId;
+        if (!pid || !item.product) continue;
         const existing = pendingMap.get(pid);
         if (existing) {
           existing.pendingQuantity += pending;

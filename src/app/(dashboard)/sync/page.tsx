@@ -154,7 +154,7 @@ export default function SyncPage() {
   };
 
   const handleCopyUrl = async () => {
-    const url = selfUrl.replace('localhost', '0.0.0.0');
+    const url = selfUrl;
     try {
       await navigator.clipboard.writeText(url);
       toast.success('URL copiada al portapapeles');
@@ -328,7 +328,11 @@ export default function SyncPage() {
     }
   };
 
-  const selfUrl = `http://localhost:${deviceInfo.serverPort || 3000}`;
+  // URL accesible desde otros equipos/teléfonos: usa la IP LAN real si está disponible
+  const lanIp = (deviceInfo as { serverIP?: string })?.serverIP || '';
+  const selfUrl = lanIp
+    ? `http://${lanIp}:${deviceInfo.serverPort || 3000}`
+    : `http://localhost:${deviceInfo.serverPort || 3000}`;
 
   return (
     <div className="space-y-6 p-6">

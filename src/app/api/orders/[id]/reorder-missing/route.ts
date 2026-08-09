@@ -50,8 +50,10 @@ export async function POST(
           items: {
             create: missing.map((m) => ({
               productId: m.productId,
+              productName: m.product?.name ?? m.productName,
+              productBarcode: m.product?.barcode ?? m.productBarcode,
               quantity: m.quantity - m.receivedQuantity,
-              costPrice: m.costPrice ?? m.product.cost ?? 0,
+              costPrice: m.costPrice ?? m.product?.cost ?? 0,
             })),
           },
         },

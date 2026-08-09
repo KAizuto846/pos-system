@@ -30,6 +30,8 @@ export const productSchema = z.object({
   departmentId: z.number().nullable().optional(),
   supplierId: z.number().nullable().optional(),
   active: z.boolean().default(true),
+  piecesPerUnit: z.number().int().positive().nullable().optional(),
+  piecesTracked: z.boolean().optional(),
 });
 
 export const supplierSchema = z.object({
@@ -76,7 +78,13 @@ export const orderSchema = z.object({
   items: z
     .array(
       z.object({
-        productId: z.number(),
+        // productId es opcional: permite productos que NO existen en inventario
+        // (fantasma). En ese caso se guardan name/barcode/price/cost como snapshot.
+        productId: z.number().optional(),
+        name: z.string().optional(),
+        barcode: z.string().optional(),
+        price: z.number().optional(),
+        cost: z.number().optional(),
         quantity: z.number().int().min(1),
       })
     )

@@ -116,10 +116,10 @@ export async function POST(
         const finalCost =
           typeof item.costPrice === "number" && item.costPrice >= 0
             ? item.costPrice
-            : orderItem.costPrice ?? defaultCost(orderItem.productId);
+            : orderItem.costPrice ?? defaultCost(orderItem.productId ?? 0);
 
         // Si se cambiaron precios, actualizar el inventario (producto + línea del proveedor)
-        if (typeof item.costPrice === "number" && item.costPrice >= 0) {
+        if (typeof item.costPrice === "number" && item.costPrice >= 0 && orderItem.productId) {
           await tx.productLine.updateMany({
             where: { productId: orderItem.productId, supplierId: order.supplierId },
             data: { supplierPrice: item.costPrice },
@@ -129,7 +129,7 @@ export async function POST(
             data: { cost: item.costPrice },
           });
         }
-        if (typeof item.price === "number" && item.price >= 0) {
+        if (typeof item.price === "number" && item.price >= 0 && orderItem.productId) {
           await tx.product.update({
             where: { id: orderItem.productId },
             data: { price: item.price },
@@ -149,8 +149,53 @@ export async function POST(
 
         // Update product stock if received > 0 (en lote con caducidad opcional)
         if (receivedQuantity > 0) {
+          let productId = orderItem.productId;
+          // Producto fantasma (no existía en inventario): se crea al recibir
+          // con los datos rellenados, heredando el proveedor del pedido.
+          if (!productId) {
+            const barcodeBase = (orderItem.productBarcode || "").trim();
+            const name = (orderItem.productName || "").trim() || `Producto pedido #${orderId}`;
+            let barcode = barcodeBase || `F-${orderId}-${orderItem.id}`;
+            const existingBarcode = await tx.product.findFirst({ where: { barcode } });
+            if (existingBarcode) barcode = `${barcode}-${orderItem.id}`;
+            const price = typeof item.price === "number" && item.price >= 0 ? item.price : 0;
+            const created = await tx.product.create({
+              data: {
+                name,
+                barcode,
+                price,
+                cost: finalCost,
+                stock: 0,
+                minStock: 1,
+                active: true,
+              },
+            });
+            void logChange(getDeviceId(), "CREATE", "product", created.id, {
+              id: created.id,
+              name,
+              barcode,
+              price,
+              cost: finalCost,
+              stock: 0,
+              minStock: 1,
+              active: true,
+            });
+            await tx.productLine.create({
+              data: {
+                productId: created.id,
+                supplierId: order.supplierId,
+                supplierPrice: finalCost,
+                isPrimary: true,
+              },
+            });
+            await tx.supplierOrderItem.update({
+              where: { id: orderItemId },
+              data: { productId: created.id },
+            });
+            productId = created.id;
+          }
           const expiresAt = item.expiresAt ? monthYearToEndOfMonth(item.expiresAt) : null;
-          await addStock(tx, orderItem.productId, receivedQuantity, {
+          await addStock(tx, productId, receivedQuantity, {
             expiresAt,
             costPrice: finalCost,
           });
@@ -271,6 +316,80 @@ export async function POST(
         );
       }
       await Promise.all(entries);
+    }
+
+    // Alerta de llegada: si el pedido recibido contiene algo de la lista de una
+    // persona, se crea/actualiza un aviso pendiente que no desaparece hasta
+    // que alguien lo confirme (ver /api/delivery-notices).
+    try {
+      const receivedItems = updatedOrder.items.filter((i) => i.receivedQuantity > 0);
+      const receivedProductIds = new Set(
+        receivedItems.map((i) => i.productId).filter((x): x is number => typeof x === "number")
+      );
+      const wishlist = await prisma.userWishlistItem.findMany({
+        include: { user: { select: { name: true, active: true } } },
+      });
+      const byUser = new Map<number, { userId: number; userName: string; items: { name: string; quantity: number }[] }>();
+      for (const w of wishlist) {
+        let matched: { name: string; quantity: number } | null = null;
+        if (w.productId && receivedProductIds.has(w.productId)) {
+          const prod = receivedItems.find((i) => i.productId === w.productId);
+          matched = {
+            name: prod?.product?.name ?? w.name ?? `Producto #${w.productId}`,
+            quantity: prod?.receivedQuantity ?? 0,
+          };
+        } else if (w.productId === null && w.name.trim()) {
+          const wanted = w.name.trim().toLowerCase();
+          const prod = receivedItems.find((i) => {
+            const n = (i.product?.name || i.productName || "").toLowerCase();
+            return n.includes(wanted) || wanted.includes(n);
+          });
+          if (prod) {
+            matched = {
+              name: prod.product?.name || prod.productName || w.name,
+              quantity: prod.receivedQuantity,
+            };
+          }
+        }
+        if (matched) {
+          const entry = byUser.get(w.userId) || {
+            userId: w.userId,
+            userName: w.user.name,
+            items: [],
+          };
+          entry.items.push({ name: matched.name, quantity: matched.quantity });
+          byUser.set(w.userId, entry);
+        }
+      }
+      for (const [, entry] of byUser) {
+        const existing = await prisma.deliveryNotice.findFirst({
+          where: { orderId, userId: entry.userId, status: "pending" },
+        });
+        const itemsJson = JSON.stringify(entry.items);
+        if (existing) {
+          await prisma.deliveryNotice.update({
+            where: { id: existing.id },
+            data: { items: itemsJson },
+          });
+        } else {
+          const created = await prisma.deliveryNotice.create({
+            data: {
+              orderId,
+              userId: entry.userId,
+              items: itemsJson,
+              status: "pending",
+            },
+          });
+          void logChange(getDeviceId(), "CREATE", "deliverynotice", created.id, {
+            orderId,
+            userId: entry.userId,
+            items: entry.items,
+            status: "pending",
+          });
+        }
+      }
+    } catch (e) {
+      console.error("[notice] Error creando avisos de llegada:", e);
     }
 
     broadcast("order:receive", { id: orderId });

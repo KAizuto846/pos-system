@@ -1,6 +1,7 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { productSchema } from "@/lib/validations";
+import { detectPiecesFromName } from "@/lib/pieces";
 import { broadcast } from "@/lib/broadcast";
 import { logChange } from "@/lib/sync-engine";
 import { getDeviceId } from "@/lib/sync-utils";
@@ -148,6 +149,10 @@ export async function POST(request: Request) {
 
     const data = parsed.data;
 
+    const detected = detectPiecesFromName(data.name);
+    const piecesPerUnit = data.piecesPerUnit ?? detected?.pieces ?? null;
+    const piecesTracked = data.piecesTracked ?? Boolean(detected);
+
     // Support both old supplierId and new productLines
     const productLinesData = body.productLines;
     let supplierIdValue: number | null = data.supplierId ?? null;
@@ -169,6 +174,8 @@ export async function POST(request: Request) {
         active: data.active,
         departmentId: data.departmentId ?? null,
         supplierId: supplierIdValue,
+        piecesPerUnit,
+        piecesTracked,
         ...(productLinesData && Array.isArray(productLinesData) && productLinesData.length > 0
           ? {
               productLines: {
@@ -196,6 +203,8 @@ export async function POST(request: Request) {
       active: product.active,
       departmentId: product.departmentId,
       supplierId: product.supplierId,
+      piecesPerUnit: product.piecesPerUnit,
+      piecesTracked: product.piecesTracked,
     });
     return Response.json(product, { status: 201 });
   } catch (error) {

@@ -1,6 +1,6 @@
 {
   "name": "pos-system-new",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Sistema de Punto de Venta — POS System",
   "author": "KAizuto846",
   "private": true,
@@ -45,6 +45,7 @@
     "next": "16.2.6",
     "next-auth": "^5.0.0-beta.31",
     "papaparse": "^5.5.3",
+    "qrcode": "^1.5.4",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "react-hot-toast": "^2.6.0",
@@ -59,6 +60,7 @@
     "@types/multer": "^2.1.0",
     "@types/node": "^20",
     "@types/papaparse": "^5.5.2",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "concurrently": "^9.2.1",
@@ -101,10 +103,10 @@
           ]
         }
       ],
-    "icon": "public/icons/icon-512.png",
-    "sign": null,
-    "signAndEditExecutable": false,
-    "verifyUpdateCodeSignature": false
+      "icon": "public/icons/icon-512.png",
+      "sign": null,
+      "signAndEditExecutable": false,
+      "verifyUpdateCodeSignature": false
     },
     "nsis": {
       "artifactName": "POS-System-Setup-${version}.${ext}",
@@ -114,9 +116,9 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "POS System",
-    "installerIcon": "public/icons/icon-512.ico",
-    "uninstallerIcon": "public/icons/icon-512.ico",
-    "license": "LICENSE"
+      "installerIcon": "public/icons/icon-512.ico",
+      "uninstallerIcon": "public/icons/icon-512.ico",
+      "license": "LICENSE"
     },
     "linux": {
       "target": [

@@ -74,6 +74,13 @@ Section "Accesos Directos" SEC_SHORTCUTS
     CreateShortCut "$DESKTOP\${PRODUCT_NAME}.lnk" "$INSTDIR\POS System.exe" "" "$INSTDIR\POS System.exe" 0
 SectionEnd
 
+; Reglas de firewall: permitir que el teléfono/cualquier equipo de la LAN
+; acceda al servidor web (TCP 3000) y a la detección P2P (UDP 9876).
+Section "Firewall" SEC_FIREWALL
+    nsExec::ExecToLog 'netsh advfirewall firewall add rule name="POS System - Web (TCP 3000)" dir=in action=allow protocol=TCP localport=3000'
+    nsExec::ExecToLog 'netsh advfirewall firewall add rule name="POS System - Discovery (UDP 9876)" dir=in action=allow protocol=UDP localport=9876'
+SectionEnd
+
 Section -Post
     WriteUninstaller "$INSTDIR\${UNINSTALLER_NAME}"
 SectionEnd
@@ -88,5 +95,7 @@ Function un.onUninstSuccess
 FunctionEnd
 
 Section Uninstall
+    nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="POS System - Web (TCP 3000)"'
+    nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="POS System - Discovery (UDP 9876)"'
     RMDir /r $INSTDIR
 SectionEnd

@@ -122,14 +122,83 @@ export async function POST(request: Request) {
     const userId = parseInt(session.user.id, 10);
 
     await initializePrisma();
+    const openedPieces: Array<{
+      boxId: number;
+      pieceId: number;
+      pieces: number;
+      logId: number;
+      createdAt: Date;
+    }> = [];
+
     const sale = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       // Atomic stock check + decrement using raw SQL
       // This prevents race conditions between concurrent sales
       for (const item of data.items) {
-        const result = await tx.$executeRaw`
+        let result = await tx.$executeRaw`
           UPDATE products SET stock = stock - ${item.quantity}
           WHERE id = ${item.productId} AND stock >= ${item.quantity}
         `;
+
+        if (result === 0 && Number.isInteger(item.productId)) {
+          // Posible pieza con stock agotado: intentar abrir una caja automáticamente
+          const product = await tx.product.findUnique({
+            where: { id: item.productId },
+            select: {
+              id: true,
+              name: true,
+              stock: true,
+              pieceOfProductId: true,
+              piecesPerUnit: true,
+            },
+          });
+
+          if (product?.pieceOfProductId) {
+            const box = await tx.product.findUnique({
+              where: { id: product.pieceOfProductId },
+              select: { id: true, stock: true, piecesPerUnit: true },
+            });
+            const pieces =
+              box?.piecesPerUnit ?? product.piecesPerUnit ?? 0;
+            if (box && box.stock >= 1 && pieces >= item.quantity) {
+              const consumed = await tx.$executeRaw`
+                UPDATE products SET stock = stock - 1
+                WHERE id = ${box.id} AND stock >= 1
+              `;
+              if (consumed === 1) {
+                await tx.$executeRaw`
+                  UPDATE products SET stock = stock + ${pieces}
+                  WHERE id = ${item.productId}
+                `;
+                const result2 = await tx.$executeRaw`
+                  UPDATE products SET stock = stock - ${item.quantity}
+                  WHERE id = ${item.productId} AND stock >= ${item.quantity}
+                `;
+                if (result2 === 1) {
+                  const log = await tx.piecesLog.create({
+                    data: {
+                      boxProductId: box.id,
+                      pieces,
+                      source: "sale",
+                    },
+                  });
+                  openedPieces.push({
+                    boxId: box.id,
+                    pieceId: item.productId,
+                    pieces,
+                    logId: log.id,
+                    createdAt: log.createdAt,
+                  });
+                  result = 1;
+                } else {
+                  // Stock de pieza aún insuficiente: devolver la caja
+                  await tx.$executeRaw`
+                    UPDATE products SET stock = stock + 1 WHERE id = ${box.id}
+                  `;
+                }
+              }
+            }
+          }
+        }
 
         if (result === 0) {
           // Check if product exists to give a better error message
@@ -230,6 +299,60 @@ export async function POST(request: Request) {
       items: data.items,
       createdAt: sale.createdAt,
     });
+
+    for (const opened of openedPieces) {
+      const freshBox = await prisma.product.findUnique({
+        where: { id: opened.boxId },
+        select: {
+          id: true,
+          name: true,
+          barcode: true,
+          price: true,
+          cost: true,
+          stock: true,
+          minStock: true,
+          active: true,
+          departmentId: true,
+          supplierId: true,
+          piecesPerUnit: true,
+          piecesTracked: true,
+        },
+      });
+      const freshPiece = await prisma.product.findUnique({
+        where: { id: opened.pieceId },
+        select: {
+          id: true,
+          name: true,
+          barcode: true,
+          price: true,
+          cost: true,
+          stock: true,
+          minStock: true,
+          active: true,
+          departmentId: true,
+          supplierId: true,
+          pieceOfProductId: true,
+        },
+      });
+      broadcast("product:stock", { id: opened.boxId, stock: freshBox?.stock });
+      if (freshBox) {
+        const boxPatch = { ...freshBox } as Partial<typeof freshBox>;
+        delete boxPatch.id;
+        void logChange(getDeviceId(), "UPDATE", "product", opened.boxId, boxPatch);
+      }
+      if (freshPiece) {
+        const piecePatch = { ...freshPiece } as Partial<typeof freshPiece>;
+        delete piecePatch.id;
+        void logChange(getDeviceId(), "UPDATE", "product", opened.pieceId, piecePatch);
+      }
+      void logChange(getDeviceId(), "CREATE", "pieceslog", opened.logId, {
+        id: opened.logId,
+        boxProductId: opened.boxId,
+        pieces: opened.pieces,
+        source: "sale",
+        createdAt: opened.createdAt.toISOString(),
+      });
+    }
     return Response.json(sale, { status: 201 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Error al crear venta";

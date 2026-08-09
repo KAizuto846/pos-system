@@ -37,6 +37,8 @@ export async function GET(request: Request) {
             select: {
               id: true,
               productId: true,
+              productName: true,
+              productBarcode: true,
               quantity: true,
               receivedQuantity: true,
               received: true,
@@ -97,14 +99,17 @@ export async function POST(request: Request) {
 
     await initializePrisma();
     const order = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      const products = await tx.product.findMany({
-        where: { id: { in: data.items.map((i) => i.productId) } },
-        include: {
-          productLines: {
-            where: { supplierId: data.supplierId },
-          },
-        },
-      });
+      const realItems = data.items.filter((i) => typeof i.productId === "number");
+      const products = realItems.length > 0
+        ? await tx.product.findMany({
+            where: { id: { in: realItems.map((i) => i.productId as number) } },
+            include: {
+              productLines: {
+                where: { supplierId: data.supplierId },
+              },
+            },
+          })
+        : [];
       const linesByProduct = new Map(
         products.map((p) => [
           p.id,
@@ -119,12 +124,25 @@ export async function POST(request: Request) {
           status: data.status ?? "pending",
           items: {
             create: data.items.map((item) => {
-              const line = linesByProduct.get(item.productId);
-              const product = products.find((p) => p.id === item.productId);
+              if (typeof item.productId === "number") {
+                const line = linesByProduct.get(item.productId);
+                const product = products.find((p) => p.id === item.productId);
+                return {
+                  productId: item.productId,
+                  productName: product?.name ?? "",
+                  productBarcode: product?.barcode ?? "",
+                  quantity: item.quantity,
+                  costPrice: line?.supplierPrice ?? product?.cost ?? 0,
+                };
+              }
+              // Producto fantasma: no existe en inventario, se guarda el snapshot
               return {
-                productId: item.productId,
+                productId: null,
+                productName: (item.name ?? "").trim(),
+                productBarcode: (item.barcode ?? "").trim(),
                 quantity: item.quantity,
-                costPrice: line?.supplierPrice ?? product?.cost ?? 0,
+                costPrice: item.cost ?? 0,
+                notes: `P. venta: ${item.price ?? 0}`,
               };
             }),
           },

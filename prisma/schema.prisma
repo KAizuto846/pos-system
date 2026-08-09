@@ -24,6 +24,8 @@ model User {
   cashEntries CashEntry[]
   shiftReports ShiftReport[]
   refunds   Refund[]
+  wishlistItems UserWishlistItem[]
+  deliveryNotices DeliveryNotice[]
 
   @@map("users")
 }
@@ -131,17 +133,29 @@ model Product {
   supplierId     Int?       @map("supplier_id")
   supplier       Supplier?  @relation(fields: [supplierId], references: [id])
 
+  // Gestión de piezas: un producto caja ("Paracetamol C/10") tiene piecesPerUnit;
+  // el producto "Pieza de..." apunta a su caja vía pieceOfProductId.
+  piecesPerUnit    Int?     @map("pieces_per_unit")
+  piecesTracked    Boolean  @default(false) @map("pieces_tracked")
+  pieceOfProductId Int?     @map("piece_of_product_id")
+  pieceOfProduct   Product? @relation("PiecesRelation", fields: [pieceOfProductId], references: [id], onDelete: SetNull)
+  pieceChildren    Product[] @relation("PiecesRelation")
+
   productLines   ProductLine[]
   saleItems      SaleItem[]
   orderItems     SupplierOrderItem[]
   refunds        Refund[]
   batches        ProductBatch[]
 
+  wishlistItems  UserWishlistItem[]
+  piecesLog      PiecesLog[]
+
   @@index([barcode])
   @@index([departmentId])
   @@index([supplierId])
   @@index([name])
   @@index([createdAt])
+  @@index([pieceOfProductId])
   @@map("products")
 }
 
@@ -250,6 +264,7 @@ model SupplierOrder {
   sentAt     DateTime? @map("sent_at")
 
   items SupplierOrderItem[]
+  deliveryNotices DeliveryNotice[]
 
   @@index([supplierId])
   @@index([status])
@@ -260,8 +275,12 @@ model SupplierOrderItem {
   id                 Int           @id @default(autoincrement())
   supplierOrderId    Int           @map("supplier_order_id")
   supplierOrder      SupplierOrder @relation(fields: [supplierOrderId], references: [id], onDelete: Cascade)
-  productId          Int           @map("product_id")
-  product            Product       @relation(fields: [productId], references: [id])
+  productId          Int?          @map("product_id")
+  product            Product?      @relation(fields: [productId], references: [id])
+  // Snapshot para productos sin inventario (fantasma): se rellenan al crearlo
+  // y se usan para crearlo en inventario al confirmar la recepción.
+  productName        String        @default("") @map("product_name")
+  productBarcode     String        @default("") @map("product_barcode")
   quantity           Int
   receivedQuantity   Int           @default(0) @map("received_quantity")
   received           Boolean       @default(false)
@@ -367,4 +386,58 @@ model AppSetting {
   updatedAt DateTime @updatedAt
 
   @@map("app_settings")
+}
+
+// Lista de medicamentos/productos que una persona (usuario) necesita.
+// productId nulo = texto libre (producto que aún no existe en inventario).
+model UserWishlistItem {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  productId Int?     @map("product_id")
+  product   Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  name      String   @default("")
+  quantity  Int?
+  notes     String   @default("")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([productId])
+  @@map("user_wishlist_items")
+}
+
+// Alerta de llegada: se crea al confirmar la recepción de un pedido si ese
+// pedido contiene algo de la lista de una persona. No desaparece hasta que
+// alguien confirme que el pedido de esa persona ya llegó.
+model DeliveryNotice {
+  id          Int           @id @default(autoincrement())
+  orderId     Int           @map("order_id")
+  order       SupplierOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  userId      Int           @map("user_id")
+  user        User          @relation(fields: [userId], references: [id])
+  items       String        @default("[]") // JSON: [{ name, quantity }]
+  status      String        @default("pending") // pending | confirmed
+  confirmedBy Int?          @map("confirmed_by")
+  confirmedAt DateTime?     @map("confirmed_at")
+  createdAt   DateTime      @default(now()) @map("created_at")
+
+  @@index([status])
+  @@index([userId])
+  @@index([orderId])
+  @@map("delivery_notices")
+}
+
+// Registro de cajas abiertas para piezas: cada entrada = 1 caja consumida
+// (vendida o generada manualmente). Alimenta el cálculo del siguiente pedido.
+model PiecesLog {
+  id            Int      @id @default(autoincrement())
+  boxProductId  Int      @map("box_product_id")
+  boxProduct    Product  @relation(fields: [boxProductId], references: [id], onDelete: Cascade)
+  pieces        Int      @default(0)
+  source        String   @default("generated") // generated | sale
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([boxProductId])
+  @@index([createdAt])
+  @@map("pieces_log")
 }

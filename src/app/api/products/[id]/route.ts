@@ -1,5 +1,6 @@
 import { auth } from "@/lib/auth";
 import { initializePrisma, prisma } from "@/lib/db";
+import { detectPiecesFromName } from "@/lib/pieces";
 import { productSchema } from "@/lib/validations";
 import { broadcast } from "@/lib/broadcast";
 import { logChange } from "@/lib/sync-engine";
@@ -36,7 +37,26 @@ export async function PUT(
     const data = parsed.data;
     const updateData: Record<string, unknown> = {};
 
-    if (data.name !== undefined) updateData.name = data.name;
+    if (data.name !== undefined) {
+      updateData.name = data.name;
+      const detected = detectPiecesFromName(data.name);
+      if (detected) {
+        const current = await prisma.product.findUnique({
+          where: { id: productId },
+          select: { piecesTracked: true, piecesPerUnit: true },
+        });
+        if (data.piecesTracked !== undefined) {
+          updateData.piecesTracked = data.piecesTracked;
+        } else if (current) {
+          if (current.piecesTracked) {
+            updateData.piecesPerUnit = detected.pieces;
+          } else if (current.piecesPerUnit === null) {
+            updateData.piecesTracked = true;
+            updateData.piecesPerUnit = detected.pieces;
+          }
+        }
+      }
+    }
     if (data.barcode !== undefined) updateData.barcode = data.barcode;
     if (data.price !== undefined) updateData.price = data.price;
     if (data.cost !== undefined) updateData.cost = data.cost;
@@ -44,6 +64,8 @@ export async function PUT(
     if (data.active !== undefined) updateData.active = data.active;
     if (data.departmentId !== undefined) updateData.departmentId = data.departmentId;
     if (data.supplierId !== undefined) updateData.supplierId = data.supplierId;
+    if (data.piecesPerUnit !== undefined) updateData.piecesPerUnit = data.piecesPerUnit;
+    if (data.piecesTracked !== undefined) updateData.piecesTracked = data.piecesTracked;
 
     const productLinesData = body.productLines;
     const batchOps = body.batchOps;

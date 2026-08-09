@@ -80,8 +80,21 @@ export async function GET(request: Request) {
       }
     >();
 
+    // Ventas de piezas ("Pieza de...") agrupadas por caja (pieceOfProductId)
+    const pieceSalesByBox = new Map<number, number>();
+
     for (const item of saleItems) {
       const pid = item.productId;
+      const pieceBoxId = item.product.pieceOfProductId;
+
+      if (pieceBoxId) {
+        pieceSalesByBox.set(
+          pieceBoxId,
+          (pieceSalesByBox.get(pieceBoxId) ?? 0) + item.quantity
+        );
+        continue;
+      }
+
       const existing = grouped.get(pid);
       if (existing) {
         existing.totalSold += item.quantity;
@@ -100,6 +113,85 @@ export async function GET(request: Request) {
           department: item.product.department,
           supplierPrice: line?.supplierPrice ?? null,
           totalSold: item.quantity,
+        });
+      }
+    }
+
+    // Cajas abiertas en el rango (cada entrada = 1 caja consumida, con o sin venta)
+    const logs = await prisma.piecesLog.findMany({
+      where: {
+        createdAt: { gte: fromDate, lte: toDate },
+        boxProduct: {
+          active: true,
+          productLines: {
+            some: { supplierId: sid, isPrimary: true },
+          },
+        },
+      },
+      select: { boxProductId: true, pieces: true },
+    });
+
+    const openedByBox = new Map<number, number>();
+    for (const log of logs) {
+      openedByBox.set(log.boxProductId, (openedByBox.get(log.boxProductId) ?? 0) + 1);
+    }
+
+    // Datos de las cajas involucradas (vendidas, abiertas o con piezas vendidas)
+    const boxIds = new Set([
+      ...grouped.keys(),
+      ...openedByBox.keys(),
+      ...pieceSalesByBox.keys(),
+    ]);
+
+    if (boxIds.size > 0) {
+      const boxes = await prisma.product.findMany({
+        where: { id: { in: [...boxIds] } },
+        select: {
+          id: true,
+          name: true,
+          barcode: true,
+          price: true,
+          cost: true,
+          stock: true,
+          minStock: true,
+          active: true,
+          piecesPerUnit: true,
+          department: true,
+          productLines: {
+            select: { supplierId: true, supplierPrice: true, isPrimary: true },
+          },
+        },
+      });
+
+      for (const box of boxes) {
+        if (!box.active) continue;
+        const own = grouped.get(box.id)?.totalSold ?? 0;
+        const opened = openedByBox.get(box.id) ?? 0;
+        const pieceQty = pieceSalesByBox.get(box.id) ?? 0;
+        const unit = box.piecesPerUnit;
+        let extra = 0;
+        if (unit && unit > 0) {
+          const uncovered = pieceQty - opened * unit;
+          if (uncovered > 0) extra = Math.ceil(uncovered / unit);
+        }
+        const totalSold = own + opened + extra;
+        if (totalSold === 0) continue;
+
+        const lines = box.productLines || [];
+        const line = lines.find(l => l.supplierId === sid && l.isPrimary)
+          ?? lines.find(l => l.supplierId === sid);
+
+        grouped.set(box.id, {
+          productId: box.id,
+          name: box.name,
+          barcode: box.barcode,
+          price: box.price,
+          cost: box.cost,
+          stock: box.stock,
+          minStock: box.minStock,
+          department: box.department,
+          supplierPrice: line?.supplierPrice ?? null,
+          totalSold,
         });
       }
     }

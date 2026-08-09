@@ -22,6 +22,12 @@
                color: white; border: none; border-radius: 8px; font-size: 14px; cursor: pointer; }
   .retry-btn:hover { background: #059669; }
   .retry-btn.show { display: inline-block; }
+  .lan-box { margin-top: 14px; padding: 12px; border: 1px dashed #0ea5e9; border-radius: 8px;
+             background: rgba(14, 165, 233, 0.08); }
+  .lan-title { font-size: 12px; color: #7dd3fc; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+  .lan-url { font-size: 20px; font-family: 'Consolas', monospace; color: #38bdf8; margin: 6px 0 4px;
+             user-select: text; }
+  .lan-hint { font-size: 11px; color: #64748b; }
 </style>
 </head>
 <body>
@@ -29,6 +35,11 @@
   <h1>POS System</h1>
   <p>Iniciando servidor...</p>
   <div class="spinner"></div>
+  <div class="lan-box" id="lanBox" style="display:none">
+    <p class="lan-title">Acceso desde el teléfono</p>
+    <p class="lan-url" id="lanUrl"></p>
+    <p class="lan-hint">Abre esta dirección en el navegador de tu celular (misma red WiFi)</p>
+  </div>
   <div id="log">
     <div class="warn">Iniciando servidor en puerto <span id="portLabel">3000</span>...</div>
   </div>
@@ -85,6 +96,11 @@ if (window.electronAPI && window.electronAPI.onServerError) {
 var params = new URLSearchParams(window.location.search);
 var port = params.get('port') || '3000';
 document.getElementById('portLabel').textContent = port;
+var ip = params.get('ip') || '';
+if (ip) {
+  document.getElementById('lanUrl').textContent = 'http://' + ip + ':' + port;
+  document.getElementById('lanBox').style.display = 'block';
+}
 </script>
 </body>
 </html>

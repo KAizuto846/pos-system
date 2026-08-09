@@ -256,10 +256,31 @@ async function applyEntityChange(
           });
         }
       } else if (operation === "UPDATE") {
+        const { items: _ignoredItems, removedItemIds: _ignoredRemoved, ...updateData } = entityData;
         await prisma.supplierOrder.update({
           where: { id: entityId },
-          data: entityData as Prisma.SupplierOrderUncheckedUpdateInput,
+          data: updateData as Prisma.SupplierOrderUncheckedUpdateInput,
         });
+      }
+      break;
+
+    case "supplierorderitem":
+      if (operation === "DELETE") {
+        await prisma.supplierOrderItem.deleteMany({ where: { id: entityId } });
+      } else {
+        if (operation === "CREATE") {
+          const existing = await prisma.supplierOrderItem.findUnique({ where: { id: entityId } });
+          if (!existing) {
+            await prisma.supplierOrderItem.create({
+              data: { ...entityData, id: entityId } as Prisma.SupplierOrderItemUncheckedCreateInput,
+            });
+          }
+        } else {
+          await prisma.supplierOrderItem.updateMany({
+            where: { id: entityId },
+            data: entityData as Prisma.SupplierOrderItemUncheckedUpdateInput,
+          });
+        }
       }
       break;
 
@@ -275,6 +296,47 @@ async function applyEntityChange(
           create: { ...entityData, id: entityId } as Prisma.CustomerUncheckedCreateInput,
           update: entityData as Prisma.CustomerUncheckedUpdateInput,
         });
+      }
+      break;
+
+    case "userwishlistitem":
+      if (operation === "DELETE") {
+        await prisma.userWishlistItem.deleteMany({ where: { id: entityId } });
+      } else {
+        await prisma.userWishlistItem.upsert({
+          where: { id: entityId },
+          create: { ...entityData, id: entityId } as Prisma.UserWishlistItemUncheckedCreateInput,
+          update: entityData as Prisma.UserWishlistItemUncheckedUpdateInput,
+        });
+      }
+      break;
+
+    case "deliverynotice":
+      if (operation === "CREATE") {
+        const existing = await prisma.deliveryNotice.findUnique({ where: { id: entityId } });
+        if (!existing) {
+          await prisma.deliveryNotice.create({
+            data: entityData as Prisma.DeliveryNoticeUncheckedCreateInput,
+          });
+        }
+      } else if (operation === "UPDATE") {
+        await prisma.deliveryNotice.updateMany({
+          where: { id: entityId },
+          data: entityData as Prisma.DeliveryNoticeUncheckedUpdateInput,
+        });
+      }
+      break;
+
+    case "pieceslog":
+      if (operation === "CREATE") {
+        const existing = await prisma.piecesLog.findUnique({ where: { id: entityId } });
+        if (!existing) {
+          await prisma.piecesLog.create({
+            data: { ...entityData, id: entityId } as Prisma.PiecesLogUncheckedCreateInput,
+          });
+        }
+      } else if (operation === "DELETE") {
+        await prisma.piecesLog.deleteMany({ where: { id: entityId } });
       }
       break;
   }

@@ -135,6 +135,58 @@ const USER_DATA = app.getPath('userData');
 const DB_PATH = path.join(USER_DATA, 'pos.db');
 const LOG_PATH = path.join(USER_DATA, 'server.log');
 
+// IPs IPv4 reales de la red local (excluye loopback, APIPA y virtuales)
+function getLanIPs() {
+  const interfaces = os.networkInterfaces();
+  const ips = [];
+  for (const name of Object.keys(interfaces)) {
+    for (const net of interfaces[name] || []) {
+      if (net.family !== 'IPv4' || net.internal) continue;
+      if (net.address.startsWith('127.')) continue;
+      if (net.address.startsWith('169.254.')) continue;
+      ips.push({ name, address: net.address, mac: net.mac });
+    }
+  }
+  return ips;
+}
+
+function getPreferredLanIP() {
+  const ips = getLanIPs();
+  if (ips.length === 0) return '';
+  // Preferir rangos privados típicos de LAN
+  const preferred = ips.find(i =>
+    i.address.startsWith('192.168.') || i.address.startsWith('10.') ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(i.address));
+  return (preferred || ips[0]).address;
+}
+
+// Best-effort: abre el puerto TCP del servidor en el Firewall de Windows.
+// En el instalador NSIS ya se crea la regla con permisos de admin; aquí se
+// reintenta por si el usuario omitió ese paso o cambió el puerto.
+function tryOpenFirewall() {
+  if (process.platform !== 'win32') return;
+  const port = config.serverPort || 3000;
+  try {
+    const ruleName = 'POS System (TCP ' + port + ')';
+    const del = spawn('netsh', ['advfirewall', 'firewall', 'delete', 'rule', 'name=' + ruleName], {
+      shell: false, windowsHide: true, stdio: 'ignore',
+    });
+    del.on('close', () => {
+      const add = spawn('netsh', [
+        'advfirewall', 'firewall', 'add', 'rule',
+        'name=' + ruleName,
+        'dir=in', 'action=allow', 'protocol=TCP', 'localport=' + port,
+      ], { shell: false, windowsHide: true, stdio: 'ignore' });
+      add.on('close', (code) => {
+        console.log('[fw] Firewall rule ' + ruleName + ' => exit ' + code +
+          (code === 0 ? '' : ' (requiere permisos de administrador; usar el instalador)'));
+      });
+    });
+  } catch (e) {
+    console.error('[fw] Error abriendo firewall:', e.message);
+  }
+}
+
 function ensureEnv() {
   const userEnv = path.join(USER_DATA, '.env');
   if (!fs.existsSync(userEnv)) {
@@ -519,12 +571,19 @@ function initializeApp(mode) {
 
   // Show loading screen
   const port = config.serverPort || 3000;
+  const lanIp = getPreferredLanIP();
+  if (lanIp) {
+    config.serverIP = lanIp;
+    try { saveConfig(); } catch (e) {}
+  }
   const loadingHtml = path.join(__dirname, 'loading.html');
   if (fs.existsSync(loadingHtml)) {
-    mainWindow.loadFile(loadingHtml, { query: { port: String(port) } });
+    mainWindow.loadFile(loadingHtml, { query: { port: String(port), ip: lanIp } });
   } else {
     mainWindow.loadURL(`data:text/html,<html><body style="display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#0a0a0a;color:#e5e5e5;font-family:Arial,sans-serif"><div style="text-align:center"><h2 style="font-size:24px">POS System</h2><p style="color:#a3a3a3">Iniciando servidor en puerto ${port}...</p></div></body></html>`);
   }
+
+  if (process.platform === 'win32') tryOpenFirewall();
 
   // Start local server (every device is a peer) and P2P sync
   (async () => {

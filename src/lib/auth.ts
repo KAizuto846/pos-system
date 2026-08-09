@@ -8,6 +8,9 @@ import { loginSchema } from "@/lib/validations";
 export const { handlers, auth, signIn, signOut } = NextAuth({
   adapter: PrismaAdapter(prisma),
   session: { strategy: "jwt" },
+  // Deriva la URL base del Host de cada request: el login funciona tanto desde
+  // localhost como desde http://IP-LAN:PUERTO (acceso desde el teléfono).
+  trustHost: true,
   pages: {
     signIn: "/login",
   },
