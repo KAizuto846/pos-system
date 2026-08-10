@@ -47,5 +47,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   // First run setup
-  saveFirstRunConfig: (mode) => ipcRenderer.send('first-run-config', mode),
+  saveFirstRunConfig: (mode, relayUrl, relaySecret, tailscaleOpts) =>
+    ipcRenderer.send('first-run-config', mode, relayUrl, relaySecret, tailscaleOpts),
+  onTailscaleProgress: (callback) => {
+    const listener = (event, msg) => callback(msg);
+    ipcRenderer.on('tailscale-progress', listener);
+    return () => ipcRenderer.removeListener('tailscale-progress', listener);
+  },
+
+  // Tailscale (acceso remoto)
+  getTailscaleStatus: () => ipcRenderer.invoke('tailscale-status'),
+  setupTailscale: (opts) => ipcRenderer.invoke('tailscale-setup', opts),
+  setTailscaleFunnel: (enabled) => ipcRenderer.invoke('tailscale-funnel', enabled),
 });

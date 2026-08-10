@@ -5,6 +5,7 @@ import { Menu } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { SyncStatusBadge } from '@/components/SyncStatusBadge';
+import { useBusiness } from '@/hooks/useBusiness';
 
 interface HeaderProps {
   title: string;
@@ -13,7 +14,9 @@ interface HeaderProps {
 
 export default function Header({ title, onMenuClick }: HeaderProps) {
   const { data: session } = useSession();
+  const business = useBusiness();
   const user = session?.user;
+  const pageTitle = business.businessName || title;
 
   return (
     <header className="flex h-16 items-center justify-between border-b border-slate-700 bg-slate-800/50 px-4 lg:px-6">
@@ -26,7 +29,7 @@ export default function Header({ title, onMenuClick }: HeaderProps) {
         >
           <Menu className="h-5 w-5" />
         </Button>
-        <h1 className="text-lg font-semibold text-slate-100">{title}</h1>
+        <h1 className="text-lg font-semibold text-slate-100">{pageTitle}</h1>
         <div className="hidden sm:block">
           <SyncStatusBadge />
         </div>

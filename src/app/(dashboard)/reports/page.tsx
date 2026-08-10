@@ -125,10 +125,15 @@ export default function ReportsPage() {
   const [selectedReport, setSelectedReport] = useState<ShiftReport | null>(null);
 
   // Filters
-  const today = new Date().toISOString().split('T')[0];
-  const [dateFrom, setDateFrom] = useState(today);
-  const [dateTo, setDateTo] = useState(today);
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [selectedUserId, setSelectedUserId] = useState<string>('');
+
+  useEffect(() => {
+    const t = new Date().toISOString().split('T')[0];
+    setDateFrom(t);
+    setDateTo(t);
+  }, []);
 
   // Users list for admin filter
   const [users, setUsers] = useState<UserOption[]>([]);

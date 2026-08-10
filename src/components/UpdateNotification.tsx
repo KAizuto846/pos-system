@@ -17,7 +17,7 @@ type ViewStatus = ElectronUpdateStatus | { type: "idle" };
 const emptySubscribe = () => () => {};
 
 function getErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : "No se pudo actualizar la aplicacion.";
+  return error instanceof Error ? error.message : "No se pudo actualizar la aplicación.";
 }
 
 export function UpdateNotification() {
@@ -49,7 +49,7 @@ export function UpdateNotification() {
       if (!result.enabled) {
         setStatus({
           type: "error",
-          message: result.reason || "Las actualizaciones no estan disponibles.",
+          message: result.reason || "Las actualizaciones no están disponibles.",
         });
       } else if (result.status) {
         setStatus({ type: result.status, version: result.version });
@@ -79,7 +79,7 @@ export function UpdateNotification() {
         onClick={checkForUpdates}
       >
         <RefreshCw />
-        <span className="hidden sm:inline">Buscar actualizacion</span>
+        <span className="hidden sm:inline">Buscar actualización</span>
       </Button>
     );
   }
@@ -94,7 +94,7 @@ export function UpdateNotification() {
         onClick={() => setDismissed(false)}
       >
         {status.type === "ready" ? <CheckCircle2 /> : <RefreshCw />}
-        {status.type === "ready" ? "Actualizacion lista" : "Actualizaciones"}
+        {status.type === "ready" ? "Actualización lista" : "Actualizaciones"}
       </Button>
     );
   }
@@ -109,7 +109,7 @@ export function UpdateNotification() {
       aria-live="polite"
     >
       <div className="flex items-center gap-3">
-        <div className="shrink-0 text-emerald-400">
+        <div className="shrink-0 text-primary">
           {status.type === "checking" && <RefreshCw className="animate-spin" />}
           {status.type === "available" && <Download />}
           {status.type === "downloading" && <Download />}
@@ -124,10 +124,10 @@ export function UpdateNotification() {
             {status.type === "available" &&
               `Version ${status.version || "nueva"} disponible`}
             {status.type === "downloading" &&
-              `Descargando actualizacion: ${status.percent ?? 0}%`}
+              `Descargando actualización: ${status.percent ?? 0}%`}
             {status.type === "ready" &&
               `Version ${status.version || "nueva"} lista para instalar`}
-            {status.type === "not-available" && "La aplicacion esta actualizada"}
+            {status.type === "not-available" && "La aplicación está actualizada"}
             {status.type === "error" && "Error al buscar actualizaciones"}
           </p>
           {status.type === "error" && (
@@ -156,7 +156,7 @@ export function UpdateNotification() {
               size="sm"
               onClick={() => setDismissed(true)}
             >
-              Mas tarde
+              Más tarde
             </Button>
           </div>
         )}
@@ -181,7 +181,7 @@ export function UpdateNotification() {
         )}
       </div>
 
-      {isChecking && <span className="sr-only">Comprobacion en curso</span>}
+      {isChecking && <span className="sr-only">Comprobación en curso</span>}
     </aside>
   );
 }

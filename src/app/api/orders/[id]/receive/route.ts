@@ -213,6 +213,7 @@ export async function POST(
       for (const extra of extras) {
         const { quantity } = extra;
         let { productId } = extra;
+        const isGhost = !productId;
         if (!Number.isInteger(quantity) || quantity <= 0) {
           throw new Error(`Cantidad inválida para producto extra`);
         }
@@ -262,14 +263,18 @@ export async function POST(
           });
           productId = created.id;
         }
-        const product = productMap.get(productId);
-        if (!product) {
-          throw new Error(`Producto extra ${productId} no encontrado`);
+        if (!isGhost) {
+          const existing = productMap.get(productId);
+          if (!existing) {
+            throw new Error(`Producto extra ${productId} no encontrado`);
+          }
         }
         const finalCost =
           typeof extra.costPrice === "number" && extra.costPrice >= 0
             ? extra.costPrice
-            : defaultCost(productId);
+            : isGhost
+              ? 0
+              : defaultCost(productId);
 
         await tx.supplierOrderItem.create({
           data: {
@@ -337,13 +342,13 @@ export async function POST(
       return updatedOrder;
     });
 
-    // Egresos en finanzas: lo recibido del pedido descuenta el costo total;
-    // las piezas extras descuentan de la ganancia neta.
-    if (purchaseCost > 0 || extraCost > 0) {
+    // Egresos en finanzas: el costo de las piezas del pedido descuenta del costo
+    // total (categoría purchase); las piezas extras descuentan SOLO de la
+    // ganancia neta (categoría extra_purchase). Si el usuario indicó el total de
+    // la nota pagada, ese monto describe la compra de las piezas del pedido.
+    const noteAmount = totalNote !== null ? totalNote : purchaseCost;
+    if (noteAmount > 0 || extraCost > 0) {
       const userId = parseInt(session.user.id, 10);
-      // Si el usuario indicó el total de la nota pagada, ese es el monto que
-      // describe la compra de las piezas del pedido (lo demás va a extras).
-      const noteAmount = totalNote !== null ? totalNote : purchaseCost;
       const entries = [];
       if (noteAmount > 0) {
         entries.push(
@@ -366,7 +371,7 @@ export async function POST(
           prisma.cashEntry.create({
             data: {
               type: "EXPENSE",
-              category: "purchase",
+              category: "extra_purchase",
               amount: extraCost,
               description: `Extras recibidas pedido #${orderId} — ${order.supplier.name}`,
               userId,

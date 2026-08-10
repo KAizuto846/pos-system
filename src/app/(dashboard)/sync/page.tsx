@@ -21,6 +21,7 @@ import {
   Copy,
   Search,
   Network,
+  Globe,
   Users,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -70,6 +71,26 @@ export default function SyncPage() {
   const [relayTesting, setRelayTesting] = useState(false);
   const [relaySaving, setRelaySaving] = useState(false);
   const [relayLastSync, setRelayLastSync] = useState<RelaySyncResult | null>(null);
+
+  // Tailscale (acceso remoto)
+  const [tsState, setTsState] = useState<{ available?: boolean; online?: boolean; ip?: string | null; dnsName?: string | null; funnelUrl?: string | null; error?: string | null }>({});
+
+  const loadTailscaleStatus = useCallback(async () => {
+    try {
+      const res = await fetch('/api/tailscale/status');
+      if (res.ok) {
+        setTsState(await res.json());
+      }
+    } catch {
+      // Ignorar, no critico
+    }
+  }, []);
+
+  useEffect(() => {
+    loadTailscaleStatus();
+    const t = setInterval(loadTailscaleStatus, 30000);
+    return () => clearInterval(t);
+  }, [loadTailscaleStatus]);
 
   const win = window as unknown as { electronAPI?: Window['electronAPI'] };
   const isDesktop = !!win.electronAPI;
@@ -204,7 +225,7 @@ export default function SyncPage() {
 
   const handleOpenFirewall = async () => {
     if (!isWindows) {
-      toast.error('Solo disponible en la version de escritorio para Windows');
+      toast.error('Solo disponible en la versión de escritorio para Windows');
       return;
     }
     const res = await win.electronAPI!.openFirewall();
@@ -217,14 +238,14 @@ export default function SyncPage() {
 
   const handleOpenDiagnostics = async () => {
     if (!isWindows) {
-      toast.error('Solo disponible en la version de escritorio para Windows');
+      toast.error('Solo disponible en la versión de escritorio para Windows');
       return;
     }
     setDiagRunning(true);
     const res = await win.electronAPI!.openDiagnostics();
     setDiagRunning(false);
     if (res.ok) {
-      toast.success('Ventana de verificacion abierta');
+      toast.success('Ventana de verificación abierta');
     } else {
       toast.error(res.error || 'No se pudo abrir el diagnostico');
     }
@@ -294,13 +315,13 @@ export default function SyncPage() {
       const data = await res.json();
       if (data.ok) {
         setRelayState((prev) => ({ ...prev, connected: true, lastTestError: null, relayStoredChanges: data.storedChanges }));
-        toast.success(`Conexion exitosa (${data.storedChanges ?? 0} cambios en el relay)`);
+        toast.success(`Conexión exitosa (${data.storedChanges ?? 0} cambios en el relay)`);
       } else {
         setRelayState((prev) => ({ ...prev, connected: false, lastTestError: data.error }));
-        toast.error(`Sin conexion: ${data.error || 'error desconocido'}`);
+        toast.error(`Sin conexión: ${data.error || 'error desconocido'}`);
       }
     } catch {
-      toast.error('Error al probar la conexion');
+      toast.error('Error al probar la conexión');
     } finally {
       setRelayTesting(false);
     }
@@ -322,7 +343,7 @@ export default function SyncPage() {
         toast.error(data.error || 'Error al guardar');
       }
     } catch {
-      toast.error('Error al guardar la configuracion');
+      toast.error('Error al guardar la configuración');
     } finally {
       setRelaySaving(false);
     }
@@ -386,7 +407,64 @@ export default function SyncPage() {
         </CardContent>
       </Card>
 
-      {/* Pasos para conectar en LAN */}
+      {/* Acceso remoto (Tailscale) */}
+      <Card className="border-slate-700 bg-slate-800">
+        <CardHeader>
+          <CardTitle className="text-lg text-slate-100 flex items-center gap-2">
+            <Globe className="h-5 w-5 text-sky-500" />
+            Acceso desde cualquier WiFi (Tailscale)
+          </CardTitle>
+          <CardDescription>
+            Publica este equipo en internet para abrir el POS desde celulares y laptops aunque no esten en tu red local.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {tsState.available === undefined ? (
+            <div className="flex items-center gap-2 text-sm text-slate-400"><Loader2 className="h-4 w-4 animate-spin" />Verificando...</div>
+          ) : !tsState.available ? (
+            <div className="flex items-center gap-2 text-sm text-slate-400">
+              <XCircle className="h-4 w-4 text-slate-500 shrink-0" />
+              Tailscale no esta instalado en este equipo. En Windows: instala la app POS con el paso de conexion remota, o desde docs/INTERNET-ACCESS.md.
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center gap-2">
+                {tsState.online ? (
+                  <Badge className="bg-emerald-600 text-emerald-50"><CheckCircle2 className="h-3 w-3 mr-1" />Conectado a la red remota</Badge>
+                ) : (
+                  <Badge variant="outline" className="border-amber-600 text-amber-300"><XCircle className="h-3 w-3 mr-1" />Instalado pero sin conexion</Badge>
+                )}
+              </div>
+              {tsState.ip && (
+                <div className="rounded-md bg-slate-900/60 border border-slate-700 px-4 py-3">
+                  <p className="text-xs text-slate-500">IP privada (acceso solo entre tus equipos)</p>
+                  <div className="flex items-center gap-2 mt-1">
+                    <p className="text-sm text-slate-200 font-mono truncate">http://{tsState.ip}:{deviceInfo.serverPort || 3000}</p>
+                    <button type="button" onClick={() => { if (tsState.ip) void navigator.clipboard?.writeText(`http://${tsState.ip}:${deviceInfo.serverPort || 3000}`); }} className="text-slate-400 hover:text-slate-200 transition-colors shrink-0" title="Copiar URL privada">
+                      <Copy className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              )}
+              {tsState.dnsName && (
+                <div className="rounded-md bg-slate-900/60 border border-slate-700 px-4 py-3">
+                  <p className="text-xs text-slate-500">URL publica (desde cualquier WiFi)</p>
+                  <div className="flex items-center gap-2 mt-1">
+                    <p className="text-sm text-sky-300 font-mono truncate">https://{tsState.dnsName}/</p>
+                    <button type="button" onClick={() => { if (tsState.dnsName) void navigator.clipboard?.writeText(`https://${tsState.dnsName}/`); }} className="text-slate-400 hover:text-slate-200 transition-colors shrink-0" title="Copiar URL publica">
+                      <Copy className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-1.5">
+                    Abrela desde el celular con datos moviles. La URL esta protegida por el login del POS; usa una contrasena fuerte.
+                  </p>
+                </div>
+              )}
+              {tsState.error && <p className="text-xs text-red-400">{tsState.error}</p>}
+            </>
+          )}
+        </CardContent>
+      </Card>
       <Card className="border-slate-700 bg-slate-800">
         <CardHeader>
           <CardTitle className="text-lg text-slate-100 flex items-center gap-2">
@@ -497,7 +575,7 @@ export default function SyncPage() {
                   <Wifi className="h-4 w-4 text-slate-500 shrink-0" />
                   <p className="text-xs text-slate-500">
                     El otro equipo debe tener POS System abierto (la bandeja del sistema debe estar activa).
-                    Si aun no aparece, usa el boton &quot;Verificar requisitos&quot; del paso 2 o el Relay por internet (abajo).
+                    Si aún no aparece, usa el botón &quot;Verificar requisitos&quot; del paso 2 o el Relay por internet (abajo).
                   </p>
                 </div>
               )}
@@ -662,12 +740,12 @@ export default function SyncPage() {
             <ol className="list-decimal list-inside space-y-1">
               <li>Conecta todos los equipos a la misma red local (mismo router/WiFi).</li>
               <li>Inicia POS System en cada equipo (aplicacion de escritorio o servidor web).</li>
-              <li>Acepta la red cuando Windows pregunte por el firewall (o usa el boton &quot;Abrir Firewall&quot;).</li>
+              <li>Acepta la red cuando Windows pregunte por el firewall (o usa el botón &quot;Abrir Firewall&quot;).</li>
               <li>Espera unos segundos: se detectan solos y sincronizan en tiempo real (cada 5 segundos).</li>
               <li>Verificalo aqui: tus equipos deben aparecer en el paso 3 de &quot;Conectar mis equipos&quot;.</li>
             </ol>
             <p className="mt-2">
-              <span className="text-slate-200 font-medium">Si no aparecen:</span> usa el boton <span className="text-slate-200">Verificar requisitos</span> (abre una ventana con el diagnostico), permite el puerto <span className="font-mono">UDP 9876</span> en el firewall de cada equipo, y confirma que esten en la misma subred. Algunos routers con &quot;aislamiento de clientes WiFi&quot; bloquean esta comunicacion.
+              <span className="text-slate-200 font-medium">Si no aparecen:</span> usa el botón <span className="text-slate-200">Verificar requisitos</span> (abre una ventana con el diagnostico), permite el puerto <span className="font-mono">UDP 9876</span> en el firewall de cada equipo, y confirma que esten en la misma subred. Algunos routers con &quot;aislamiento de clientes WiFi&quot; bloquean esta comunicacion.
             </p>
           </GuideSection>
 
@@ -677,7 +755,7 @@ export default function SyncPage() {
               <li>En cada equipo abre Sincronizacion → &quot;Relay por internet&quot;.</li>
               <li>Escribe la <span className="text-slate-200">URL del relay</span> (ej. <span className="font-mono">https://sync.tudominio.com</span>).</li>
               <li>Escribe el <span className="text-slate-200">secret</span>: debe ser <span className="font-medium">exactamente el mismo</span> en todos los equipos y en el relay.</li>
-              <li>Pulsa <span className="text-slate-200">Probar conexion</span>: debe decir &quot;Conexion exitosa&quot;.</li>
+              <li>Pulsa <span className="text-slate-200">Probar conexion</span>: debe decir &quot;Conexión exitosa&quot;.</li>
               <li>Pulsa <span className="text-slate-200">Guardar</span>.</li>
               <li>Listo: sincroniza solo en tiempo real (cada 5 segundos), o pulsa &quot;Sincronizar ahora&quot;.</li>
             </ol>

@@ -170,25 +170,35 @@ export async function GET(request: Request) {
 
         // Reglas del usuario:
         // - El ingreso SIEMPRE entra como ganancia neta (los depositos manuales suman).
-        // - Todo egreso retira PRIMERO de la ganancia neta y despues del costo total.
-        //   Los retiros de tipo profit_withdrawal descuentan solo ganancia.
+        // - Las compras de mercancía (purchase) descuentan PRIMERO del costo
+        //   total y el excedente (si superan el costo de lo vendido) sale de
+        //   las ganancias.
+        // - Las piezas extras recibidas (extra_purchase) descuentan SOLO de la
+        //   ganancia neta, igual que los retiros de ganancias.
+        // - Los demás egresos (operativos, otros, transferencias, retiros mixtos)
+        //   retiran PRIMERO de la ganancia neta y despues del costo total.
         const manualIncome = (incomeByCat["manual_deposit"] || 0) + (incomeByCat["other"] || 0);
-        const profitWithdrawn = expenseByCat["profit_withdrawal"] || 0;
+        const profitWithdrawn =
+          (expenseByCat["profit_withdrawal"] || 0) + (expenseByCat["extra_purchase"] || 0);
         const combinedExpenses =
           (expenseByCat["profit_cost_withdrawal"] || 0) +
           (expenseByCat["operating_expense"] || 0) +
-          (expenseByCat["purchase"] || 0) +
           (expenseByCat["other"] || 0) +
           (expenseByCat["transfer"] || 0);
 
         const grossProfit = totalRevenue - totalCost;
         const profitBase = grossProfit + manualIncome;
         const remainingProfit = profitBase - profitWithdrawn;
-        const profitFromCombined = Math.min(combinedExpenses, Math.max(0, remainingProfit));
+        const purchaseTotal = expenseByCat["purchase"] || 0;
+        const purchaseFromCost = Math.min(purchaseTotal, Math.max(0, totalCost));
+        const purchaseExcess = Math.max(0, purchaseTotal - purchaseFromCost);
+        const profitFromPurchaseExcess = Math.min(purchaseExcess, Math.max(0, remainingProfit));
+        const profitFromCombined = Math.min(combinedExpenses, Math.max(0, remainingProfit - profitFromPurchaseExcess));
         const costFromCombined = Math.max(0, combinedExpenses - profitFromCombined);
 
-        const netProfit = profitBase - profitWithdrawn - profitFromCombined;
-        const netCost = totalCost - costFromCombined;
+        const netProfit =
+          profitBase - profitWithdrawn - profitFromPurchaseExcess - profitFromCombined;
+        const netCost = totalCost - purchaseFromCost - costFromCombined;
         const effectiveRevenue = netProfit + netCost;
 
         // Apartado por metodo de pago: ventas, costo total, ganancia neta y disponible
@@ -403,7 +413,7 @@ export async function POST(request: Request) {
     // Validate category based on type
     const validCategories = {
       INCOME: ["manual_deposit", "other"],
-      EXPENSE: ["profit_withdrawal", "profit_cost_withdrawal", "operating_expense", "purchase", "other"],
+      EXPENSE: ["profit_withdrawal", "profit_cost_withdrawal", "operating_expense", "purchase", "extra_purchase", "other"],
       TRANSFER: ["transfer"],
     };
     const finalCategory = category || (type === "EXPENSE" ? "other" : "manual_deposit");

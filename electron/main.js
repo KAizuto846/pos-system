@@ -54,7 +54,7 @@ function showFirstRunSetup(callback) {
 
   setupWindow.once('ready-to-show', () => setupWindow.show());
 
-  ipcMain.once('first-run-config', async (event, mode, relayUrl, relaySecret) => {
+  ipcMain.once('first-run-config', async (event, mode, relayUrl, relaySecret, tailscaleOpts) => {
     config.mode = 'server';
     config.businessName = 'Mi Negocio';
     config.deviceName = os.hostname();
@@ -69,6 +69,21 @@ function showFirstRunSetup(callback) {
         });
       }
     } catch (e) {}
+    // Tailscale (acceso remoto): correr en el wizard si el usuario lo pidio
+    if (tailscaleOpts && tailscaleOpts.authkey && tailscaleOpts.authkey.trim()) {
+      const result = await runTailscaleSetup({
+        authkey: tailscaleOpts.authkey,
+        funnel: Boolean(tailscaleOpts.funnel),
+        port: config.serverPort || 3000,
+        onProgress: (msg) => { try { setupWindow.webContents.send('tailscale-progress', msg); } catch (e) {} },
+      });
+      config.tailscale = { connected: result.ok, at: new Date().toISOString() };
+      if (result.ok) config.tailscale.dnsName = result.dnsName || '';
+      if (result.funnelUrl) config.tailscale.funnelUrl = result.funnelUrl;
+      if (!result.ok && result.error) config.tailscale.error = result.error;
+      saveConfig();
+      try { setupWindow.webContents.send('tailscale-progress', result.ok ? 'Conexion remota lista.' : `Error: ${result.error || 'desconocido'}`); } catch (e) {}
+    }
     setupWindow.close();
     callback(mode);
   });
@@ -90,6 +105,39 @@ const SERVER_SCRIPT = path.join(SERVER_DIR, 'server.js');
 
 // ─── Updater ────────────────────────────────────────────────
 const { setupAutoUpdater, checkForUpdates, installUpdate } = require('./updater');
+
+// ─── Tailscale (acceso remoto) ─────────────────────────────
+const tailscale = require('./tailscale');
+
+async function runTailscaleSetup(opts) {
+  try {
+    return await tailscale.runTailscaleFlow(opts);
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Error interno Tailscale' };
+  }
+}
+
+ipcMain.handle('tailscale-status', async () => {
+  const [status, url] = await Promise.all([tailscale.getStatus(), tailscale.getFunnelUrl()]);
+  return { ...status, funnelUrl: url };
+});
+
+ipcMain.handle('tailscale-setup', async (event, opts) => {
+  const result = await runTailscaleSetup(opts || {});
+  if (result.ok) {
+    config.tailscale = { connected: true, at: new Date().toISOString(), dnsName: result.dnsName || '', funnelUrl: result.funnelUrl || '' };
+    saveConfig();
+  }
+  return result;
+});
+
+ipcMain.handle('tailscale-funnel', async (event, enabled) => {
+  const result = await tailscale.setFunnel(Boolean(enabled), config.serverPort || 3000);
+  config.tailscale = { ...(config.tailscale || {}), funnelUrl: result.url || '', at: new Date().toISOString() };
+  delete config.tailscale.error;
+  saveConfig();
+  return result;
+});
 
 // ─── UDP Discovery ───────────────────────────────────────────
 const DISCOVERY_PORT = 9876;

@@ -5,7 +5,7 @@ import {
   DollarSign, TrendingUp, TrendingDown, Wallet, Calendar,
   Plus, ArrowUpFromLine, ArrowDownToLine, History, RefreshCw,
   Loader2, Search, Package, Filter, Clock, Landmark,
-  ArrowRightLeft, Download, Upload, RotateCcw
+  ArrowRightLeft, Download, Upload, RotateCcw, ListChecks
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Button } from '@/components/ui/button';
@@ -24,6 +24,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { formatCurrency } from '@/lib/utils';
 import { useSession } from 'next-auth/react';
+import { FinanceVerifier } from '@/components/FinanceVerifier';
 
 interface FinanceSummary {
   period: { from: string; to: string };
@@ -84,6 +85,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   profit_cost_withdrawal: 'Retiro (ganancias + costos)',
   operating_expense: 'Gasto operativo',
   purchase: 'Compra mercancía',
+  extra_purchase: 'Extras de pedido',
   transfer: 'Transferencia',
   refund: 'Reembolso',
   other: 'Otro',
@@ -96,6 +98,7 @@ const CATEGORY_ICONS: Record<string, string> = {
   profit_cost_withdrawal: '💳',
   operating_expense: '📋',
   purchase: '📦',
+  extra_purchase: '➕',
   transfer: '🔄',
   refund: '↩️',
   other: '❓',
@@ -158,6 +161,10 @@ export default function FinancePage() {
   const [resetOpen, setResetOpen] = useState(false);
   const [resetPassword, setResetPassword] = useState('');
   const [resetLoading, setResetLoading] = useState(false);
+
+  // Verificador paso a paso
+  const [verifyOpen, setVerifyOpen] = useState(false);
+  const [lastVerified, setLastVerified] = useState<{ at: string; userName: string } | null>(null);
 
   const buildDateFilter = useCallback(() => {
     let from = dateFrom;
@@ -248,6 +255,9 @@ export default function FinancePage() {
       fetch('/api/suppliers').then(r => r.json()).then((data: { id: number; name: string }[]) => {
         if (Array.isArray(data)) setSuppliers(data.filter(d => d));
       }),
+      fetch('/api/finance/verify').then(r => r.json()).then((data: { verified: { at: string; userName: string } | null }) => {
+        if (data?.verified && typeof data.verified.at === 'string') setLastVerified(data.verified);
+      }).catch(() => {}),
     ]);
   }, []);
 
@@ -424,7 +434,7 @@ export default function FinancePage() {
       return;
     }
     if (!window.confirm(
-      '¿Reiniciar las finanzas? Se eliminarán TODOS los registros de caja (ingresos, egresos y transferencias). Los productos y las ventas no se tocan.'
+      '¿Reiniciar las finanzas? Se eliminarán TODAS las ventas, reembolsos y registros de caja (ingresos, egresos y transferencias). Los productos, lotes y stock no se tocan. Esta acción no se puede deshacer.'
     )) return;
     setResetLoading(true);
     try {
@@ -482,32 +492,50 @@ export default function FinancePage() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-2xl font-bold text-slate-100">💰 Finanzas</h2>
-          <p className="text-sm text-slate-400 mt-1">Control de caja, ventas, ganancias y desgloce de productos</p>
+          <p className="text-sm text-slate-400 mt-1">Control de caja, ventas, ganancias y desglose de productos</p>
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={handleExportCsv} title="Exportar finanzas a CSV">
-            <Download className="mr-2 h-4 w-4" />
-            CSV
-          </Button>
-          <Button variant="outline" onClick={() => setImportOpen(true)} title="Importar registros desde CSV">
-            <Upload className="mr-2 h-4 w-4" />
-            Importar
-          </Button>
-          <Button variant="outline" className="border-red-700/50 text-red-400 hover:bg-red-500/10" onClick={() => setResetOpen(true)} title="Reiniciar finanzas (requiere contraseña admin)">
-            <RotateCcw className="mr-2 h-4 w-4" />
-            Reiniciar
-          </Button>
-          <Button onClick={() => openCashDialog('INCOME')} className="bg-emerald-600 hover:bg-emerald-500">
-            <ArrowUpFromLine className="mr-2 h-4 w-4" />
-            Ingreso
-          </Button>
-          <Button onClick={() => openCashDialog('EXPENSE')} className="bg-red-600 hover:bg-red-500">
-            <ArrowDownToLine className="mr-2 h-4 w-4" />
-            Egreso
-          </Button>
-          <Button variant="outline" size="icon" onClick={refreshAll} disabled={loading}>
-            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-          </Button>
+        <div className="flex-col flex gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            {isAdmin && (
+              <Button
+                variant="outline"
+                onClick={() => setVerifyOpen(true)}
+                disabled={!summary || loading}
+                title="Revisar los cálculos de finanzas paso a paso"
+              >
+                <ListChecks className="mr-2 h-4 w-4" />
+                Verificar
+              </Button>
+            )}
+            <Button variant="outline" onClick={handleExportCsv} title="Exportar finanzas a CSV">
+              <Download className="mr-2 h-4 w-4" />
+              CSV
+            </Button>
+            <Button variant="outline" onClick={() => setImportOpen(true)} title="Importar registros desde CSV">
+              <Upload className="mr-2 h-4 w-4" />
+              Importar
+            </Button>
+            <Button variant="outline" className="border-red-700/50 text-red-400 hover:bg-red-500/10" onClick={() => setResetOpen(true)} title="Reiniciar finanzas (requiere contraseña admin)">
+              <RotateCcw className="mr-2 h-4 w-4" />
+              Reiniciar
+            </Button>
+            <Button onClick={() => openCashDialog('INCOME')} className="bg-emerald-600 hover:bg-emerald-500">
+              <ArrowUpFromLine className="mr-2 h-4 w-4" />
+              Ingreso
+            </Button>
+            <Button onClick={() => openCashDialog('EXPENSE')} className="bg-red-600 hover:bg-red-500">
+              <ArrowDownToLine className="mr-2 h-4 w-4" />
+              Egreso
+            </Button>
+            <Button variant="outline" size="icon" onClick={refreshAll} disabled={loading}>
+              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            </Button>
+          </div>
+          {lastVerified && (
+            <p className="text-xs text-slate-500">
+              Última verificación registrada: {new Date(lastVerified.at).toLocaleString()} · por {lastVerified.userName}
+            </p>
+          )}
         </div>
       </div>
 
@@ -1220,7 +1248,7 @@ export default function FinancePage() {
           <DialogHeader>
             <DialogTitle>Reiniciar Finanzas</DialogTitle>
             <DialogDescription>
-              Se eliminarán TODOS los registros de caja (ingresos, egresos y transferencias).
+              Se eliminarán TODAS las ventas, reembolsos y registros de caja (ingresos, egresos y transferencias).
               Esta acción requiere la contraseña de un administrador y no se puede deshacer.
             </DialogDescription>
           </DialogHeader>
@@ -1245,6 +1273,15 @@ export default function FinancePage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Finance Verifier Dialog */}
+      <FinanceVerifier
+        open={verifyOpen}
+        onOpenChange={setVerifyOpen}
+        summary={summary}
+        userName={session?.user?.name || ''}
+        onVerified={(info) => setLastVerified(info)}
+      />
     </div>
   );
 }

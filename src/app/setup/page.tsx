@@ -26,11 +26,14 @@ export default function SetupPage() {
 
   // Business config
   const [businessName, setBusinessName] = useState('Mi Negocio');
-  const [deviceName, setDeviceName] = useState(() =>
-    typeof window !== 'undefined' && window.location.hostname && !['localhost', '127.0.0.1'].includes(window.location.hostname)
-      ? window.location.hostname
-      : 'Equipo-1'
-  );
+  const [deviceName, setDeviceName] = useState('');
+  useEffect(() => {
+    setDeviceName(
+      typeof window !== 'undefined' && window.location.hostname && !['localhost', '127.0.0.1'].includes(window.location.hostname)
+        ? window.location.hostname
+        : 'Equipo-1'
+    );
+  }, []);
 
   // Admin config
   const [adminUsername, setAdminUsername] = useState('');

@@ -4,8 +4,8 @@ import { logChange } from "@/lib/sync-engine";
 import { getDeviceId } from "@/lib/sync-utils";
 
 const VALID_CATEGORIES: Record<string, string[]> = {
-  INCOME: ["manual_deposit", "other"],
-  EXPENSE: ["profit_withdrawal", "profit_cost_withdrawal", "operating_expense", "purchase", "other"],
+  INCOME: ["sales", "manual_deposit", "other"],
+  EXPENSE: ["profit_withdrawal", "profit_cost_withdrawal", "operating_expense", "purchase", "extra_purchase", "refund", "other"],
   TRANSFER: ["transfer"],
 };
 

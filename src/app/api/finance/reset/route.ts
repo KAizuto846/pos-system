@@ -28,12 +28,17 @@ export async function POST(request: Request) {
       return Response.json({ error: "Contraseña incorrecta" }, { status: 401 });
     }
 
-    const deleted = await prisma.cashEntry.deleteMany({});
+    // Reiniciar TODO lo financiero a cero: ventas (cascada a items y
+    // reembolsos) y registros de caja. Productos, lotes y stock no se tocan.
+    const result = await prisma.$transaction(async (tx) => {
+      const removedSales = await tx.sale.deleteMany({});
+      const removedEntries = await tx.cashEntry.deleteMany({});
+      return { sales: removedSales.count, entries: removedEntries.count };
+    });
 
     return Response.json({
       success: true,
-      deleted,
-      message: `Se eliminaron ${deleted.count} registros de finanzas`,
+      message: `Finanzas reiniciadas: ${result.sales} ventas y ${result.entries} registros de caja eliminados`,
     });
   } catch (error) {
     console.error("Finance reset error:", error);

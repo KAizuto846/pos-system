@@ -213,8 +213,12 @@ export default function OrdersPage() {
   // ── Create form ──
   const [formSupplierId, setFormSupplierId] = useState('');
   const [formNotes, setFormNotes] = useState('');
-  const [dateFrom, setDateFrom] = useState(weekAgoStr());
-  const [dateTo, setDateTo] = useState(todayStr());
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  useEffect(() => {
+    setDateFrom(weekAgoStr());
+    setDateTo(todayStr());
+  }, []);
   const [timeFrom, setTimeFrom] = useState('06:00');
   const [timeTo, setTimeTo] = useState('22:00');
   const [soldProducts, setSoldProducts] = useState<SoldProduct[]>([]);
@@ -1145,9 +1149,9 @@ export default function OrdersPage() {
                 {soldProducts.length > 0 && (
                   <>
                     <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium text-slate-200">
+                      <div className="text-sm font-medium text-slate-200">
                         Productos {visibleProducts.length !== soldProducts.length && <Badge variant="secondary" className="ml-1">{visibleProducts.length} mostrados</Badge>}
-                      </span>
+                      </div>
                       <div className="flex items-center gap-2">
                         <Button type="button" variant="ghost" size="sm" className="text-xs" onClick={() => setHiddenRows(new Set())}>Mostrar todo</Button>
                         <Button type="button" variant="outline" size="sm" className="text-xs" onClick={() => { const u: Record<string, number> = {}; soldProducts.forEach(p => { u[String(p.productId)] = p.totalSold; }); setQuantities(u); }}>Restaurar ventas</Button>
@@ -1312,10 +1316,10 @@ export default function OrdersPage() {
                             onClick={() => addManualProduct(p)}
                             className="w-full text-left px-3 py-2 rounded-md hover:bg-slate-700/60 transition-colors flex items-center justify-between"
                           >
-                            <div>
-                              <div className="text-sm text-slate-200">{p.name}</div>
-                              <div className="text-xs text-slate-500 font-mono">{p.barcode || '—'} · Stock: {p.stock} · ${p.price.toFixed(2)}</div>
-                            </div>
+                            <span className="flex-1 min-w-0">
+                              <span className="block text-sm text-slate-200">{p.name}</span>
+                              <span className="block text-xs text-slate-500 font-mono">{p.barcode || '—'} · Stock: {p.stock} · ${p.price.toFixed(2)}</span>
+                            </span>
                             <PlusCircle className="h-4 w-4 text-emerald-400 flex-shrink-0" />
                           </button>
                         ))

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Search, ShoppingCart, Plus, Minus, X, Trash2, Loader2, User, Percent, Fingerprint } from 'lucide-react';
+import { Search, ShoppingCart, Plus, Minus, X, Trash2, Loader2, User, Percent, Fingerprint, ScanLine } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -30,6 +30,7 @@ import {
 } from '@/components/ui/dialog';
 import { usePosStore } from '@/store/pos-store';
 import { formatCurrency } from '@/lib/utils';
+import { BarcodeScanner } from '@/components/BarcodeScanner';
 
 interface Product {
   id: number;
@@ -110,6 +111,13 @@ export default function PosPage() {
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [searchingCustomer, setSearchingCustomer] = useState(false);
   const [scanningFingerprint, setScanningFingerprint] = useState(false);
+
+  // Camera barcode scanner
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const handleScan = useCallback((code: string) => {
+    setSearchTerm(code);
+    searchRef.current?.focus();
+  }, []);
 
   const debouncedSearch = useDebounce(searchTerm, 300);
   const debouncedCustomerSearch = useDebounce(customerSearch, 300);
@@ -404,9 +412,19 @@ export default function PosPage() {
             placeholder="Buscar productos por nombre o código de barras..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="bg-slate-800 border-slate-600 pl-10 pr-32 text-slate-100 placeholder:text-slate-500 focus-visible:ring-emerald-500"
+            className="bg-slate-800 border-slate-600 pl-10 pr-36 text-slate-100 placeholder:text-slate-500 focus-visible:ring-emerald-500"
           />
-          <span className="absolute right-7 lg:right-9 top-1/2 -translate-y-1/2 flex items-center gap-2">
+          <span className="absolute right-7 lg:right-9 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              className="h-7 w-7"
+              title="Leer código de barras con la cámara"
+              onClick={() => setScannerOpen(true)}
+            >
+              <ScanLine className="h-3.5 w-3.5" />
+            </Button>
             <span className="text-xs text-slate-500">
               {total > 0 ? `${products.length}/${total}` : ''}
             </span>
@@ -801,6 +819,13 @@ export default function PosPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Camera barcode scanner */}
+      <BarcodeScanner
+        open={scannerOpen}
+        onOpenChange={setScannerOpen}
+        onDetected={handleScan}
+      />
     </div>
   );
 }

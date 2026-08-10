@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Plus, Pencil, Trash2, PackageOpen, Search, Download, X, Check, ChevronDown, ChevronUp } from 'lucide-react';
+import { Plus, Pencil, Trash2, PackageOpen, Search, Download, X, Check, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, History, ScanLine } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -40,6 +40,7 @@ import {
 } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import toast from 'react-hot-toast';
+import { BarcodeScanner } from '@/components/BarcodeScanner';
 
 interface Department {
   id: number;
@@ -149,6 +150,26 @@ export default function ProductsPage() {
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [total, setTotal] = useState(0);
+  const [jumpPage, setJumpPage] = useState('');
+  const [lastVisited, setLastVisited] = useState<{ sig: string; page: number } | null>(null);
+
+  const LIMIT = 50;
+  const LAST_PAGE_KEY = 'pos-products-last-page';
+
+  const filtersSig = [
+    search, filterDepartment, filterSupplier, filterActive,
+    filterPriceMin, filterPriceMax, filterCostMin, filterCostMax,
+    filterStockMin, filterStockMax, filterMinStockMin, filterMinStockMax,
+  ].join('|');
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(LAST_PAGE_KEY);
+      if (raw) setLastVisited(JSON.parse(raw));
+    } catch {
+      // Sin último guardado: no se muestra el botón
+    }
+  }, []);
 
   // Dialog states
   const [createOpen, setCreateOpen] = useState(false);
@@ -179,6 +200,12 @@ export default function ProductsPage() {
   const [piecesOpen, setPiecesOpen] = useState(true);
   const [piecesFilter, setPiecesFilter] = useState('');
 
+  // Camera barcode scanner
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const handleScan = useCallback((code: string) => {
+    setSearch(code);
+  }, []);
+
   const filteredPieceBoxes = useMemo(() => {
     const q = piecesFilter.trim().toLowerCase();
     if (!q) return pieceBoxes;
@@ -193,15 +220,13 @@ export default function ProductsPage() {
 
   const [editingPiece, setEditingPiece] = useState<{ id: number; name: string; barcode: string; price: string; cost: string } | null>(null);
 
-  const LIMIT = 50;
-
   const fetchProducts = useCallback(async (pageNum: number = 1, append: boolean = false) => {
     productsAbortRef.current?.abort();
     const controller = new AbortController();
     productsAbortRef.current = controller;
 
-    if (pageNum === 1) setLoading(true);
-    else setLoadingMore(true);
+    if (append) setLoadingMore(true);
+    else setLoading(true);
 
     const params = new URLSearchParams();
     if (search) params.set('q', search);
@@ -228,6 +253,12 @@ export default function ProductsPage() {
         setHasMore(data.pagination.hasMore);
         setTotal(data.pagination.total);
         setPage(pageNum);
+        try {
+          localStorage.setItem(LAST_PAGE_KEY, JSON.stringify({ sig: filtersSig, page: pageNum }));
+          setLastVisited({ sig: filtersSig, page: pageNum });
+        } catch {
+          // localStorage no disponible: no se recuerda la página
+        }
       }
     } catch (error) {
       if (!(error instanceof DOMException && error.name === 'AbortError')) {
@@ -277,9 +308,17 @@ export default function ProductsPage() {
     return () => clearTimeout(timer);
   }, [fetchProducts]);
 
-  const loadMore = () => {
-    if (!hasMore || loadingMore || loading) return;
-    fetchProducts(page + 1, true);
+  const goToPage = (p: number) => {
+    if (p < 1 || p === page || loading || loadingMore) return;
+    fetchProducts(p, false);
+  };
+
+  const handleJump = () => {
+    const totalPages = Math.max(1, Math.ceil(total / LIMIT));
+    const p = parseInt(jumpPage, 10);
+    if (isNaN(p)) return;
+    setJumpPage('');
+    goToPage(Math.min(Math.max(1, p), totalPages));
   };
 
   const emptyProductLine = (): FormProductLine => ({
@@ -878,8 +917,18 @@ export default function ProductsPage() {
               placeholder="Buscar por nombre o código..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="pl-10"
+              className="pl-10 pr-10"
             />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="absolute right-1 top-1/2 h-8 w-8 -translate-y-1/2 text-slate-400 hover:text-primary"
+              title="Leer código de barras con la cámara"
+              onClick={() => setScannerOpen(true)}
+            >
+              <ScanLine className="h-4 w-4" />
+            </Button>
           </div>
           <div className="w-full sm:w-48">
             <Select value={filterDepartment} onValueChange={setFilterDepartment}>
@@ -964,13 +1013,13 @@ export default function ProductsPage() {
             className="w-full flex items-center justify-between gap-2 text-left"
             onClick={() => setPiecesOpen((v) => !v)}
           >
-            <CardTitle className="text-base flex items-center gap-2">
+            <span className="text-base font-semibold leading-none tracking-tight flex items-center gap-2">
               <PackageOpen className="h-4 w-4 text-sky-400" />
               Gestión de piezas
-              <Badge variant="outline" className="text-[10px] border-slate-600 text-slate-400">
+              <span className="inline-flex items-center rounded-md border border-slate-600 px-2 py-0.5 text-[10px] font-semibold text-slate-400 ml-1">
                 {pieceBoxes.length} cajas
-              </Badge>
-            </CardTitle>
+              </span>
+            </span>
             {piecesOpen ? (
               <ChevronUp className="h-4 w-4 text-slate-400" />
             ) : (
@@ -1136,22 +1185,101 @@ export default function ProductsPage() {
               )}
             </TableBody>
           </Table>
-          <div className="flex items-center justify-between border-t border-slate-700 px-4 py-3">
-            <p className="text-xs text-slate-500">
-              Mostrando {products.length} de {total} productos
-            </p>
-            {hasMore && (
-              <Button variant="outline" size="sm" onClick={loadMore} disabled={loadingMore} className="border-slate-600 text-slate-300">
-                {loadingMore ? (
-                  <span className="flex items-center gap-2">
-                    <span className="h-3 w-3 animate-spin rounded-full border-2 border-slate-400 border-t-transparent" />
-                    Cargando...
-                  </span>
-                ) : (
-                  `Cargar más (${total - products.length} restantes)`
-                )}
-              </Button>
-            )}
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-t border-slate-700 px-4 py-3">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+              <p className="text-xs text-slate-500 flex items-center gap-2">
+                Página {page} de {Math.max(1, Math.ceil(total / LIMIT))} · {total} productos
+                {loadingMore && <span className="h-3 w-3 animate-spin rounded-full border-2 border-slate-400 border-t-transparent" />}
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                {(() => {
+                  const totalPages = Math.max(1, Math.ceil(total / LIMIT));
+                  const busy = loading || loadingMore;
+                  return (
+                    <>
+                      {lastVisited && lastVisited.sig === filtersSig && lastVisited.page !== page && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-8 text-xs"
+                          disabled={busy}
+                          onClick={() => goToPage(lastVisited.page)}
+                          title={`Ir a la última página visitada (${lastVisited.page})`}
+                        >
+                          <History className="h-3.5 w-3.5 mr-1" />
+                          Última visitada: {lastVisited.page}
+                        </Button>
+                      )}
+                      <form
+                        className="flex items-center gap-1"
+                        onSubmit={(e) => { e.preventDefault(); handleJump(); }}
+                      >
+                        <Input
+                          type="number"
+                          min={1}
+                          max={totalPages}
+                          value={jumpPage}
+                          onChange={(e) => setJumpPage(e.target.value)}
+                          placeholder="N.º"
+                          title="Ir a la página"
+                          className="h-8 w-16 text-xs"
+                          inputMode="numeric"
+                        />
+                        <Button
+                          type="submit"
+                          variant="outline"
+                          size="sm"
+                          className="h-8 text-xs"
+                          disabled={busy || !jumpPage.trim()}
+                        >
+                          Ir
+                        </Button>
+                      </form>
+                    </>
+                  );
+                })()}
+              </div>
+            </div>
+            {(() => {
+              const totalPages = Math.max(1, Math.ceil(total / LIMIT));
+              const maxButtons = 7;
+              let pages: number[];
+              if (totalPages <= maxButtons) {
+                pages = Array.from({ length: totalPages }, (_, i) => i + 1);
+              } else {
+                const start = Math.max(1, Math.min(page - 3, totalPages - maxButtons + 1));
+                pages = Array.from({ length: maxButtons }, (_, i) => start + i);
+              }
+              const busy = loading || loadingMore;
+              return (
+                <div className="flex items-center gap-1">
+                  <Button variant="outline" size="icon" className="h-8 w-8" disabled={page <= 1 || busy} onClick={() => goToPage(1)} title="Primera página">
+                    <ChevronsLeft className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button variant="outline" size="icon" className="h-8 w-8" disabled={page <= 1 || busy} onClick={() => goToPage(page - 1)} title="Página anterior">
+                    <ChevronLeft className="h-3.5 w-3.5" />
+                  </Button>
+                  {pages.map((p) => (
+                    <Button
+                      key={p}
+                      variant={p === page ? 'default' : 'outline'}
+                      size="icon"
+                      className={`h-8 w-8 text-xs ${p === page ? 'bg-sky-700 hover:bg-sky-600' : ''}`}
+                      disabled={busy}
+                      onClick={() => goToPage(p)}
+                    >
+                      {p}
+                    </Button>
+                  ))}
+                  <Button variant="outline" size="icon" className="h-8 w-8" disabled={page >= totalPages || busy} onClick={() => goToPage(page + 1)} title="Página siguiente">
+                    <ChevronRight className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button variant="outline" size="icon" className="h-8 w-8" disabled={page >= totalPages || busy} onClick={() => goToPage(totalPages)} title="Última página">
+                    <ChevronsRight className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              );
+            })()}
           </div>
         </CardContent>
       </Card>
@@ -1347,6 +1475,13 @@ export default function ProductsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Camera barcode scanner */}
+      <BarcodeScanner
+        open={scannerOpen}
+        onOpenChange={setScannerOpen}
+        onDetected={handleScan}
+      />
     </div>
   );
 }

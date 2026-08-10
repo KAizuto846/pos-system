@@ -27,6 +27,7 @@ import { signOut, useSession } from 'next-auth/react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import VersionBadge from '@/components/VersionBadge';
+import { useBusiness } from '@/hooks/useBusiness';
 import {
   Dialog,
   DialogContent,
@@ -73,10 +74,14 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
   const { data: session } = useSession();
+  const business = useBusiness();
   const isAdmin = session?.user?.role === 'ADMIN';
   const canCloseShift = session?.user?.role === 'CASHIER' || isAdmin;
   const [closingShift, setClosingShift] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
+
+  const businessName = business.businessName || 'POS System';
+  const businessInitial = businessName.trim().charAt(0).toUpperCase() || 'P';
 
   const isActive = (href: string) => {
     if (href === '/') return pathname === '/';
@@ -94,7 +99,7 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
         className={cn(
           'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors',
           active
-            ? 'bg-emerald-600/20 text-emerald-400'
+            ? 'bg-primary/20 text-primary'
             : 'text-slate-300 hover:bg-slate-700/50 hover:text-slate-100'
         )}
       >
@@ -123,10 +128,19 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
         {/* Logo & Title */}
         <div className="flex h-16 items-center justify-between border-b border-slate-700 px-6">
           <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-600 text-sm font-bold text-white">
-              P
-            </div>
-            <span className="text-lg font-semibold text-slate-100">POS System</span>
+            {business.logo ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={business.logo}
+                alt="Logo del negocio"
+                className="h-9 w-9 rounded-lg object-cover"
+              />
+            ) : (
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-sm font-bold text-primary-foreground">
+                {businessInitial}
+              </div>
+            )}
+            <span className="text-lg font-semibold text-slate-100">{businessName}</span>
           </div>
           <button
             onClick={onClose}
@@ -161,7 +175,7 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
             className={cn(
               'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors',
               isActive('/settings')
-                ? 'bg-emerald-600/20 text-emerald-400'
+                ? 'bg-primary/20 text-primary'
                 : 'text-slate-300 hover:bg-slate-700/50 hover:text-slate-100'
             )}
           >
@@ -173,7 +187,7 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
               <DialogTrigger asChild>
                 <Button
                   variant="ghost"
-                  className="w-full justify-start gap-3 text-slate-300 hover:bg-slate-700/50 hover:text-emerald-400"
+                  className="w-full justify-start gap-3 text-slate-300 hover:bg-slate-700/50 hover:text-primary"
                 >
                   <ClipboardCheck className="h-5 w-5" />
                   <span>Cerrar Turno</span>
