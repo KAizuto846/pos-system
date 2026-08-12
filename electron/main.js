@@ -163,8 +163,21 @@ async function runTailscaleRepair(opts) {
 }
 
 ipcMain.handle('tailscale-status', async () => {
-  const [status, url] = await Promise.all([tailscale.getStatus(), tailscale.getFunnelUrl()]);
-  return { ...status, funnelUrl: url };
+  const [status, fs] = await Promise.all([tailscale.getStatus(), tailscale.getFunnelStatus()]);
+  let funnelReachable = null;
+  if (fs.enabled && fs.url) {
+    const v = await tailscale.verifyUrl(fs.url, 5000);
+    funnelReachable = v.ok;
+  }
+  return {
+    ...status,
+    funnelUrl: fs.url || null,
+    funnelEnabled: fs.enabled,
+    serveEnabled: fs.serveEnabled,
+    capUrl: fs.capUrl || '',
+    funnelError: fs.error || null,
+    funnelReachable,
+  };
 });
 
 ipcMain.handle('tailscale-setup', async (event, opts) => {

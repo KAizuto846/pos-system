@@ -125,11 +125,60 @@ async function getStatus() {
   }
 }
 
+// Estado real de serve/funnel (JSON): si Funnel esta habilitado (URL publica),
+// si solo esta serve (privado al tailnet) y el enlace para habilitar Funnel.
+async function getFunnelStatus() {
+  const res = await tailscale(['funnel', 'status', '--json'], 15000);
+  const fallback = { enabled: false, serveEnabled: false, capUrl: '', url: null, error: (res.ok ? null : (res.error || 'No conectado')) };
+  if (!res.ok) return fallback;
+  try {
+    const data = JSON.parse(res.stdout);
+    const enabled = Boolean(data && data.Funnel && data.Funnel.Enabled);
+    const serveEnabled = Boolean(data && data.Serve && data.Serve.Enabled);
+    let host = '';
+    if (data && typeof data.Serve === 'object' && data.Serve && typeof data.Serve.Hostname === 'string' && data.Serve.Hostname) host = data.Serve.Hostname;
+    if (!host && data && typeof data.Funnel === 'object' && data.Funnel && typeof data.Funnel.Hostname === 'string' && data.Funnel.Hostname) host = data.Funnel.Hostname;
+    let capUrl = '';
+    if (data && typeof data.Funnel === 'object' && data.Funnel && typeof data.Funnel.CapURL === 'string' && data.Funnel.CapURL) capUrl = data.Funnel.CapURL;
+    return { enabled, serveEnabled, capUrl, url: host ? `https://${host}` : null, error: null };
+  } catch (e) {
+    // Fallback por texto
+    const m = String(res.stdout + res.stderr).match(/https:\/\/[a-zA-Z0-9.-]+\.ts\.net/);
+    return { ...fallback, url: m ? m[0] : null, error: 'Respuesta inválida de tailscale' };
+  }
+}
+
 async function getFunnelUrl() {
+  const fs = await getFunnelStatus();
+  if (fs.url) return fs.url;
   const res = await tailscale(['funnel', 'status'], 15000);
   if (!res.ok) return null;
   const m = (res.stdout + res.stderr).match(/https:\/\/[a-zA-Z0-9.-]+\.ts\.net/);
   return m ? m[0] : null;
+}
+
+// Comprueba que una URL responde (aunque sea con redireccion o 401 del login).
+async function verifyUrl(url, timeoutMs = 10000) {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const res = await fetch(url, { signal: controller.signal, redirect: 'follow' });
+    clearTimeout(timer);
+    return { ok: true, status: res.status };
+  } catch (e) {
+    return { ok: false, error: e && e.message ? e.message : 'Sin respuesta' };
+  }
+}
+
+// La URL publica tarda unos segundos en provisionar el certificado HTTPS.
+async function verifyUrlWithRetry(url, attempts = 5, gapMs = 2000, timeoutMs = 8000) {
+  let v = null;
+  for (let i = 0; i < attempts; i++) {
+    v = await verifyUrl(url, timeoutMs);
+    if (v.ok) return v;
+    if (i < attempts - 1) await sleep(gapMs);
+  }
+  return v || verifyUrl(url, timeoutMs);
 }
 
 // ─── Unirse a la red ─────────────────────────────────────────
@@ -165,7 +214,37 @@ async function setFunnel(enabled, port) {
   if (!funnel.ok && !funnel.error.includes('already')) {
     return { ok: false, code: isDaemonBroken(funnel) ? 'daemon-broken' : undefined, error: `funnel fallo: ${funnel.error}` };
   }
-  return { ok: true, enabled: true, url: await getFunnelUrl() };
+
+  // Funnel debe quedar habilitado de verdad para que la URL sea publica
+  // (accesible desde cualquier WiFi). Si solo quedo serve, es privada al
+  // tailnet y desde el celular sin Tailscale no se abre.
+  const fs = await getFunnelStatus();
+  if (!fs.enabled) {
+    return {
+      ok: false,
+      code: 'funnel-not-enabled',
+      capUrl: fs.capUrl || '',
+      url: fs.url || '',
+      error: 'Funnel no está habilitado para este equipo. Debes habilitarlo en la consola de Tailscale para que la URL sea pública.',
+    };
+  }
+  if (!fs.url) {
+    return { ok: false, code: 'funnel-not-enabled', capUrl: fs.capUrl || '', error: 'No se pudo obtener la URL pública de Funnel' };
+  }
+
+  // Verifica que la URL publica responde realmente (el certificado HTTPS tarda
+  // unos segundos en provisionarse, por eso se reintenta).
+  const v = await verifyUrlWithRetry(fs.url);
+  if (!v.ok) {
+    return {
+      ok: false,
+      code: 'url-not-reachable',
+      url: fs.url,
+      error: `La URL pública ${fs.url} no responde todavía: ${v.error}`,
+    };
+  }
+
+  return { ok: true, enabled: true, url: fs.url, reachable: true };
 }
 
 // ─── Desconectar / revertir ─────────────────────────────────
@@ -205,7 +284,7 @@ async function runTailscaleFlow(opts) {
       }
       funnelResult = { ok: true, enabled: true, url: rep.funnelUrl || (await getFunnelUrl()) };
     }
-    if (!funnelResult.ok) return { ok: false, code: funnelResult.code, error: funnelResult.error };
+    if (!funnelResult.ok) return { ok: false, code: funnelResult.code, capUrl: funnelResult.capUrl, url: funnelResult.url, error: funnelResult.error };
   }
 
   progress('Listo.');
@@ -240,8 +319,8 @@ async function repair(opts = {}) {
     progress('Tailscale se ve sano.');
     if (funnel) {
       const f = await setFunnel(true, port);
-      if (!f.ok) return { ok: false, code: f.code, error: f.error };
-      return { ok: true, repaired: 'none', funnelUrl: f.url };
+      if (!f.ok) return { ok: false, code: f.code, capUrl: f.capUrl, url: f.url, error: f.error };
+      return { ok: true, repaired: 'none', funnelUrl: f.url, reachable: f.reachable };
     }
     return { ok: true, repaired: 'none' };
   }
@@ -317,7 +396,7 @@ async function repair(opts = {}) {
   if (funnel) {
     progress('Verificando la URL pública...');
     const f = await setFunnel(true, port);
-    if (!f.ok) return { ok: false, code: f.code, error: f.error };
+    if (!f.ok) return { ok: false, code: f.code, capUrl: f.capUrl, url: f.url, error: f.error };
     funnelUrl = f.url;
   }
 
@@ -406,4 +485,4 @@ function elevatedRun(batPath) {
   return run('powershell.exe', ps, 120000);
 }
 
-module.exports = { ensureInstalled, getStatus, getFunnelUrl, join, setFunnel, disconnect, runTailscaleFlow, repair, setAuthkeyStore };
+module.exports = { ensureInstalled, getStatus, getFunnelUrl, getFunnelStatus, verifyUrl, join, setFunnel, disconnect, runTailscaleFlow, repair, setAuthkeyStore };

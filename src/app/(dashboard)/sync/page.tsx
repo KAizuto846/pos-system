@@ -85,7 +85,18 @@ export default function SyncPage() {
   const [relayLastSync, setRelayLastSync] = useState<RelaySyncResult | null>(null);
 
   // Tailscale (acceso remoto)
-  const [tsState, setTsState] = useState<{ available?: boolean; online?: boolean; ip?: string | null; dnsName?: string | null; funnelUrl?: string | null; error?: string | null }>({});
+  const [tsState, setTsState] = useState<{
+    available?: boolean;
+    online?: boolean;
+    ip?: string | null;
+    dnsName?: string | null;
+    error?: string | null;
+    funnelUrl?: string | null;
+    funnelEnabled?: boolean;
+    serveEnabled?: boolean;
+    capUrl?: string;
+    funnelReachable?: boolean | null;
+  }>({});
   const [tsDialogOpen, setTsDialogOpen] = useState(false);
   const [tsAuthkey, setTsAuthkey] = useState('');
   const [tsFunnelOn, setTsFunnelOn] = useState(true);
@@ -139,8 +150,17 @@ export default function SyncPage() {
         port: deviceInfo.serverPort || 3000,
       });
       if (!res) throw new Error('No disponible en esta version de la app');
-      setTsDone(res.ok ? 'Conexion remota lista. Ya puedes abrir el POS desde el celular.' : `Error: ${res.error || 'desconocido'}`);
-      if (res.ok) loadTailscaleStatus();
+      if (res.ok) {
+        setTsDone('Conexion remota lista. Ya puedes abrir el POS desde el celular.');
+        loadTailscaleStatus();
+      } else if (res.code === 'funnel-not-enabled') {
+        setTsDone(`La URL no es pública todavía. ${res.error || ''}${res.capUrl ? ' Se abrió el enlace para habilitarlo.' : ''}`);
+        if (res.capUrl) window.open(res.capUrl, '_blank');
+      } else if (res.code === 'url-not-reachable') {
+        setTsDone(`La URL pública ${res.url || ''} no responde todavía: ${res.error || 'verifica el certificado HTTPS en unos minutos.'}`);
+      } else {
+        setTsDone(`Error: ${res.error || 'desconocido'}`);
+      }
     } catch (e) {
       setTsDone(e instanceof Error ? e.message : 'Error al conectar');
     } finally {
@@ -182,6 +202,11 @@ export default function SyncPage() {
         setTsDone(`Reparado correctamente (${res.repaired || 'ok'}).`);
         loadTailscaleStatus();
         setTimeout(loadTailscaleStatus, 2500);
+      } else if (res.code === 'funnel-not-enabled') {
+        setTsDone(`La URL no es pública todavía. ${res.error || ''}${res.capUrl ? ' Se abrió el enlace para habilitarlo.' : ''}`);
+        if (res.capUrl) window.open(res.capUrl, '_blank');
+      } else if (res.code === 'url-not-reachable') {
+        setTsDone(`La URL pública ${res.url || ''} no responde todavía: ${res.error || 'espera unos minutos a que se genere el certificado HTTPS.'}`);
       } else {
         setTsDone(`Error: ${res.error || 'desconocido'}`);
       }
@@ -556,16 +581,38 @@ export default function SyncPage() {
               )}
               {tsState.dnsName && (
                 <div className="rounded-md bg-slate-900/60 border border-slate-700 px-4 py-3">
-                  <p className="text-xs text-slate-500">URL publica (desde cualquier WiFi)</p>
+                  <p className="text-xs text-slate-500">
+                    {tsState.funnelEnabled ? 'URL publica (desde cualquier WiFi)' : 'URL privada (solo funciona con Tailscale instalado)'}
+                  </p>
                   <div className="flex items-center gap-2 mt-1">
                     <p className="text-sm text-sky-300 font-mono truncate">https://{tsState.dnsName}/</p>
-                    <button type="button" onClick={() => { if (tsState.dnsName) void navigator.clipboard?.writeText(`https://${tsState.dnsName}/`); }} className="text-slate-400 hover:text-slate-200 transition-colors shrink-0" title="Copiar URL publica">
+                    <button type="button" onClick={() => { if (tsState.dnsName) void navigator.clipboard?.writeText(`https://${tsState.dnsName}/`); }} className="text-slate-400 hover:text-slate-200 transition-colors shrink-0" title="Copiar URL">
                       <Copy className="h-3.5 w-3.5" />
                     </button>
                   </div>
-                  <p className="text-[11px] text-slate-500 mt-1.5">
-                    Abrela desde el celular con datos moviles. La URL esta protegida por el login del POS; usa una contrasena fuerte.
-                  </p>
+                  {tsState.funnelEnabled && tsState.funnelReachable === false && (
+                    <p className="text-[11px] text-red-400 mt-1.5">
+                      La URL publica NO responde todavía (el certificado HTTPS puede tardar unos minutos en generarse). Reintenta en un momento o pulsa &quot;Reparar automaticamente&quot;.
+                    </p>
+                  )}
+                  {tsState.funnelEnabled && tsState.funnelReachable !== false && (
+                    <p className="text-[11px] text-slate-500 mt-1.5">
+                      Abrela desde el celular con datos moviles. La URL esta protegida por el login del POS; usa una contrasena fuerte.
+                    </p>
+                  )}
+                  {!tsState.funnelEnabled && (
+                    <>
+                      <p className="text-[11px] text-amber-400 mt-1.5">
+                        La URL solo funciona entre equipos con Tailscale. Para abrirla desde cualquier WiFi hay que habilitar Funnel en la consola de Tailscale.
+                      </p>
+                      {tsState.capUrl && (
+                        <Button variant="outline" size="sm" type="button" onClick={() => window.open(tsState.capUrl!, '_blank')} className="text-xs mt-2 text-sky-400 hover:text-sky-300 border-sky-800/60 hover:border-sky-700">
+                          <Globe className="h-3.5 w-3.5 mr-1.5" />
+                          Habilitar Funnel (abrir consola)
+                        </Button>
+                      )}
+                    </>
+                  )}
                 </div>
               )}
               {tsState.error && <p className="text-xs text-red-400">{tsState.error}</p>}

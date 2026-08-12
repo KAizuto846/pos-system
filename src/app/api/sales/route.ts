@@ -135,6 +135,17 @@ export async function POST(request: Request) {
     let taxAmount = 0;
     let taxPercentage = 0;
 
+    // Cobros realizados sin stock suficiente: se permite la venta pero se
+    // registra cada producto que no tenia existencia para notificarlo.
+    const stockShortages: Array<{
+      productId: number;
+      productName: string;
+      quantitySold: number;
+      stockBefore: number;
+      stockAfter: number;
+      shortage: number;
+    }> = [];
+
     const sale = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       // Atomic stock check + decrement using raw SQL
       // This prevents race conditions between concurrent sales
@@ -206,7 +217,8 @@ export async function POST(request: Request) {
         }
 
         if (result === 0) {
-          // Check if product exists to give a better error message
+          // Sin stock suficiente: SE PERMITE el cobro (el stock queda negativo o
+          // en cero) pero se registra la alerta para notificarlo.
           const product = await tx.product.findUnique({
             where: { id: item.productId },
             select: { name: true, stock: true },
@@ -216,9 +228,19 @@ export async function POST(request: Request) {
             throw new Error(`Producto con ID ${item.productId} no encontrado`);
           }
 
-          throw new Error(
-            `Stock insuficiente para ${product.name}. Disponible: ${product.stock}, requerido: ${item.quantity}`
-          );
+          const stockBefore = product.stock;
+          await tx.$executeRaw`
+            UPDATE products SET stock = stock - ${item.quantity}
+            WHERE id = ${item.productId}
+          `;
+          stockShortages.push({
+            productId: item.productId,
+            productName: product.name,
+            quantitySold: item.quantity,
+            stockBefore,
+            stockAfter: stockBefore - item.quantity,
+            shortage: Math.max(item.quantity - Math.max(stockBefore, 0), 0),
+          });
         }
 
         // Consume batches FIFO by expiration (stock total already decremented above)
@@ -335,6 +357,37 @@ export async function POST(request: Request) {
       createdAt: sale.createdAt,
     });
 
+    // Registrar los cobros sin existencia (la venta se permitio igualmente)
+    const createdStockAlerts = [];
+    for (const s of stockShortages) {
+      const alert = await prisma.stockAlert.create({
+        data: {
+          saleId: sale.id,
+          productId: s.productId,
+          productName: s.productName,
+          quantitySold: s.quantitySold,
+          stockBefore: s.stockBefore,
+          stockAfter: s.stockAfter,
+          shortage: s.shortage,
+          status: "pending",
+        },
+      });
+      createdStockAlerts.push(alert);
+      void logChange(getDeviceId(), "CREATE", "stockalert", alert.id, {
+        saleId: sale.id,
+        productId: s.productId,
+        productName: s.productName,
+        quantitySold: s.quantitySold,
+        stockBefore: s.stockBefore,
+        stockAfter: s.stockAfter,
+        shortage: s.shortage,
+        status: "pending",
+      });
+    }
+    if (createdStockAlerts.length > 0) {
+      broadcast("stock-alert:change", { count: createdStockAlerts.length });
+    }
+
     for (const opened of openedPieces) {
       const freshBox = await prisma.product.findUnique({
         where: { id: opened.boxId },
@@ -389,7 +442,18 @@ export async function POST(request: Request) {
       });
     }
     return Response.json(
-      { ...sale, taxBase, taxAmount, taxPercentage },
+      {
+        ...sale,
+        taxBase,
+        taxAmount,
+        taxPercentage,
+        stockAlerts: createdStockAlerts.map((a) => ({
+          id: a.id,
+          productName: a.productName,
+          quantitySold: a.quantitySold,
+          shortage: a.shortage,
+        })),
+      },
       { status: 201 }
     );
   } catch (error) {

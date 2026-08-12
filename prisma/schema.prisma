@@ -145,6 +145,7 @@ model Product {
   refunds        Refund[]
   batches        ProductBatch[]
   wishlistItems  CustomerWishlistItem[]
+  stockAlerts    StockAlert[]
 
   piecesLog      PiecesLog[]
 
@@ -227,6 +228,7 @@ model Sale {
 
   items    SaleItem[]
   refunds  Refund[]
+  stockAlerts StockAlert[]
 
   cashEntries CashEntry[]
 
@@ -472,4 +474,29 @@ model PiecesLog {
   @@index([boxProductId])
   @@index([createdAt])
   @@map("pieces_log")
+}
+
+// Aviso de cobro sin existencia: se permite la venta pero se registra que el
+// producto se cobro sin el stock suficiente (o sin stock). No desaparece hasta
+// que alguien lo reconozca (status: pending | acked).
+model StockAlert {
+  id           Int      @id @default(autoincrement())
+  saleId       Int      @map("sale_id")
+  sale         Sale     @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  productId    Int      @map("product_id")
+  product      Product  @relation(fields: [productId], references: [id])
+  productName  String   @map("product_name")
+  quantitySold Int      @map("quantity_sold")
+  stockBefore  Int      @map("stock_before")
+  stockAfter   Int      @map("stock_after")
+  shortage     Int      @default(0) // unidades faltantes (lo que excedio al stock)
+  status       String   @default("pending") // pending | acked
+  ackedBy      Int?     @map("acked_by")
+  ackedAt      DateTime? @map("acked_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([status])
+  @@index([saleId])
+  @@index([productId])
+  @@map("stock_alerts")
 }

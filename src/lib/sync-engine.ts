@@ -348,6 +348,18 @@ async function applyEntityChange(
         await prisma.piecesLog.deleteMany({ where: { id: entityId } });
       }
       break;
+
+    case "stockalert":
+      if (operation === "DELETE") {
+        await prisma.stockAlert.deleteMany({ where: { id: entityId } });
+      } else {
+        await prisma.stockAlert.upsert({
+          where: { id: entityId },
+          create: { ...entityData, id: entityId } as Prisma.StockAlertUncheckedCreateInput,
+          update: entityData as Prisma.StockAlertUncheckedUpdateInput,
+        });
+      }
+      break;
   }
 }
 

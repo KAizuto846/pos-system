@@ -73,13 +73,18 @@ interface Window {
       dnsName?: string | null;
       error?: string | null;
       funnelUrl?: string | null;
+      funnelEnabled?: boolean;
+      serveEnabled?: boolean;
+      capUrl?: string;
+      funnelError?: string | null;
+      funnelReachable?: boolean | null;
     }>;
     setupTailscale: (opts: {
       authkey: string;
       funnel: boolean;
       port?: number;
       hostname?: string;
-    }) => Promise<{ ok: boolean; error?: string; code?: string; dnsName?: string; funnelUrl?: string }>;
+    }) => Promise<{ ok: boolean; error?: string; code?: string; capUrl?: string; url?: string; dnsName?: string; funnelUrl?: string }>;
     repairTailscale: (opts?: {
       authkey?: string;
       funnel?: boolean;
@@ -87,9 +92,12 @@ interface Window {
     }) => Promise<{
       ok: boolean;
       error?: string;
+      code?: string;
       repaired?: "restart" | "reauth" | "reset" | "none";
       needsLogin?: boolean;
       loginUrl?: string;
+      capUrl?: string;
+      url?: string;
       online?: boolean;
       ip?: string | null;
       dnsName?: string | null;

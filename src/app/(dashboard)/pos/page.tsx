@@ -426,6 +426,12 @@ export default function PosPage() {
       const sale: SaleTicket = await res.json();
       setLastSale(sale);
       toast.success('Venta realizada con exito');
+      const stockAlerts = (sale as { stockAlerts?: Array<{ productName: string; quantitySold: number; shortage: number }> }).stockAlerts || [];
+      if (stockAlerts.length > 0) {
+        const first = stockAlerts[0];
+        const extra = stockAlerts.length > 1 ? ` y ${stockAlerts.length - 1} más` : '';
+        toast(`Atención: se cobró ${first.productName} sin existencia${first.shortage ? ` (faltaban ${first.shortage})` : ''}${extra}. El cobro se permitió pero quedó registrado.`);
+      }
       clearCart();
       setSelectedCustomer(null);
       setCheckoutOpen(false);
