@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Tray, Menu, dialog, shell, Notification, ipcMain } = require('electron');
+const { app, BrowserWindow, Tray, Menu, dialog, shell, Notification, ipcMain, safeStorage } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const dgram = require('dgram');
@@ -77,7 +77,7 @@ function showFirstRunSetup(callback) {
         port: config.serverPort || 3000,
         onProgress: (msg) => { try { setupWindow.webContents.send('tailscale-progress', msg); } catch (e) {} },
       });
-      config.tailscale = { connected: result.ok, at: new Date().toISOString() };
+      config.tailscale = { ...(config.tailscale || {}), connected: result.ok, at: new Date().toISOString() };
       if (result.ok) config.tailscale.dnsName = result.dnsName || '';
       if (result.funnelUrl) config.tailscale.funnelUrl = result.funnelUrl;
       if (!result.ok && result.error) config.tailscale.error = result.error;
@@ -109,9 +109,54 @@ const { setupAutoUpdater, checkForUpdates, installUpdate } = require('./updater'
 // ─── Tailscale (acceso remoto) ─────────────────────────────
 const tailscale = require('./tailscale');
 
+// La authkey se guarda CIFRADA con DPAPI (safeStorage/Windows) para poder
+// re-autenticar automaticamente al reparar, sin volver a pedirla. Nunca se
+// escribe en claro en el config.
+function saveEncryptedAuthkey(authkey) {
+  try {
+    if (!authkey || !safeStorage.isEncryptionAvailable()) return false;
+    config.tailscale = { ...(config.tailscale || {}) };
+    config.tailscale.authkeyEnc = safeStorage.encryptString(authkey).toString('base64');
+    saveConfig();
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+function loadEncryptedAuthkey() {
+  try {
+    const enc = config.tailscale && config.tailscale.authkeyEnc;
+    if (!enc || !safeStorage.isEncryptionAvailable()) return '';
+    return safeStorage.decryptString(Buffer.from(enc, 'base64'));
+  } catch (e) {
+    return '';
+  }
+}
+tailscale.setAuthkeyStore({ save: saveEncryptedAuthkey, load: loadEncryptedAuthkey });
+
+function sendTsProgress(msg) {
+  try { if (mainWindow) mainWindow.webContents.send('tailscale-progress', msg); } catch (e) {}
+}
+
 async function runTailscaleSetup(opts) {
   try {
-    return await tailscale.runTailscaleFlow(opts);
+    const result = await tailscale.runTailscaleFlow(opts);
+    if (result.ok && opts.authkey && opts.authkey.trim()) saveEncryptedAuthkey(opts.authkey.trim());
+    return result;
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Error interno Tailscale' };
+  }
+}
+
+async function runTailscaleRepair(opts) {
+  const funnel = opts && opts.funnel !== undefined ? opts.funnel : Boolean((config.tailscale || {}).funnelUrl);
+  try {
+    return await tailscale.repair({
+      ...(opts || {}),
+      funnel,
+      port: config.serverPort || 3000,
+      onLoginRequired: (url) => { shell.openExternal(url).catch(() => {}); },
+    });
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Error interno Tailscale' };
   }
@@ -123,16 +168,35 @@ ipcMain.handle('tailscale-status', async () => {
 });
 
 ipcMain.handle('tailscale-setup', async (event, opts) => {
-  const result = await runTailscaleSetup(opts || {});
+  const result = await runTailscaleSetup({ ...(opts || {}), onProgress: sendTsProgress });
   if (result.ok) {
-    config.tailscale = { connected: true, at: new Date().toISOString(), dnsName: result.dnsName || '', funnelUrl: result.funnelUrl || '' };
+    config.tailscale = { ...(config.tailscale || {}), connected: true, at: new Date().toISOString(), dnsName: result.dnsName || '', funnelUrl: result.funnelUrl || '' };
+    saveConfig();
+  }
+  return result;
+});
+
+ipcMain.handle('tailscale-repair', async (event, opts) => {
+  const result = await runTailscaleRepair({ ...(opts || {}), onProgress: sendTsProgress });
+  if (result.ok) {
+    config.tailscale = { ...(config.tailscale || {}), connected: true, online: true, at: new Date().toISOString(), dnsName: result.dnsName || '', funnelUrl: result.funnelUrl || '' };
+    delete config.tailscale.error;
     saveConfig();
   }
   return result;
 });
 
 ipcMain.handle('tailscale-funnel', async (event, enabled) => {
-  const result = await tailscale.setFunnel(Boolean(enabled), config.serverPort || 3000);
+  let result = await tailscale.setFunnel(Boolean(enabled), config.serverPort || 3000);
+  if (enabled && result.code === 'daemon-broken') {
+    sendTsProgress('Servicio Tailscale dañado. Reparando automáticamente...');
+    const rep = await runTailscaleRepair({ funnel: true });
+    if (rep.ok) {
+      result = await tailscale.setFunnel(true, config.serverPort || 3000);
+    } else {
+      result = { ok: false, error: `Fallo de Tailscale: ${rep.error}` };
+    }
+  }
   config.tailscale = { ...(config.tailscale || {}), funnelUrl: result.url || '', at: new Date().toISOString() };
   delete config.tailscale.error;
   saveConfig();

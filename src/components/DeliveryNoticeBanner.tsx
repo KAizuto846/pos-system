@@ -15,7 +15,7 @@ interface Notice {
   id: number;
   orderId: number;
   supplierName: string;
-  userName: string;
+  customerName: string;
   items: NoticeItem[];
   createdAt: string;
 }
@@ -81,7 +81,7 @@ export default function DeliveryNoticeBanner() {
               <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-400" />
               <div>
                 <p className="text-sm font-semibold text-amber-200">
-                  El pedido de <span className="text-white">{notice.userName}</span> ya llegó
+                  El pedido de <span className="text-white">{notice.customerName}</span> ya llegó
                 </p>
                 <p className="mt-0.5 text-xs text-amber-300/80 flex items-center gap-1">
                   <Package className="h-3 w-3" />

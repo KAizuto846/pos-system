@@ -24,8 +24,6 @@ model User {
   cashEntries CashEntry[]
   shiftReports ShiftReport[]
   refunds   Refund[]
-  wishlistItems UserWishlistItem[]
-  deliveryNotices DeliveryNotice[]
 
   @@map("users")
 }
@@ -146,8 +144,8 @@ model Product {
   orderItems     SupplierOrderItem[]
   refunds        Refund[]
   batches        ProductBatch[]
+  wishlistItems  CustomerWishlistItem[]
 
-  wishlistItems  UserWishlistItem[]
   piecesLog      PiecesLog[]
 
   @@index([barcode])
@@ -190,6 +188,8 @@ model Customer {
   updatedAt       DateTime  @updatedAt @map("updated_at")
 
   sales           Sale[]
+  wishlistItems   CustomerWishlistItem[]
+  deliveryNotices DeliveryNotice[]
 
   @@index([name])
   @@index([fingerprintHash])
@@ -420,33 +420,33 @@ model TaxLog {
   @@map("tax_logs")
 }
 
-// Lista de medicamentos/productos que una persona (usuario) necesita.
+// Lista de medicamentos/productos que un cliente necesita.
 // productId nulo = texto libre (producto que aún no existe en inventario).
-model UserWishlistItem {
-  id        Int      @id @default(autoincrement())
-  userId    Int      @map("user_id")
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  productId Int?     @map("product_id")
-  product   Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
-  name      String   @default("")
-  quantity  Int?
-  notes     String   @default("")
-  createdAt DateTime @default(now()) @map("created_at")
+model CustomerWishlistItem {
+  id         Int      @id @default(autoincrement())
+  customerId Int      @map("customer_id")
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  productId  Int?     @map("product_id")
+  product    Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  name       String   @default("")
+  quantity   Int?
+  notes      String   @default("")
+  createdAt  DateTime @default(now()) @map("created_at")
 
-  @@index([userId])
+  @@index([customerId])
   @@index([productId])
-  @@map("user_wishlist_items")
+  @@map("customer_wishlist_items")
 }
 
 // Alerta de llegada: se crea al confirmar la recepción de un pedido si ese
-// pedido contiene algo de la lista de una persona. No desaparece hasta que
-// alguien confirme que el pedido de esa persona ya llegó.
+// pedido contiene algo de la lista de un cliente. No desaparece hasta que
+// alguien confirme que el pedido de ese cliente ya llegó.
 model DeliveryNotice {
   id          Int           @id @default(autoincrement())
   orderId     Int           @map("order_id")
   order       SupplierOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  userId      Int           @map("user_id")
-  user        User          @relation(fields: [userId], references: [id])
+  customerId  Int           @map("customer_id")
+  customer    Customer      @relation(fields: [customerId], references: [id])
   items       String        @default("[]") // JSON: [{ name, quantity }]
   status      String        @default("pending") // pending | confirmed
   confirmedBy Int?          @map("confirmed_by")
@@ -454,7 +454,7 @@ model DeliveryNotice {
   createdAt   DateTime      @default(now()) @map("created_at")
 
   @@index([status])
-  @@index([userId])
+  @@index([customerId])
   @@index([orderId])
   @@map("delivery_notices")
 }

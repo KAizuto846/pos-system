@@ -3,6 +3,9 @@ import { prisma } from "@/lib/db";
 import { logChange } from "@/lib/sync-engine";
 import { getDeviceId } from "@/lib/sync-utils";
 
+export const dynamic = "force-dynamic";
+
+// Quitar un producto de la lista de medicamentos de un cliente
 export async function DELETE(
   _request: Request,
   { params }: { params: Promise<{ id: string; itemId: string }> }
@@ -14,26 +17,28 @@ export async function DELETE(
     }
 
     const { id, itemId } = await params;
-    const userId = parseInt(id, 10);
+    const customerId = parseInt(id, 10);
     const wishlistItemId = parseInt(itemId, 10);
-    if (isNaN(userId) || isNaN(wishlistItemId)) {
-      return Response.json({ error: "ID inválido" }, { status: 400 });
+    if (isNaN(customerId) || isNaN(wishlistItemId)) {
+      return Response.json({ error: "IDs inválidos" }, { status: 400 });
     }
 
-    const exists = await prisma.userWishlistItem.findFirst({
-      where: { id: wishlistItemId, userId },
+    const exists = await prisma.customerWishlistItem.findFirst({
+      where: { id: wishlistItemId, customerId },
     });
     if (!exists) {
       return Response.json({ error: "Elemento no encontrado" }, { status: 404 });
     }
 
-    await prisma.userWishlistItem.delete({ where: { id: wishlistItemId } });
+    await prisma.customerWishlistItem.delete({ where: { id: wishlistItemId } });
 
-    void logChange(getDeviceId(), "DELETE", "userwishlistitem", wishlistItemId, { userId });
+    void logChange(getDeviceId(), "DELETE", "customerwishlistitem", wishlistItemId, {
+      customerId,
+    });
 
-    return Response.json({ success: true });
+    return Response.json({ ok: true });
   } catch (error) {
     console.error("Error deleting wishlist item:", error);
-    return Response.json({ error: "Error al eliminar" }, { status: 500 });
+    return Response.json({ error: "Error al eliminar de la lista" }, { status: 500 });
   }
 }

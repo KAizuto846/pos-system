@@ -60,7 +60,7 @@
       <input class="relay-input" id="relaySecret" type="text" placeholder="El mismo en todos los equipos">
     </div>
     <div class="relay-section" id="tailscaleSection">
-      <p class="relay-note">Opcional: conectar este equipo a la red remota (Tailscale) para acceder al POS desde cualquier WiFi. La authkey la genera el administrador de la red; no se guarda en este equipo.</p>
+      <p class="relay-note">Opcional: conectar este equipo a la red remota (Tailscale) para acceder al POS desde cualquier WiFi. La authkey la genera el administrador de la red; se guarda cifrada en este equipo para poder reparar la conexion automaticamente mas adelante.</p>
       <label class="relay-label" for="tsAuthkey">Auth key de Tailscale</label>
       <input class="relay-input" id="tsAuthkey" type="password" placeholder="tskey-auth-...">
       <label class="relay-check"><input type="checkbox" id="tsFunnel"> Publicar con Funnel (URL publica accesible desde cualquier WiFi)</label>

@@ -12,8 +12,31 @@
 const { execFile } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 
 const DEFAULT_TIMEOUT = 30000;
+
+// Errores del daemon corrupto (control server noise key en cero / HTTP 500 al
+// habilitar una feature de serve). Cuando aparecen, reiniciar el servicio o
+// re-autenticar suele arreglarlo.
+const DAEMON_BROKEN_RE = /Internal Server Error|zero serverNoiseKey|Error 500|\b500\b/;
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Guarda/lee la authkey cifrada (DPAPI via safeStorage en main.js). Se usa
+// para re-autenticar automaticamente al reparar, sin pedir la authkey de nuevo.
+let authkeyStore = null;
+function setAuthkeyStore(store) {
+  authkeyStore = store;
+}
+function loadStoredAuthkey() {
+  if (!authkeyStore || typeof authkeyStore.load !== 'function') return '';
+  try {
+    return authkeyStore.load() || '';
+  } catch (e) {
+    return '';
+  }
+}
 
 function pickTailscaleBinary() {
   if (process.platform !== 'win32') return 'tailscale';
@@ -123,6 +146,10 @@ async function join(authkey, hostname) {
 }
 
 // ─── Funnel (URL publica) ────────────────────────────────────
+function isDaemonBroken(res) {
+  return !!(res && !res.ok && DAEMON_BROKEN_RE.test(res.error || ''));
+}
+
 async function setFunnel(enabled, port) {
   if (!enabled) {
     await tailscale(['funnel', 'off'], 30000);
@@ -132,11 +159,11 @@ async function setFunnel(enabled, port) {
   const target = `http://127.0.0.1:${port || 3000}`;
   const serve = await tailscale(['serve', '--bg', target], 30000);
   if (!serve.ok && !serve.error.includes('already')) {
-    return { ok: false, error: `serve fallo: ${serve.error}` };
+    return { ok: false, code: isDaemonBroken(serve) ? 'daemon-broken' : undefined, error: `serve fallo: ${serve.error}` };
   }
   const funnel = await tailscale(['funnel', '--bg', target], 30000);
   if (!funnel.ok && !funnel.error.includes('already')) {
-    return { ok: false, error: `funnel fallo: ${funnel.error}` };
+    return { ok: false, code: isDaemonBroken(funnel) ? 'daemon-broken' : undefined, error: `funnel fallo: ${funnel.error}` };
   }
   return { ok: true, enabled: true, url: await getFunnelUrl() };
 }
@@ -170,7 +197,15 @@ async function runTailscaleFlow(opts) {
   if (funnel) {
     progress('Publicando en internet (Funnel)...');
     funnelResult = await setFunnel(true, port);
-    if (!funnelResult.ok) return { ok: false, error: funnelResult.error };
+    if (funnelResult.code === 'daemon-broken') {
+      progress('El servicio de Tailscale está dañado (HTTP 500). Reparándolo automáticamente...');
+      const rep = await repair({ authkey, funnel: true, port, onProgress });
+      if (!rep.ok) {
+        return { ok: false, code: 'daemon-broken', error: `No se pudo publicar: ${rep.error}` };
+      }
+      funnelResult = { ok: true, enabled: true, url: rep.funnelUrl || (await getFunnelUrl()) };
+    }
+    if (!funnelResult.ok) return { ok: false, code: funnelResult.code, error: funnelResult.error };
   }
 
   progress('Listo.');
@@ -183,4 +218,192 @@ async function runTailscaleFlow(opts) {
   };
 }
 
-module.exports = { ensureInstalled, getStatus, getFunnelUrl, join, setFunnel, disconnect, runTailscaleFlow };
+// ─── Reparacion automatica ───────────────────────────────────
+// Arregla el daemon de Tailscale (error "HTTP 500: zero serverNoiseKey" al
+// habilitar serve/serve-funnel). Pasos, en orden:
+//   1. Reiniciar el servicio de Tailscale  (requiere admin en Windows)
+//   2. Re-autenticar con la authkey guardada / variable de entorno
+//   3. Restablecer el estado interno corrupto (ultimo recurso)
+// Devuelve { ok:true, repaired } o { ok:false, error } (con needsLogin/loginUrl
+// si hace falta autenticacion manual en el navegador).
+
+async function repair(opts = {}) {
+  const { funnel, port, onProgress } = opts || {};
+  const progress = (m) => { if (typeof onProgress === 'function') onProgress(m); };
+
+  progress('Verificando instalacion de Tailscale...');
+  const inst = await ensureInstalled();
+  if (!inst.ok) return { ok: false, error: inst.error };
+
+  progress('Diagnosticando el estado de Tailscale...');
+  if (!(await detectBroken())) {
+    progress('Tailscale se ve sano.');
+    if (funnel) {
+      const f = await setFunnel(true, port);
+      if (!f.ok) return { ok: false, code: f.code, error: f.error };
+      return { ok: true, repaired: 'none', funnelUrl: f.url };
+    }
+    return { ok: true, repaired: 'none' };
+  }
+
+  progress('El servicio de Tailscale está dañado. Reiniciándolo... (acepta el permiso de administrador si aparece)');
+  const rs = await restartService();
+  if (!rs.ok) return { ok: false, error: rs.error };
+  await sleep(4000);
+
+  let repaired = 'restart';
+  if (!(await detectBroken())) {
+    progress('El reinicio del servicio arregló Tailscale.');
+  } else {
+    repaired = 'reauth';
+    const prefix = await getStatus();
+    const host = prefix.hostName || opts.hostname || 'POS-Equipo';
+    const key = String(opts.authkey || '').trim() || loadStoredAuthkey() || String(process.env.POS_TAILSCALE_AUTHKEY || '').trim();
+
+    if (key) {
+      progress('Re-autenticando este equipo en la red remota...');
+      await tailscale(['logout'], 30000);
+      const up = await tailscale(['up', '--authkey', key, '--hostname', host], 120000);
+      if (!up.ok) return { ok: false, error: `No se pudo re-autenticar: ${up.error}` };
+    } else {
+      progress('Se necesita autenticación manual...');
+      const lr = await tailscale(['up'], 30000);
+      const m = String(lr.stdout + lr.stderr).match(/https:\/\/login\.tailscale\.com\/a\/[A-Za-z0-9_-]+/);
+      if (!m) {
+        return {
+          ok: false,
+          needsLogin: true,
+          error: 'Se necesita autenticación manual. Ejecuta "tailscale up" y sigue el enlace, o guarda la authkey en la app.',
+        };
+      }
+      if (typeof opts.onLoginRequired === 'function') {
+        try { opts.onLoginRequired(m[0]); } catch (e) {}
+      }
+      progress(`Autentícate en el navegador: ${m[0]}. Esperando...`);
+      const st = await waitOnline(progress, 180000);
+      if (!st.online) {
+        return {
+          ok: false,
+          needsLogin: true,
+          loginUrl: m[0],
+          error: `No se completó la autenticación. Abre de nuevo el enlace: ${m[0]}`,
+        };
+      }
+    }
+
+    if (await detectBroken()) {
+      if (!key) {
+        return {
+          ok: false,
+          error: 'El estado de Tailscale sigue dañado y no hay authkey guardada para restablecerlo. Pega la authkey en la app y vuelve a intentar.',
+        };
+      }
+      repaired = 'reset';
+      progress('El estado interno está corrupto. Restableciéndolo... (acepta el permiso de administrador si aparece)');
+      const rst = await resetState();
+      if (!rst.ok) return { ok: false, error: rst.error };
+      await sleep(4000);
+      progress('Re-autenticando después del restablecimiento...');
+      const up = await tailscale(['up', '--authkey', key, '--hostname', host], 120000);
+      if (!up.ok) return { ok: false, error: `No se pudo re-autenticar: ${up.error}` };
+      if (await detectBroken()) {
+        return { ok: false, error: 'Tailscale sigue sin funcionar después de la reparación. Reinicia el equipo.' };
+      }
+    }
+  }
+
+  const status = await getStatus();
+  let funnelUrl = null;
+  if (funnel) {
+    progress('Verificando la URL pública...');
+    const f = await setFunnel(true, port);
+    if (!f.ok) return { ok: false, code: f.code, error: f.error };
+    funnelUrl = f.url;
+  }
+
+  progress('Reparación completada.');
+  return { ok: true, repaired, online: status.online, ip: status.ip, dnsName: status.dnsName, funnelUrl };
+}
+
+// Detecta un daemon roto: sin conexion, o "serve status" fallando con HTTP 500.
+async function detectBroken() {
+  const st = await getStatus();
+  if (!st.available) return true;
+  if (!st.online) return true;
+  const ss = await tailscale(['serve', 'status'], 15000);
+  return isDaemonBroken(ss);
+}
+
+// Espera (con progreso) hasta que Tailscale quede en linea.
+async function waitOnline(onProgress, timeoutMs = 180000) {
+  const start = Date.now();
+  let last = null;
+  while (Date.now() - start < timeoutMs) {
+    last = await getStatus();
+    if (last.online) return last;
+    if (onProgress) {
+      try { onProgress(`Esperando conexión... (${Math.round((Date.now() - start) / 1000)}s)`); } catch (e) {}
+    }
+    await sleep(3000);
+  }
+  return last || await getStatus();
+}
+
+// Reinicia el servicio del daemon (requiere admin). En Windows se eleva con
+// UAC via PowerShell; se usa un .bat temporal, no requiere permisos previos.
+async function restartService() {
+  if (process.platform === 'win32') {
+    const bat = path.join(os.tmpdir(), 'pos-tailscale-restart.bat');
+    fs.writeFileSync(bat, '@echo off\r\nnet stop Tailscale >nul 2>&1\r\nnet start Tailscale >nul 2>&1\r\n', 'utf8');
+    const res = await elevatedRun(bat);
+    if (!res.ok && /cancel/i.test(res.error)) {
+      return { ok: false, error: 'No se aceptó el permiso de administrador necesario para reiniciar Tailscale.' };
+    }
+    if (!res.ok) return { ok: false, error: `No se pudo reiniciar el servicio de Tailscale: ${res.error}` };
+    return { ok: true };
+  }
+  if (process.platform === 'linux') {
+    const r1 = await run('systemctl', ['restart', 'tailscaled'], 30000);
+    if (r1.ok) return { ok: true };
+    const r2 = await run('pkexec', ['systemctl', 'restart', 'tailscaled'], 60000);
+    if (r2.ok) return { ok: true };
+    return { ok: false, error: 'No se pudo reiniciar tailscaled (necesita permisos de root): sudo systemctl restart tailscaled' };
+  }
+  return { ok: false, error: 'Reinicio de Tailscale no soportado en esta plataforma' };
+}
+
+// Ultimo recurso: renombra el estado corrupto del daemon para que se regenere.
+// Al perder el estado, el equipo sale de la red: hay que volver a autenticar y
+// re-crear la configuracion de serve/funnel.
+async function resetState() {
+  if (process.platform !== 'win32') {
+    return { ok: false, error: 'El restablecimiento de estado solo está disponible en Windows' };
+  }
+  const bat = path.join(os.tmpdir(), 'pos-tailscale-reset.bat');
+  const content = [
+    '@echo off',
+    'net stop Tailscale >nul 2>&1',
+    'ren "C:\\ProgramData\\Tailscale\\tailscaled.state" "tailscaled.state.bak" 2>nul',
+    'net start Tailscale >nul 2>&1',
+    '',
+  ].join('\r\n');
+  fs.writeFileSync(bat, content, 'utf8');
+  const res = await elevatedRun(bat);
+  if (!res.ok && /cancel/i.test(res.error)) {
+    return { ok: false, error: 'No se aceptó el permiso de administrador necesario para restablecer Tailscale.' };
+  }
+  if (!res.ok) return { ok: false, error: `No se pudo restablecer el estado de Tailscale: ${res.error}` };
+  return { ok: true };
+}
+
+// Ejecuta un .bat como administrador (ventana UAC). Devuelve el codigo de
+// salida del proceso elevado.
+function elevatedRun(batPath) {
+  const ps = [
+    '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command',
+    `$p = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c','"${batPath}"' -Verb RunAs -Wait -PassThru; exit $p.ExitCode`,
+  ];
+  return run('powershell.exe', ps, 120000);
+}
+
+module.exports = { ensureInstalled, getStatus, getFunnelUrl, join, setFunnel, disconnect, runTailscaleFlow, repair, setAuthkeyStore };

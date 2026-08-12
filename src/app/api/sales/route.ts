@@ -130,6 +130,11 @@ export async function POST(request: Request) {
       createdAt: Date;
     }> = [];
 
+    // Desglose del impuesto para el ticket (se llenan dentro de la transacción)
+    let taxBase = 0;
+    let taxAmount = 0;
+    let taxPercentage = 0;
+
     const sale = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       // Atomic stock check + decrement using raw SQL
       // This prevents race conditions between concurrent sales
@@ -225,7 +230,7 @@ export async function POST(request: Request) {
       const { getTaxRule, applyTaxToPrice, taxMatchesScope, isTaxActive } = await import("@/lib/tax-rule");
       const taxRule = await getTaxRule();
       const taxActive = Boolean(taxRule && isTaxActive(taxRule) && taxRule.percentage > 0);
-      let taxedPrices: Record<number, number> = {};
+      const taxedPrices: Record<number, number> = {};
       let recomputedTotal = 0;
       if (taxActive && taxRule) {
         const productIds = data.items.map((i) => i.productId);
@@ -234,6 +239,7 @@ export async function POST(request: Request) {
           select: { id: true, supplierId: true, departmentId: true, price: true },
         });
         const productMap = new Map(products.map((p) => [p.id, p]));
+        taxPercentage = taxRule.percentage;
         for (const item of data.items) {
           const prod = productMap.get(item.productId);
           const base = prod?.price ?? item.price;
@@ -242,8 +248,10 @@ export async function POST(request: Request) {
             : false;
           const finalPrice = matches ? applyTaxToPrice(taxRule, base) : base;
           taxedPrices[item.productId] = finalPrice;
+          taxBase += base * item.quantity;
           recomputedTotal += finalPrice * item.quantity;
         }
+        taxAmount = recomputedTotal - taxBase;
         recomputedTotal -= data.discountTotal || 0;
       }
 
@@ -380,7 +388,10 @@ export async function POST(request: Request) {
         createdAt: opened.createdAt.toISOString(),
       });
     }
-    return Response.json(sale, { status: 201 });
+    return Response.json(
+      { ...sale, taxBase, taxAmount, taxPercentage },
+      { status: 201 }
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : "Error al crear venta";
     console.error("Error creating sale:", error);

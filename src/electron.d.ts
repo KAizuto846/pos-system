@@ -79,7 +79,22 @@ interface Window {
       funnel: boolean;
       port?: number;
       hostname?: string;
-    }) => Promise<{ ok: boolean; error?: string; dnsName?: string; funnelUrl?: string }>;
+    }) => Promise<{ ok: boolean; error?: string; code?: string; dnsName?: string; funnelUrl?: string }>;
+    repairTailscale: (opts?: {
+      authkey?: string;
+      funnel?: boolean;
+      hostname?: string;
+    }) => Promise<{
+      ok: boolean;
+      error?: string;
+      repaired?: "restart" | "reauth" | "reset" | "none";
+      needsLogin?: boolean;
+      loginUrl?: string;
+      online?: boolean;
+      ip?: string | null;
+      dnsName?: string | null;
+      funnelUrl?: string | null;
+    }>;
     disconnectTailscale: () => Promise<{ ok: boolean; error?: string; funnelOff?: boolean }>;
     onTailscaleProgress: (callback: (msg: string) => void) => () => void;
   };

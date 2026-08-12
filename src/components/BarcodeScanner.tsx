@@ -36,12 +36,14 @@ export function BarcodeScanner({ open, onOpenChange, onDetected }: BarcodeScanne
   const streamRef = useRef<MediaStream | null>(null);
   const rafRef = useRef<number>(0);
   const lastCodeRef = useRef('');
+  const canceledRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [status, setStatus] = useState<'starting' | 'running' | 'error'>('starting');
   const [error, setError] = useState('');
   const [lastCode, setLastCode] = useState('');
   const [manual, setManual] = useState('');
   const [photoWorking, setPhotoWorking] = useState(false);
+  const [attempt, setAttempt] = useState(0);
 
   const hasPhotoMode =
     typeof window !== 'undefined' && !window.isSecureContext && 'BarcodeDetector' in window;
@@ -52,98 +54,124 @@ export function BarcodeScanner({ open, onOpenChange, onDetected }: BarcodeScanne
     streamRef.current = null;
   }, []);
 
+  const start = useCallback(async () => {
+    if (typeof window === 'undefined' || canceledRef.current) return;
+
+    if (!window.isSecureContext) {
+      if ('BarcodeDetector' in window) {
+        setError(
+          'Este sitio no es seguro (HTTP), por lo que la cámara en vivo no está disponible. Usa el botón "Escanear con foto": se abre la cámara del celular, tomas la foto y se lee el código automáticamente.'
+        );
+      } else {
+        setError(
+          'La cámara solo funciona en un sitio seguro (HTTPS). Desde este dispositivo usa el buscador o el lector de código del escritorio. En el celular, entra por el túnel de internet (Cloudflare) para activar la cámara.'
+        );
+      }
+      setStatus('error');
+      return;
+    }
+    if (!('BarcodeDetector' in window)) {
+      setError(
+        'Este navegador no tiene lector integrado (disponible en Chrome/Edge/Android). Escribe el código a mano abajo.'
+      );
+      setStatus('error');
+      return;
+    }
+    setStatus('starting');
+    try {
+      // Prueba primero con cámara trasera; si el dispositivo no la soporta
+      // (OverconstrainedError), reintenta con cualquier cámara.
+      let stream: MediaStream | null = null;
+      let lastErr: unknown;
+      const attempts: MediaStreamConstraints[] = [
+        { video: { facingMode: { ideal: 'environment' } } },
+        { video: true },
+      ];
+      for (const constraints of attempts) {
+        if (canceledRef.current) return;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia(constraints);
+          break;
+        } catch (e) {
+          lastErr = e;
+        }
+      }
+      if (!stream) {
+        if (lastErr === undefined) throw new Error('No se pudo acceder a la cámara');
+        throw lastErr;
+      }
+      if (canceledRef.current) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
+      streamRef.current = stream;
+      const video = videoRef.current;
+      if (!video) return;
+      video.srcObject = stream;
+      await video.play();
+      if (canceledRef.current) return;
+      setStatus('running');
+      setError('');
+
+      const Detector = (window as unknown as { BarcodeDetector: BarcodeDetectorLike }).BarcodeDetector;
+      const detector = new Detector({ formats: BARCODE_FORMATS });
+
+      const loop = async () => {
+        if (!video || video.readyState < 2 || video.ended) {
+          rafRef.current = requestAnimationFrame(loop);
+          return;
+        }
+        try {
+          const codes = await detector.detect(video);
+          const code = codes[0]?.rawValue;
+          if (code && code !== lastCodeRef.current) {
+            lastCodeRef.current = code;
+            setLastCode(code);
+            onDetected(code);
+          }
+        } catch {
+          // Frame ilegible: se sigue intentando
+        }
+        rafRef.current = requestAnimationFrame(loop);
+      };
+      rafRef.current = requestAnimationFrame(loop);
+    } catch (e) {
+      const err = e as DOMException;
+      if (err?.name === 'NotAllowedError') {
+        setError('Permite el acceso a la cámara en el navegador y toca "Reintentar".');
+      } else if (err?.name === 'NotFoundError' || err?.name === 'OverconstrainedError') {
+        setError('No se encontró una cámara en este dispositivo.');
+      } else if (err?.name === 'NotReadableError') {
+        setError('La cámara está siendo usada por otra aplicación.');
+      } else {
+        setError(`No se pudo iniciar la cámara: ${err?.message || 'error desconocido'}`);
+      }
+      setStatus('error');
+    }
+  }, [onDetected]);
+
   useEffect(() => {
-    if (!open) {
+    if (!open) return;
+    canceledRef.current = false;
+    const id = setTimeout(() => void start(), 0);
+    return () => {
+      clearTimeout(id);
+      canceledRef.current = true;
+      stop();
+    };
+  }, [open, start, stop, attempt]);
+
+  const handleOpenChange = (next: boolean) => {
+    if (!next) {
+      canceledRef.current = true;
       stop();
       setStatus('starting');
       setError('');
       setLastCode('');
       lastCodeRef.current = '';
-      return;
     }
-
-    let canceled = false;
-    const start = async () => {
-      if (!window.isSecureContext) {
-        if ('BarcodeDetector' in window) {
-          setError(
-            'Este sitio no es seguro (HTTP), por lo que la cámara en vivo no está disponible. Usa el botón "Escanear con foto": se abre la cámara del celular, tomas la foto y se lee el código automáticamente.'
-          );
-        } else {
-          setError(
-            'La cámara solo funciona en un sitio seguro (HTTPS). Desde este dispositivo usa el buscador o el lector de código del escritorio. En el celular, entra por el túnel de internet (Cloudflare) para activar la cámara.'
-          );
-        }
-        setStatus('error');
-        return;
-      }
-      if (!('BarcodeDetector' in window)) {
-        setError(
-          'Este navegador no tiene lector integrado (disponible en Chrome/Edge/Android). Escribe el código a mano abajo.'
-        );
-        setStatus('error');
-        return;
-      }
-      setStatus('starting');
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment' },
-        });
-        if (canceled) {
-          stream.getTracks().forEach((t) => t.stop());
-          return;
-        }
-        streamRef.current = stream;
-        const video = videoRef.current;
-        if (!video) return;
-        video.srcObject = stream;
-        await video.play();
-        setStatus('running');
-        setError('');
-
-        const Detector = (window as unknown as { BarcodeDetector: BarcodeDetectorLike }).BarcodeDetector;
-        const detector = new Detector({ formats: BARCODE_FORMATS });
-
-        const loop = async () => {
-          if (!video || video.readyState < 2 || video.ended) {
-            rafRef.current = requestAnimationFrame(loop);
-            return;
-          }
-          try {
-            const codes = await detector.detect(video);
-            const code = codes[0]?.rawValue;
-            if (code && code !== lastCodeRef.current) {
-              lastCodeRef.current = code;
-              setLastCode(code);
-              onDetected(code);
-            }
-          } catch {
-            // Frame ilegible: se sigue intentando
-          }
-          rafRef.current = requestAnimationFrame(loop);
-        };
-        rafRef.current = requestAnimationFrame(loop);
-      } catch (e) {
-        const err = e as DOMException;
-        if (err?.name === 'NotAllowedError') {
-          setError('Permite el acceso a la cámara en el navegador y vuelve a abrir el lector.');
-        } else if (err?.name === 'NotFoundError') {
-          setError('No se encontró una cámara en este dispositivo.');
-        } else if (err?.name === 'NotReadableError') {
-          setError('La cámara está siendo usada por otra aplicación.');
-        } else {
-          setError(`No se pudo iniciar la cámara: ${err?.message || 'error desconocido'}`);
-        }
-        setStatus('error');
-      }
-    };
-
-    start();
-    return () => {
-      canceled = true;
-      stop();
-    };
-  }, [open, onDetected, stop]);
+    onOpenChange(next);
+  };
 
   const submitManual = () => {
     const code = manual.trim();
@@ -184,7 +212,7 @@ export function BarcodeScanner({ open, onOpenChange, onDetected }: BarcodeScanne
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto">
         <DialogTitle className="flex items-center gap-2">
           <ScanLine className="h-5 w-5 text-primary" />
@@ -248,6 +276,18 @@ export function BarcodeScanner({ open, onOpenChange, onDetected }: BarcodeScanne
                     </Button>
                   </>
                 )}
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setStatus('starting');
+                    setError('');
+                    setAttempt((a) => a + 1);
+                  }}
+                  className="mt-1 border-slate-600 text-slate-300 hover:bg-slate-700"
+                >
+                  <ScanLine className="h-4 w-4" />
+                  Reintentar
+                </Button>
               </div>
             )}
           </div>

@@ -15,7 +15,7 @@ export async function GET() {
       where: { status: "pending" },
       orderBy: { createdAt: "desc" },
       include: {
-        user: { select: { id: true, name: true, username: true } },
+        customer: { select: { id: true, name: true } },
         order: {
           select: {
             id: true,
@@ -30,7 +30,7 @@ export async function GET() {
         id: n.id,
         orderId: n.orderId,
         supplierName: n.order.supplier?.name || "—",
-        userName: n.user?.name || "—",
+        customerName: n.customer?.name || "—",
         items: (() => {
           try {
             return JSON.parse(n.items);

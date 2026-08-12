@@ -383,18 +383,18 @@ export async function POST(
       await Promise.all(entries);
     }
 
-    // Alerta de llegada: si el pedido recibido contiene algo de la lista de una
-    // persona, se crea/actualiza un aviso pendiente que no desaparece hasta
+    // Alerta de llegada: si el pedido recibido contiene algo de la lista de un
+    // cliente, se crea/actualiza un aviso pendiente que no desaparece hasta
     // que alguien lo confirme (ver /api/delivery-notices).
     try {
       const receivedItems = updatedOrder.items.filter((i) => i.receivedQuantity > 0);
       const receivedProductIds = new Set(
         receivedItems.map((i) => i.productId).filter((x): x is number => typeof x === "number")
       );
-      const wishlist = await prisma.userWishlistItem.findMany({
-        include: { user: { select: { name: true, active: true } } },
+      const wishlist = await prisma.customerWishlistItem.findMany({
+        include: { customer: { select: { name: true, active: true } } },
       });
-      const byUser = new Map<number, { userId: number; userName: string; items: { name: string; quantity: number }[] }>();
+      const byCustomer = new Map<number, { customerId: number; customerName: string; items: { name: string; quantity: number }[] }>();
       for (const w of wishlist) {
         let matched: { name: string; quantity: number } | null = null;
         if (w.productId && receivedProductIds.has(w.productId)) {
@@ -417,18 +417,18 @@ export async function POST(
           }
         }
         if (matched) {
-          const entry = byUser.get(w.userId) || {
-            userId: w.userId,
-            userName: w.user.name,
+          const entry = byCustomer.get(w.customerId) || {
+            customerId: w.customerId,
+            customerName: w.customer.name,
             items: [],
           };
           entry.items.push({ name: matched.name, quantity: matched.quantity });
-          byUser.set(w.userId, entry);
+          byCustomer.set(w.customerId, entry);
         }
       }
-      for (const [, entry] of byUser) {
+      for (const [, entry] of byCustomer) {
         const existing = await prisma.deliveryNotice.findFirst({
-          where: { orderId, userId: entry.userId, status: "pending" },
+          where: { orderId, customerId: entry.customerId, status: "pending" },
         });
         const itemsJson = JSON.stringify(entry.items);
         if (existing) {
@@ -440,14 +440,14 @@ export async function POST(
           const created = await prisma.deliveryNotice.create({
             data: {
               orderId,
-              userId: entry.userId,
+              customerId: entry.customerId,
               items: itemsJson,
               status: "pending",
             },
           });
           void logChange(getDeviceId(), "CREATE", "deliverynotice", created.id, {
             orderId,
-            userId: entry.userId,
+            customerId: entry.customerId,
             items: entry.items,
             status: "pending",
           });

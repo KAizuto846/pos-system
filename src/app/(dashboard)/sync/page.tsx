@@ -25,6 +25,7 @@ import {
   Users,
   KeyRound,
   Unplug,
+  Wrench,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -88,7 +89,7 @@ export default function SyncPage() {
   const [tsDialogOpen, setTsDialogOpen] = useState(false);
   const [tsAuthkey, setTsAuthkey] = useState('');
   const [tsFunnelOn, setTsFunnelOn] = useState(true);
-  const [tsBusy, setTsBusy] = useState<'connect' | 'disconnect' | null>(null);
+  const [tsBusy, setTsBusy] = useState<'connect' | 'disconnect' | 'repair' | null>(null);
   const [tsProgress, setTsProgress] = useState<string[]>([]);
   const [tsDone, setTsDone] = useState<string | null>(null);
 
@@ -165,6 +166,38 @@ export default function SyncPage() {
     } finally {
       setTsBusy(null);
     }
+  };
+
+  const runTsRepair = async () => {
+    if (tsBusy) return;
+    setTsBusy('repair');
+    setTsProgress([]);
+    setTsDone(null);
+    try {
+      const res = await win.electronAPI?.repairTailscale?.();
+      if (!res) throw new Error('No disponible en esta version de la app');
+      if (res.needsLogin) {
+        setTsDone(`Se necesita autenticacion manual. ${res.loginUrl ? `Abre este enlace en el navegador: ${res.loginUrl}` : 'Ejecuta "tailscale up" y sigue el enlace, o guarda la authkey.'}`);
+      } else if (res.ok) {
+        setTsDone(`Reparado correctamente (${res.repaired || 'ok'}).`);
+        loadTailscaleStatus();
+        setTimeout(loadTailscaleStatus, 2500);
+      } else {
+        setTsDone(`Error: ${res.error || 'desconocido'}`);
+      }
+    } catch (e) {
+      setTsDone(e instanceof Error ? e.message : 'Error al reparar');
+    } finally {
+      setTsBusy(null);
+    }
+  };
+
+  const openTsRepair = () => {
+    setTsAuthkey('');
+    setTsProgress([]);
+    setTsDone(null);
+    setTsDialogOpen(true);
+    void runTsRepair();
   };
 
   const win = window as unknown as { electronAPI?: Window['electronAPI'] };
@@ -542,7 +575,11 @@ export default function SyncPage() {
             <div className="flex flex-wrap gap-2 pt-1">
               <Button variant="outline" size="sm" type="button" onClick={openTsSetup} className="text-xs">
                 <KeyRound className="h-3.5 w-3.5 mr-1.5" />
-                Configurar / Reparar conexion
+                Configurar conexion
+              </Button>
+              <Button variant="outline" size="sm" type="button" onClick={openTsRepair} disabled={tsBusy !== null} className="text-xs text-amber-400 hover:text-amber-300 border-amber-800/60 hover:border-amber-700">
+                <Wrench className="h-3.5 w-3.5 mr-1.5" />
+                Reparar automaticamente
               </Button>
               {tsState.available && (
                 <Button variant="outline" size="sm" type="button" onClick={runTsDisconnect} disabled={tsBusy !== null} className="text-xs text-red-400 hover:text-red-300 border-red-800/60 hover:border-red-700">
@@ -871,12 +908,12 @@ SYNC_SECRET="tu-secreto" PORT=8099 node server.js`}
               Conexion remota (Tailscale)
             </DialogTitle>
             <DialogDescription>
-              Vuelve a ejecutar el paso de conexion remota del asistente de instalacion. Se instala Tailscale si falta, se une con la authkey y (opcional) publica el POS en internet.
+              Configura o repara la conexion remota. Si ya configuraste antes, usa &quot;Reparar automaticamente&quot;: reinicia el servicio de Tailscale y restaura la conexion sin pedir la authkey (acepta el permiso de administrador si aparece).
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="ts-authkey">Authkey de Tailscale</Label>
+              <Label htmlFor="ts-authkey">Authkey de Tailscale (opcional)</Label>
               <Input
                 id="ts-authkey"
                 value={tsAuthkey}
@@ -886,7 +923,7 @@ SYNC_SECRET="tu-secreto" PORT=8099 node server.js`}
                 disabled={tsBusy !== null}
               />
               <p className="text-[11px] text-slate-500">
-                Se genera en la consola de Tailscale (Settings &rarr; Keys). Marca la casilla &ldquo;Reusable&rdquo; si la vas a reutilizar.
+                Se genera en la consola de Tailscale (Settings &rarr; Keys). Marca la casilla &ldquo;Reusable&rdquo; si la vas a reutilizar. Desde la primera conexion la app la guarda cifrada: solo se pide de nuevo si reparas sin heredar la anterior.
               </p>
             </div>
             <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
@@ -913,6 +950,10 @@ SYNC_SECRET="tu-secreto" PORT=8099 node server.js`}
           <DialogFooter className="flex gap-2">
             <Button type="button" variant="outline" onClick={() => setTsDialogOpen(false)} disabled={tsBusy !== null}>
               Cerrar
+            </Button>
+            <Button type="button" variant="outline" onClick={runTsRepair} disabled={tsBusy !== null} className="text-amber-400 hover:text-amber-300 border-amber-800/60 hover:border-amber-700">
+              {tsBusy === 'repair' ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Wrench className="h-4 w-4 mr-2" />}
+              Reparar automaticamente
             </Button>
             <Button type="button" onClick={runTsSetup} disabled={tsBusy !== null || !tsAuthkey.trim()}>
               {tsBusy === 'connect' ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Plug className="h-4 w-4 mr-2" />}

@@ -207,10 +207,45 @@ La app de Windows integra Tailscale en el wizard de primer arranque:
 3. **Estado y URL**: la pagina de Sincronizacion muestra IP privada y URL publica
    (`https://<equipo>.<red>.ts.net`), con boton para copiarla.
 4. **Reparar / reconfigurar despues**: si el usuario se equivoco o el paso fallo,
-   la app de escritorio tiene dos botones en la card "Acceso desde cualquier WiFi":
-   - **Configurar / Reparar conexion**: abre un asistente con authkey + Funnel
-     para repetir el paso del wizard (util si se fallo, o para cambiar de red).
+   la app de escritorio tiene botones en la card "Acceso desde cualquier WiFi":
+   - **Configurar conexion**: abre un asistente con authkey + Funnel para repetir
+     el paso del wizard (util si se fallo, o para cambiar de red).
+   - **Reparar automaticamente**: reinicia el servicio de Tailscale, re-autentica
+     con la authkey guardada (cifrada con DPAPI, nunca en claro) o pide
+     autenticacion manual en el navegador, y restaura la URL publica.
    - **Desconectar**: apaga el Funnel y saca el equipo de Tailscale (revertir).
+
+### Solucion de problemas: "Error 500 / zero serverNoiseKey" al publicar
+
+Si al habilitar HTTPS con serve/funnel aparece
+`Error 500: Internal Server Error` (o el mensaje interno `zero serverNoiseKey`),
+el daemon de Tailscale quedo en un estado corrupto. No es problema de la
+authkey ni de la cuenta.
+
+En la app de escritorio (recomendado):
+1. Abre Sincronizacion > "Acceso desde cualquier WiFi" > **Reparar automaticamente**.
+2. Acepta el permiso de administrador (UAC) si aparece. La app reinicia el
+   servicio de Tailscale, re-autentica con la authkey guardada y re-publica.
+3. Si sigue fallando, la app restablece el estado interno del daemon
+   (`tailscaled.state`) y vuelve a conectarse. Ese nodo sale de la red y
+   entra de nuevo: el equipo queda registrado como nuevo en la consola.
+
+Manual (si no usas la app):
+```cmd
+net stop Tailscale
+net start Tailscale
+tailscale logout
+tailscale up --authkey=tskey-auth-...
+tailscale funnel --bg http://127.0.0.1:3000
+```
+Ultimo recurso (borra el estado corrupto; backup primero):
+```cmd
+net stop Tailscale
+ren C:\ProgramData\Tailscale\tailscaled.state tailscaled.state.bak
+net start Tailscale
+tailscale up --authkey=tskey-auth-...
+tailscale funnel --bg http://127.0.0.1:3000
+```
 
 Requisitos del dueno de la red (una sola vez):
 - Activar "Serve" y "Funnel" para los dispositivos en la consola de Tailscale

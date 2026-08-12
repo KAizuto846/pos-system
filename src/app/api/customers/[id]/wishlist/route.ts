@@ -4,7 +4,7 @@ import { logChange } from "@/lib/sync-engine";
 import { getDeviceId } from "@/lib/sync-utils";
 import { broadcast } from "@/lib/broadcast";
 
-// Lista de productos/medicamentos que una persona necesita
+// Lista de productos/medicamentos que un cliente necesita
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -16,13 +16,13 @@ export async function GET(
     }
 
     const { id } = await params;
-    const userId = parseInt(id, 10);
-    if (isNaN(userId)) {
+    const customerId = parseInt(id, 10);
+    if (isNaN(customerId)) {
       return Response.json({ error: "ID inválido" }, { status: 400 });
     }
 
-    const items = await prisma.userWishlistItem.findMany({
-      where: { userId },
+    const items = await prisma.customerWishlistItem.findMany({
+      where: { customerId },
       orderBy: { createdAt: "desc" },
       include: { product: { select: { id: true, name: true, barcode: true, price: true } } },
     });
@@ -45,9 +45,14 @@ export async function POST(
     }
 
     const { id } = await params;
-    const userId = parseInt(id, 10);
-    if (isNaN(userId)) {
+    const customerId = parseInt(id, 10);
+    if (isNaN(customerId)) {
       return Response.json({ error: "ID inválido" }, { status: 400 });
+    }
+
+    const customer = await prisma.customer.findUnique({ where: { id: customerId } });
+    if (!customer) {
+      return Response.json({ error: "Cliente no encontrado" }, { status: 404 });
     }
 
     const body = await request.json();
@@ -66,17 +71,17 @@ export async function POST(
       if (!product) {
         return Response.json({ error: "Producto no encontrado" }, { status: 404 });
       }
-      item = await prisma.userWishlistItem.create({
-        data: { userId, productId, name: name || product.name, quantity, notes },
+      item = await prisma.customerWishlistItem.create({
+        data: { customerId, productId, name: name || product.name, quantity, notes },
       });
     } else {
-      item = await prisma.userWishlistItem.create({
-        data: { userId, productId: null, name, quantity, notes },
+      item = await prisma.customerWishlistItem.create({
+        data: { customerId, productId: null, name, quantity, notes },
       });
     }
 
-    void logChange(getDeviceId(), "CREATE", "userwishlistitem", item.id, {
-      userId,
+    void logChange(getDeviceId(), "CREATE", "customerwishlistitem", item.id, {
+      customerId,
       productId: item.productId,
       name: item.name,
       quantity: item.quantity,

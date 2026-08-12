@@ -300,32 +300,41 @@ async function applyEntityChange(
       break;
 
     case "userwishlistitem":
+    case "customerwishlistitem": {
+      // Compatibilidad con dispositivos antiguos (0.4.x) que logueaban "userId"
+      const clean = { ...entityData };
+      delete clean.userId;
       if (operation === "DELETE") {
-        await prisma.userWishlistItem.deleteMany({ where: { id: entityId } });
+        await prisma.customerWishlistItem.deleteMany({ where: { id: entityId } });
       } else {
-        await prisma.userWishlistItem.upsert({
+        await prisma.customerWishlistItem.upsert({
           where: { id: entityId },
-          create: { ...entityData, id: entityId } as Prisma.UserWishlistItemUncheckedCreateInput,
-          update: entityData as Prisma.UserWishlistItemUncheckedUpdateInput,
+          create: { ...clean, id: entityId } as Prisma.CustomerWishlistItemUncheckedCreateInput,
+          update: clean as Prisma.CustomerWishlistItemUncheckedUpdateInput,
         });
       }
       break;
+    }
 
-    case "deliverynotice":
+    case "deliverynotice": {
+      // Compatibilidad con dispositivos antiguos (0.4.x) que logueaban "userId"
+      const clean = { ...entityData };
+      delete clean.userId;
       if (operation === "CREATE") {
         const existing = await prisma.deliveryNotice.findUnique({ where: { id: entityId } });
         if (!existing) {
           await prisma.deliveryNotice.create({
-            data: entityData as Prisma.DeliveryNoticeUncheckedCreateInput,
+            data: clean as Prisma.DeliveryNoticeUncheckedCreateInput,
           });
         }
       } else if (operation === "UPDATE") {
         await prisma.deliveryNotice.updateMany({
           where: { id: entityId },
-          data: entityData as Prisma.DeliveryNoticeUncheckedUpdateInput,
+          data: clean as Prisma.DeliveryNoticeUncheckedUpdateInput,
         });
       }
       break;
+    }
 
     case "pieceslog":
       if (operation === "CREATE") {

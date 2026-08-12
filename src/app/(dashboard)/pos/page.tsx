@@ -75,6 +75,9 @@ interface SaleTicket {
   id: number;
   total: number;
   discountTotal: number;
+  taxBase?: number;
+  taxAmount?: number;
+  taxPercentage?: number;
   paymentMethod?: { name: string };
   user?: { name: string };
   items: {
@@ -943,7 +946,24 @@ function TicketReceipt({ sale }: { sale: SaleTicket }) {
           </div>
         ))}
       </div>
+      {sale.taxAmount && sale.taxAmount > 0 && (
+        <p className="mt-1 text-[10px] text-slate-500">
+          Precios con impuesto incluido
+        </p>
+      )}
       <div className="mt-3 space-y-1 border-t border-slate-700 pt-2 text-slate-300">
+        {sale.taxBase !== undefined && sale.taxAmount !== undefined && sale.taxAmount > 0 && (
+          <>
+            <div className="flex justify-between">
+              <span>Subtotal (sin impuesto)</span>
+              <span>{formatCurrency(sale.taxBase)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Impuesto (+{sale.taxPercentage || 0}%)</span>
+              <span>{formatCurrency(sale.taxAmount)}</span>
+            </div>
+          </>
+        )}
         {sale.discountTotal > 0 && (
           <div className="flex justify-between">
             <span>Descuento</span>
@@ -991,7 +1011,22 @@ function PrintArea({ sale }: { sale: SaleTicket }) {
           </div>
         ))}
       </div>
+      {sale.taxAmount && sale.taxAmount > 0 && (
+        <p className="mb-1 text-[10px]">Precios con impuesto incluido</p>
+      )}
       <div className="mb-2 border-t border-dashed border-black pt-2">
+        {sale.taxBase !== undefined && sale.taxAmount !== undefined && sale.taxAmount > 0 && (
+          <>
+            <div className="flex justify-between">
+              <span>Subtotal (sin impuesto)</span>
+              <span>{formatCurrency(sale.taxBase)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Impuesto (+{sale.taxPercentage || 0}%)</span>
+              <span>{formatCurrency(sale.taxAmount)}</span>
+            </div>
+          </>
+        )}
         {sale.discountTotal > 0 && (
           <div className="flex justify-between">
             <span>Descuento</span>

@@ -596,13 +596,13 @@ export default function FinancePage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-emerald-400">
-              {summary ? formatCurrency(summary.sales.profit - (summary.sales.purchases?.fromCost || 0)) : '—'}
+              {summary ? formatCurrency(summary.sales.profit) : '—'}
             </div>
             <p className="text-xs text-slate-500 mt-1">
               Margen: {summary ? `${summary.sales.profitMargin}%` : '—'}
-              {summary && summary.sales.purchases?.total > 0 && (
+              {summary && summary.sales.purchases?.excess > 0 && (
                 <span className="ml-2 text-red-400">
-                  (Compras: -{formatCurrency(summary.sales.purchases.total)})
+                  (Nota excedió el costo: -{formatCurrency(summary.sales.purchases.excess)})
                 </span>
               )}
               {summary && summary.sales.withdrawn?.total > 0 && (
@@ -621,13 +621,18 @@ export default function FinancePage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-red-400">
-              {summary ? formatCurrency(summary.sales.totalCost + (summary.sales.purchases?.total || 0)) : '—'}
+              {summary ? formatCurrency(summary.sales.totalCost - (summary.sales.purchases?.fromCost || 0)) : '—'}
             </div>
             <p className="text-xs text-slate-500 mt-1">
               Costo de productos vendidos
-              {summary && summary.sales.purchases?.total > 0 && (
+              {summary && summary.sales.purchases?.fromCost > 0 && (
                 <span className="text-red-400">
-                  {' '}+ compras ({formatCurrency(summary.sales.purchases.total)})
+                  {' '}− nota pagada ({formatCurrency(summary.sales.purchases.fromCost)})
+                </span>
+              )}
+              {summary && summary.sales.purchases?.excess > 0 && (
+                <span className="text-red-400">
+                  {' '}(excedente de la nota: -{formatCurrency(summary.sales.purchases.excess)} en ganancias)
                 </span>
               )}
             </p>

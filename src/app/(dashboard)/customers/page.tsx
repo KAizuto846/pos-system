@@ -2,14 +2,15 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import toast from 'react-hot-toast';
-import { Search, Plus, Edit, Trash2, Fingerprint, User, Loader2, Star, TrendingUp, Clock } from 'lucide-react';
+import { Search, Plus, Edit, Trash2, Fingerprint, User, Loader2, Star, TrendingUp, Clock, ClipboardList, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
-import { Dialog, DialogContent, DialogHeader, DialogFooter, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Dialog, DialogContent, DialogHeader, DialogFooter, DialogTitle, DialogDescription, DialogClose } from '@/components/ui/dialog';
 import { formatCurrency } from '@/lib/utils';
 
 interface Customer {
@@ -38,6 +39,24 @@ const TIER_LABELS: Record<string, string> = {
   gold: 'Oro',
 };
 
+interface WishlistItem {
+  id: number;
+  customerId: number;
+  productId: number | null;
+  name: string;
+  quantity: number | null;
+  notes: string;
+  product?: { id: number; name: string; barcode: string; price: number } | null;
+}
+
+interface ProductSearchResult {
+  id: number;
+  name: string;
+  barcode: string;
+  price: number;
+  stock: number;
+}
+
 export default function CustomersPage() {
   const customersAbortRef = useRef<AbortController | null>(null);
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -50,6 +69,91 @@ export default function CustomersPage() {
   const [form, setForm] = useState({ name: '', phone: '', email: '' });
   const [saving, setSaving] = useState(false);
   const [enrolling, setEnrolling] = useState(false);
+
+  // ── Lista de medicamentos (wishlist del cliente) ──
+  const [wishlistOpen, setWishlistOpen] = useState(false);
+  const [wishlist, setWishlist] = useState<WishlistItem[]>([]);
+  const [wishlistLoading, setWishlistLoading] = useState(false);
+  const [wishSearch, setWishSearch] = useState('');
+  const [wishResults, setWishResults] = useState<ProductSearchResult[]>([]);
+  const [wishSearching, setWishSearching] = useState(false);
+  const [wishName, setWishName] = useState('');
+  const [wishQuantity, setWishQuantity] = useState('');
+  const [wishNotes, setWishNotes] = useState('');
+  const [wishAdding, setWishAdding] = useState(false);
+
+  const loadWishlist = async (customerId: number) => {
+    setWishlistLoading(true);
+    try {
+      const res = await fetch(`/api/customers/${customerId}/wishlist`);
+      const data = await res.json();
+      setWishlist(res.ok ? data.items || [] : []);
+    } catch {
+      setWishlist([]);
+    } finally {
+      setWishlistLoading(false);
+    }
+  };
+
+  const openWishlist = (customer: Customer) => {
+    setSelectedCustomer(customer);
+    setWishlistOpen(true);
+    setWishSearch('');
+    setWishResults([]);
+    setWishName('');
+    setWishQuantity('');
+    setWishNotes('');
+    loadWishlist(customer.id);
+  };
+
+  const addWishlistItem = async (productId: number | null) => {
+    if (!selectedCustomer) return;
+    setWishAdding(true);
+    try {
+      const res = await fetch(`/api/customers/${selectedCustomer.id}/wishlist`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          productId,
+          name: productId === null ? wishName.trim() : undefined,
+          quantity: wishQuantity ? parseInt(wishQuantity) : undefined,
+          notes: wishNotes.trim() || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || 'Error al agregar');
+        return;
+      }
+      toast.success('Agregado a la lista');
+      setWishName('');
+      setWishQuantity('');
+      setWishNotes('');
+      setWishSearch('');
+      setWishResults([]);
+      loadWishlist(selectedCustomer.id);
+    } catch {
+      toast.error('Error de conexión');
+    } finally {
+      setWishAdding(false);
+    }
+  };
+
+  const removeWishlistItem = async (itemId: number) => {
+    if (!selectedCustomer) return;
+    try {
+      const res = await fetch(`/api/customers/${selectedCustomer.id}/wishlist/${itemId}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) {
+        toast.error('No se pudo eliminar');
+        return;
+      }
+      setWishlist((prev) => prev.filter((i) => i.id !== itemId));
+    } catch {
+      toast.error('Error de conexión');
+    }
+  };
 
   const fetchCustomers = useCallback(async (query: string) => {
     customersAbortRef.current?.abort();
@@ -81,6 +185,32 @@ export default function CustomersPage() {
       customersAbortRef.current?.abort();
     };
   }, [search, fetchCustomers]);
+
+  useEffect(() => {
+    if (!wishlistOpen || wishSearch.trim().length < 2) {
+      setWishResults([]);
+      return;
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      setWishSearching(true);
+      try {
+        const res = await fetch(`/api/products?q=${encodeURIComponent(wishSearch.trim())}&limit=8`, {
+          signal: controller.signal,
+        });
+        const data = await res.json();
+        setWishResults(res.ok ? data.products || [] : []);
+      } catch {
+        setWishResults([]);
+      } finally {
+        if (!controller.signal.aborted) setWishSearching(false);
+      }
+    }, 300);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [wishSearch, wishlistOpen]);
 
   const handleAdd = async () => {
     if (!form.name.trim()) { toast.error('Nombre requerido'); return; }
@@ -232,6 +362,9 @@ export default function CustomersPage() {
                 </div>
                 <Progress value={getTierProgress(c.purchaseCount)} className="h-1.5 bg-slate-700 [&>div]:bg-emerald-500" />
                 <div className="flex justify-end gap-1">
+                  <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); openWishlist(c); }} className="h-8 text-sky-400 hover:text-sky-300" title="Lista de medicamentos">
+                    <ClipboardList className="h-3.5 w-3.5" />
+                  </Button>
                   <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); openEdit(c); }} className="h-8 text-slate-400 hover:text-slate-200">
                     <Edit className="h-3.5 w-3.5" />
                   </Button>
@@ -342,8 +475,150 @@ export default function CustomersPage() {
                 <Fingerprint className="mr-2 h-4 w-4" />
                 {enrolling ? 'Registrando...' : selectedCustomer.fingerprintHash ? 'Re-registrar huella' : 'Registrar huella'}
               </Button>
+
+              <Button
+                onClick={() => openWishlist(selectedCustomer)}
+                className="w-full bg-sky-700 hover:bg-sky-600 text-slate-100"
+              >
+                <ClipboardList className="mr-2 h-4 w-4" />
+                Lista de medicamentos
+              </Button>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Lista de medicamentos del cliente */}
+      <Dialog open={wishlistOpen} onOpenChange={(o) => { setWishlistOpen(o); if (!o) setSelectedCustomer(null); }}>
+        <DialogContent className="border-slate-700 bg-slate-800 text-slate-200 max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ClipboardList className="h-5 w-5 text-sky-400" />
+              Lista de medicamentos — {selectedCustomer?.name}
+            </DialogTitle>
+            <DialogDescription className="text-slate-400">
+              Productos que este cliente necesita. Cuando un pedido recibido contenga algo de esta lista,
+              aparecerá una alerta hasta que confirmes que su pedido llegó.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            {/* Agregar desde inventario */}
+            <div className="rounded-md border border-slate-700 bg-slate-800/40 p-3 space-y-2">
+              <Label className="text-xs text-slate-400">Agregar producto del inventario</Label>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <Input
+                  placeholder="Buscar por nombre o código..."
+                  value={wishSearch}
+                  onChange={(e) => setWishSearch(e.target.value)}
+                  className="pl-9 border-slate-600 bg-slate-700 text-slate-200"
+                />
+              </div>
+              {wishSearch.trim().length >= 2 && (
+                <div className="max-h-40 overflow-y-auto space-y-1">
+                  {wishSearching ? (
+                    <p className="text-sm text-slate-400 py-2 text-center">Buscando...</p>
+                  ) : wishResults.length === 0 ? (
+                    <p className="text-sm text-slate-500 py-2 text-center">Sin resultados</p>
+                  ) : (
+                    wishResults.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => addWishlistItem(p.id)}
+                        disabled={wishAdding}
+                        className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-md hover:bg-slate-700/60 transition-colors text-left"
+                      >
+                        <span className="flex-1 min-w-0">
+                          <span className="block text-sm text-slate-200">{p.name}</span>
+                          <span className="block text-xs text-slate-500 font-mono">{p.barcode || '—'}</span>
+                        </span>
+                        <Plus className="h-4 w-4 text-emerald-400 shrink-0" />
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Agregar manual (producto que no está en inventario) */}
+            <div className="rounded-md border border-slate-700 bg-slate-800/40 p-3 space-y-2">
+              <Label className="text-xs text-slate-400">Agregar manualmente</Label>
+              <div className="grid grid-cols-12 gap-2">
+                <div className="col-span-6">
+                  <Input placeholder="Nombre del medicamento/producto" value={wishName} onChange={(e) => setWishName(e.target.value)} className="border-slate-600 bg-slate-700 text-slate-200" />
+                </div>
+                <div className="col-span-2">
+                  <Input type="number" min="1" placeholder="Cant." value={wishQuantity} onChange={(e) => setWishQuantity(e.target.value)} className="border-slate-600 bg-slate-700 text-slate-200" />
+                </div>
+                <div className="col-span-4">
+                  <Input placeholder="Notas (opcional)" value={wishNotes} onChange={(e) => setWishNotes(e.target.value)} className="border-slate-600 bg-slate-700 text-slate-200" />
+                </div>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="border-emerald-700/60 text-emerald-400 hover:bg-emerald-500/10"
+                disabled={wishAdding || !wishName.trim()}
+                onClick={() => addWishlistItem(null)}
+              >
+                <Plus className="h-3.5 w-3.5 mr-1" />Agregar a la lista
+              </Button>
+            </div>
+
+            {/* Lista actual */}
+            <div className="space-y-2">
+              <Label className="text-xs text-slate-400">Lista actual ({wishlist.length})</Label>
+              {wishlistLoading ? (
+                <div className="space-y-2">
+                  {Array.from({ length: 3 }).map((_, i) => (
+                    <Skeleton key={i} className="h-10 w-full bg-slate-700" />
+                  ))}
+                </div>
+              ) : wishlist.length === 0 ? (
+                <p className="text-sm text-slate-500 py-3 text-center border border-dashed border-slate-700 rounded-md">
+                  Sin productos en la lista
+                </p>
+              ) : (
+                <div className="space-y-1.5">
+                  {wishlist.map((item) => (
+                    <div key={item.id} className="flex items-center justify-between gap-2 rounded-md border border-slate-700 bg-slate-800/60 px-3 py-2">
+                      <div className="min-w-0">
+                        <div className="text-sm text-slate-200 truncate">
+                          {item.product ? item.product.name : item.name}
+                          {item.quantity && <span className="ml-1.5 text-xs text-slate-400">×{item.quantity}</span>}
+                          {!item.productId && (
+                            <span className="ml-2 rounded bg-amber-950/60 px-1.5 py-0.5 text-[10px] text-amber-400 border border-amber-700/50">sin inventario</span>
+                          )}
+                        </div>
+                        {(item.notes || item.product?.barcode) && (
+                          <div className="text-[11px] text-slate-500 truncate">
+                            {item.product?.barcode ? `${item.product.barcode} · ` : ''}{item.notes}
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeWishlistItem(item.id)}
+                        className="text-red-400 hover:text-red-300 shrink-0"
+                        title="Quitar de la lista"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button variant="outline" className="border-slate-600 text-slate-300">Cerrar</Button>
+            </DialogClose>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
