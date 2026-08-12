@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter, usePathname } from 'next/navigation';
 import {
   LayoutDashboard,
+  Percent,
   ShoppingCart,
   Package,
   Users,
@@ -58,6 +59,7 @@ const navLinks = [
 const adminLinks = [
   { href: '/finance', label: 'Finanzas', icon: DollarSign },
   { href: '/users', label: 'Usuarios', icon: Users },
+  { href: '/taxes', label: 'Impuestos', icon: Percent },
 ];
 
 const extraLinks = [

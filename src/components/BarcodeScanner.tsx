@@ -21,23 +21,30 @@ const BARCODE_FORMATS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_
 
 interface BarcodeDetectorLike {
   new (options?: { formats?: string[] }): {
-    detect: (source: HTMLVideoElement) => Promise<{ rawValue: string }[]>;
+    detect: (source: HTMLVideoElement | ImageBitmap) => Promise<{ rawValue: string }[]>;
   };
 }
 
 // Lector de códigos con la cámara del dispositivo.
 // Usa la API nativa BarcodeDetector (Chrome/Edge/Android). En iOS Safari no
-// existe; ahí se ofrece escritura manual. La cámara requiere un contexto
-// seguro (HTTPS): funciona en el escritorio, en localhost y con el túnel.
+// existe; ahí se ofrece escritura manual. La cámara en vivo requiere un
+// contexto seguro (HTTPS). En sitios no seguros (IP local en el teléfono) se
+// ofrece el modo foto: abre la cámara nativa y decodifica la captura, sin
+// necesidad del túnel de internet.
 export function BarcodeScanner({ open, onOpenChange, onDetected }: BarcodeScannerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const rafRef = useRef<number>(0);
   const lastCodeRef = useRef('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [status, setStatus] = useState<'starting' | 'running' | 'error'>('starting');
   const [error, setError] = useState('');
   const [lastCode, setLastCode] = useState('');
   const [manual, setManual] = useState('');
+  const [photoWorking, setPhotoWorking] = useState(false);
+
+  const hasPhotoMode =
+    typeof window !== 'undefined' && !window.isSecureContext && 'BarcodeDetector' in window;
 
   const stop = useCallback(() => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
@@ -58,9 +65,15 @@ export function BarcodeScanner({ open, onOpenChange, onDetected }: BarcodeScanne
     let canceled = false;
     const start = async () => {
       if (!window.isSecureContext) {
-        setError(
-          'La cámara solo funciona en un sitio seguro (HTTPS). Desde este dispositivo usa el buscador o el lector de código del escritorio. En el celular, entra por el túnel de internet (Cloudflare) para activar la cámara.'
-        );
+        if ('BarcodeDetector' in window) {
+          setError(
+            'Este sitio no es seguro (HTTP), por lo que la cámara en vivo no está disponible. Usa el botón "Escanear con foto": se abre la cámara del celular, tomas la foto y se lee el código automáticamente.'
+          );
+        } else {
+          setError(
+            'La cámara solo funciona en un sitio seguro (HTTPS). Desde este dispositivo usa el buscador o el lector de código del escritorio. En el celular, entra por el túnel de internet (Cloudflare) para activar la cámara.'
+          );
+        }
         setStatus('error');
         return;
       }
@@ -141,6 +154,35 @@ export function BarcodeScanner({ open, onOpenChange, onDetected }: BarcodeScanne
     onDetected(code);
   };
 
+  const handlePhoto = async (file: File) => {
+    setPhotoWorking(true);
+    try {
+      const Detector = (window as unknown as { BarcodeDetector: BarcodeDetectorLike }).BarcodeDetector;
+      const detector = new Detector({ formats: BARCODE_FORMATS });
+      const bitmap = await createImageBitmap(file);
+      try {
+        const codes = await detector.detect(bitmap);
+        const code = codes[0]?.rawValue;
+        if (code) {
+          lastCodeRef.current = code;
+          setLastCode(code);
+          onDetected(code);
+          toast.success('Código leído: ' + code);
+        } else {
+          toast.error('No se encontró un código en la foto, intenta de nuevo');
+        }
+      } finally {
+        bitmap.close();
+      }
+    } catch (e) {
+      const err = e as Error;
+      toast.error(err?.message || 'No se pudo leer el código de la foto');
+    } finally {
+      setPhotoWorking(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto">
@@ -173,6 +215,39 @@ export function BarcodeScanner({ open, onOpenChange, onDetected }: BarcodeScanne
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-slate-950/85 p-4 text-center">
                 <AlertTriangle className="h-6 w-6 text-amber-400" />
                 <p className="max-w-xs text-xs text-slate-300">{error}</p>
+                {hasPhotoMode && (
+                  <>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) handlePhoto(file);
+                      }}
+                    />
+                    <Button
+                      variant="outline"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={photoWorking}
+                      className="mt-1 border-emerald-600 text-emerald-400 hover:bg-emerald-950"
+                    >
+                      {photoWorking ? (
+                        <span className="flex items-center gap-2">
+                          <span className="h-4 w-4 animate-spin rounded-full border-2 border-emerald-400 border-t-transparent" />
+                          Leyendo foto...
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-2">
+                          <Camera className="h-4 w-4" />
+                          Escanear con foto
+                        </span>
+                      )}
+                    </Button>
+                  </>
+                )}
               </div>
             )}
           </div>

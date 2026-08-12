@@ -59,4 +59,5 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getTailscaleStatus: () => ipcRenderer.invoke('tailscale-status'),
   setupTailscale: (opts) => ipcRenderer.invoke('tailscale-setup', opts),
   setTailscaleFunnel: (enabled) => ipcRenderer.invoke('tailscale-funnel', enabled),
+  disconnectTailscale: () => ipcRenderer.invoke('tailscale-off'),
 });

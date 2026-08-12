@@ -283,6 +283,11 @@ async function initDB(dbUrl) {
         "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY ("user_id") REFERENCES "users"("id")
       )`,
+      `DELETE FROM "shift_reports" WHERE id NOT IN (
+        SELECT MAX(id) FROM "shift_reports" GROUP BY "user_id", "start_date"
+      )`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS "shift_reports_user_id_start_date_key"
+        ON "shift_reports"("user_id", "start_date")`,
       `CREATE TABLE IF NOT EXISTS "sync_log" (
         "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
         "device_id" TEXT NOT NULL, "operation" TEXT NOT NULL,
@@ -290,6 +295,23 @@ async function initDB(dbUrl) {
         "data" TEXT NOT NULL, "timestamp" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         "synced" BOOLEAN NOT NULL DEFAULT false,
         "sync_version" INTEGER NOT NULL DEFAULT 0
+      )`,
+      `CREATE TABLE IF NOT EXISTS "tax_rules" (
+        "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+        "name" TEXT NOT NULL DEFAULT 'Impuesto por horario',
+        "percentage" REAL NOT NULL DEFAULT 0,
+        "apply_time" TEXT NOT NULL DEFAULT '20:00',
+        "scope" TEXT NOT NULL DEFAULT 'ALL',
+        "scope_value" INTEGER, "active" BOOLEAN NOT NULL DEFAULT false,
+        "status" TEXT NOT NULL DEFAULT 'schedule',
+        "updated_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE TABLE IF NOT EXISTS "tax_logs" (
+        "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+        "rule_id" INTEGER, "action" TEXT NOT NULL,
+        "user_name" TEXT NOT NULL, "note" TEXT NOT NULL DEFAULT '',
+        "at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY ("rule_id") REFERENCES "tax_rules"("id")
       )`,
     ];
 

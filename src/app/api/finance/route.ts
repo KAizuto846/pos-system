@@ -240,6 +240,11 @@ export async function GET(request: Request) {
               costFromCombined,
               total: profitWithdrawn + combinedExpenses,
             },
+            purchases: {
+              total: purchaseTotal,
+              fromCost: purchaseFromCost,
+              excess: purchaseExcess,
+            },
             availableProfit: Math.max(0, netProfit),
             combinedAvailable: Math.max(0, profitBase - profitWithdrawn - combinedExpenses),
           },

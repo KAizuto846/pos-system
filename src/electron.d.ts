@@ -66,5 +66,21 @@ interface Window {
     }>;
     openDiagnostics: () => Promise<{ ok: boolean; error?: string }>;
     openFirewall: () => Promise<{ ok: boolean; error?: string }>;
+    getTailscaleStatus: () => Promise<{
+      available: boolean;
+      online: boolean;
+      ip?: string | null;
+      dnsName?: string | null;
+      error?: string | null;
+      funnelUrl?: string | null;
+    }>;
+    setupTailscale: (opts: {
+      authkey: string;
+      funnel: boolean;
+      port?: number;
+      hostname?: string;
+    }) => Promise<{ ok: boolean; error?: string; dnsName?: string; funnelUrl?: string }>;
+    disconnectTailscale: () => Promise<{ ok: boolean; error?: string; funnelOff?: boolean }>;
+    onTailscaleProgress: (callback: (msg: string) => void) => () => void;
   };
 }

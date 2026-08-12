@@ -139,6 +139,23 @@ ipcMain.handle('tailscale-funnel', async (event, enabled) => {
   return result;
 });
 
+// Desconectar de Tailscale y apagar el Funnel (revertir la configuracion)
+ipcMain.handle('tailscale-off', async () => {
+  const funnel = await tailscale.setFunnel(false, config.serverPort || 3000);
+  const down = await tailscale.disconnect();
+  config.tailscale = {
+    ...(config.tailscale || {}),
+    connected: false,
+    online: false,
+    at: new Date().toISOString(),
+  };
+  delete config.tailscale.dnsName;
+  delete config.tailscale.funnelUrl;
+  delete config.tailscale.error;
+  saveConfig();
+  return { ok: down.ok, error: down.ok ? null : down.error, funnelOff: funnel.ok };
+});
+
 // ─── UDP Discovery ───────────────────────────────────────────
 const DISCOVERY_PORT = 9876;
 const DISCOVERY_MULTICAST = '230.185.192.108';

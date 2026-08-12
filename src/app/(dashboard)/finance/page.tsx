@@ -44,6 +44,11 @@ interface FinanceSummary {
       profitFromCombined: number;
       costFromCombined: number;
     };
+    purchases: {
+      total: number;
+      fromCost: number;
+      excess: number;
+    };
   };
   cash: {
     balance: number;
@@ -591,10 +596,15 @@ export default function FinancePage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-emerald-400">
-              {summary ? formatCurrency(summary.sales.profit) : '—'}
+              {summary ? formatCurrency(summary.sales.profit - (summary.sales.purchases?.fromCost || 0)) : '—'}
             </div>
             <p className="text-xs text-slate-500 mt-1">
               Margen: {summary ? `${summary.sales.profitMargin}%` : '—'}
+              {summary && summary.sales.purchases?.total > 0 && (
+                <span className="ml-2 text-red-400">
+                  (Compras: -{formatCurrency(summary.sales.purchases.total)})
+                </span>
+              )}
               {summary && summary.sales.withdrawn?.total > 0 && (
                 <span className="ml-2 text-amber-400">
                   (Retirado: {formatCurrency(summary.sales.withdrawn.total)})
@@ -611,9 +621,16 @@ export default function FinancePage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-red-400">
-              {summary ? formatCurrency(summary.sales.totalCost) : '—'}
+              {summary ? formatCurrency(summary.sales.totalCost + (summary.sales.purchases?.total || 0)) : '—'}
             </div>
-            <p className="text-xs text-slate-500 mt-1">Costo de productos vendidos</p>
+            <p className="text-xs text-slate-500 mt-1">
+              Costo de productos vendidos
+              {summary && summary.sales.purchases?.total > 0 && (
+                <span className="text-red-400">
+                  {' '}+ compras ({formatCurrency(summary.sales.purchases.total)})
+                </span>
+              )}
+            </p>
           </CardContent>
         </Card>
 

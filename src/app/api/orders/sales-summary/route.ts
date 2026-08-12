@@ -117,6 +117,31 @@ export async function GET(request: Request) {
       }
     }
 
+    // Reembolsos en el rango: lo devuelto regreso al inventario y no debe
+    // volver a pedirse como si se hubiera vendido.
+    const refunds = await prisma.refund.findMany({
+      where: {
+        createdAt: { gte: fromDate, lte: toDate },
+        product: {
+          active: true,
+          productLines: {
+            some: { supplierId: sid, isPrimary: true },
+          },
+        },
+      },
+      select: { productId: true, quantity: true, product: { select: { pieceOfProductId: true } } },
+    });
+
+    const refundedBox = new Map<number, number>();
+    const refundedPieces = new Map<number, number>();
+    for (const r of refunds) {
+      if (r.product.pieceOfProductId) {
+        refundedPieces.set(r.product.pieceOfProductId, (refundedPieces.get(r.product.pieceOfProductId) ?? 0) + r.quantity);
+      } else {
+        refundedBox.set(r.productId, (refundedBox.get(r.productId) ?? 0) + r.quantity);
+      }
+    }
+
     // Cajas abiertas en el rango (cada entrada = 1 caja consumida, con o sin venta)
     const logs = await prisma.piecesLog.findMany({
       where: {
@@ -134,6 +159,11 @@ export async function GET(request: Request) {
     const openedByBox = new Map<number, number>();
     for (const log of logs) {
       openedByBox.set(log.boxProductId, (openedByBox.get(log.boxProductId) ?? 0) + 1);
+    }
+
+    // Piezas reembolsadas se restan de las piezas vendidas de su caja
+    for (const [boxId, qty] of refundedPieces) {
+      pieceSalesByBox.set(boxId, Math.max(0, (pieceSalesByBox.get(boxId) ?? 0) - qty));
     }
 
     // Datos de las cajas involucradas (vendidas, abiertas o con piezas vendidas)
@@ -193,6 +223,18 @@ export async function GET(request: Request) {
           supplierPrice: line?.supplierPrice ?? null,
           totalSold,
         });
+      }
+    }
+
+    // Reembolsos de cajas: se restan de las ventas del producto (si queda 0,
+    // no se sugiere reponerlo)
+    for (const [pid, qty] of refundedBox) {
+      const existing = grouped.get(pid);
+      if (existing) {
+        existing.totalSold = Math.max(0, existing.totalSold - qty);
+        if (existing.totalSold === 0) {
+          grouped.delete(pid);
+        }
       }
     }
 

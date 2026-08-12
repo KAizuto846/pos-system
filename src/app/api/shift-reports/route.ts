@@ -1,5 +1,6 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { Prisma } from "@prisma/client";
 
 export async function GET(request: Request) {
   try {
@@ -245,13 +246,13 @@ export async function POST(request: Request) {
       details,
     };
 
-    // Evitar duplicados: si ya existe un reporte del mismo usuario con el mismo rango,
-    // se actualiza con los datos frescos en lugar de crear otro
+    // Evitar duplicados: un reporte por usuario y dia de turno (startDate).
+    // "Cerrar Turno" envia endDate = momento actual (cambia en cada click),
+    // por eso ya no se compara el endDate: se actualiza el reporte del dia.
     const existing = await prisma.shiftReport.findFirst({
       where: {
         userId,
         startDate: start,
-        endDate: end,
       },
     });
 
@@ -262,7 +263,20 @@ export async function POST(request: Request) {
         data,
       });
     } else {
-      report = await prisma.shiftReport.create({ data });
+      try {
+        report = await prisma.shiftReport.create({ data });
+      } catch (e) {
+        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+          const fresh = await prisma.shiftReport.findFirst({ where: { userId, startDate: start } });
+          if (!fresh) throw e;
+          report = await prisma.shiftReport.update({
+            where: { id: fresh.id },
+            data,
+          });
+        } else {
+          throw e;
+        }
+      }
     }
 
     return Response.json(report, { status: 201 });

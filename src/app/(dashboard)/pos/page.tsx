@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Search, ShoppingCart, Plus, Minus, X, Trash2, Loader2, User, Percent, Fingerprint, ScanLine } from 'lucide-react';
+import { Search, ShoppingCart, Plus, Minus, X, Trash2, Loader2, User, Percent, Fingerprint, ScanLine, Printer } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -71,6 +71,19 @@ interface PaginatedResponse {
   };
 }
 
+interface SaleTicket {
+  id: number;
+  total: number;
+  discountTotal: number;
+  paymentMethod?: { name: string };
+  user?: { name: string };
+  items: {
+    quantity: number;
+    price: number;
+    product: { name: string };
+  }[];
+}
+
 function useDebounce<T>(value: T, delay: number): T {
   const [debouncedValue, setDebouncedValue] = useState(value);
   useEffect(() => {
@@ -86,7 +99,6 @@ export default function PosPage() {
   const removeItem = usePosStore((state) => state.removeItem);
   const updateQuantity = usePosStore((state) => state.updateQuantity);
   const clearCart = usePosStore((state) => state.clearCart);
-  const subtotal = usePosStore((state) => state.subtotal);
   const itemCount = usePosStore((state) => state.itemCount);
 
   const searchRef = useRef<HTMLInputElement>(null);
@@ -104,6 +116,8 @@ export default function PosPage() {
   const [selectedPaymentMethodId, setSelectedPaymentMethodId] = useState<string>('');
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [checkingOut, setCheckingOut] = useState(false);
+  const [lastSale, setLastSale] = useState<SaleTicket | null>(null);
+  const [receiptOpen, setReceiptOpen] = useState(false);
 
   // Loyalty/customer
   const [customerSearch, setCustomerSearch] = useState('');
@@ -268,8 +282,26 @@ export default function PosPage() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [products, searchTerm, handleBarcodeScan]);
 
-  const totalAmount = subtotal();
   const count = itemCount();
+
+  // Impuesto/recargo por horario: el servidor decide si esta activo
+  const [taxState, setTaxState] = useState<{ active: boolean; percentage: number }>({ active: false, percentage: 0 });
+  useEffect(() => {
+    let alive = true;
+    const load = () => {
+      fetch('/api/tax/status')
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (alive && data) setTaxState({ active: Boolean(data.active), percentage: Number(data.percentage) || 0 });
+        })
+        .catch(() => {});
+    };
+    load();
+    const t = setInterval(load, 30000);
+    return () => { alive = false; clearInterval(t); };
+  }, []);
+  const tx = (base: number): number => (taxState.active ? Math.ceil(base * (1 + taxState.percentage / 100)) : base);
+  const taxedTotal = cart.reduce((sum, i) => sum + tx(i.price) * i.quantity, 0);
 
   const handleAddItem = (product: Product) => {
     addItem({
@@ -355,7 +387,7 @@ export default function PosPage() {
     return sum + getCustomerDiscount(product) * item.quantity;
   }, 0);
 
-  const finalTotal = totalAmount - loyaltyDiscount;
+  const finalTotal = taxedTotal - loyaltyDiscount;
 
   const handleCheckout = async () => {
     if (!selectedPaymentMethodId) {
@@ -388,10 +420,15 @@ export default function PosPage() {
         throw new Error(errData.error || 'Error al crear venta');
       }
 
+      const sale: SaleTicket = await res.json();
+      setLastSale(sale);
       toast.success('Venta realizada con exito');
       clearCart();
       setSelectedCustomer(null);
       setCheckoutOpen(false);
+      if (sale?.id) {
+        setTimeout(() => setReceiptOpen(true), 150);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Error al crear venta';
       toast.error(message);
@@ -474,7 +511,7 @@ export default function PosPage() {
                         {product.name}
                       </span>
                       <span className="text-lg font-bold text-emerald-400">
-                        {formatCurrency(product.price)}
+                        {formatCurrency(tx(product.price))}
                       </span>
                       <Badge
                         variant={product.stock <= 0 ? 'destructive' : product.stock <= (product.minStock || 5) ? 'secondary' : 'outline'}
@@ -555,7 +592,7 @@ export default function PosPage() {
                       {item.name}
                     </p>
                     <p className="text-xs text-slate-400">
-                      {formatCurrency(item.price)} c/u
+                      {formatCurrency(tx(item.price))} c/u
                     </p>
                   </div>
 
@@ -658,9 +695,20 @@ export default function PosPage() {
           <div className="flex items-center justify-between py-2">
             <span className="text-sm text-slate-400">Subtotal</span>
             <span className="text-lg font-bold text-slate-100">
-              {formatCurrency(totalAmount)}
+              {formatCurrency(taxedTotal)}
             </span>
           </div>
+
+          {taxState.active && (
+            <div className="flex items-center justify-between py-1">
+              <span className="text-xs text-amber-400 flex items-center gap-1">
+                <Percent className="h-3 w-3" /> Impuesto activo (+{taxState.percentage}%)
+              </span>
+              <span className="text-xs text-amber-300">
+                Precios redondeados al entero
+              </span>
+            </div>
+          )}
 
           {loyaltyDiscount > 0 && (
             <>
@@ -763,9 +811,9 @@ export default function PosPage() {
                 <span className="text-slate-300">Total</span>
                 <span className="text-emerald-400">
                   {loyaltyDiscount > 0 ? (
-                    <><span className="text-xs text-slate-500 line-through mr-2">{formatCurrency(totalAmount)}</span> {formatCurrency(finalTotal)}</>
+                    <><span className="text-xs text-slate-500 line-through mr-2">{formatCurrency(taxedTotal)}</span> {formatCurrency(finalTotal)}</>
                   ) : (
-                    formatCurrency(totalAmount)
+                    formatCurrency(taxedTotal)
                   )}
                 </span>
               </div>
@@ -788,7 +836,7 @@ export default function PosPage() {
                       </span>
                     </span>
                     <span className="ml-2 shrink-0 text-slate-100">
-                      {formatCurrency(item.price * item.quantity)}
+                    {formatCurrency(tx(item.price) * item.quantity)}
                     </span>
                   </div>
                 ))}
@@ -826,6 +874,145 @@ export default function PosPage() {
         onOpenChange={setScannerOpen}
         onDetected={handleScan}
       />
+
+      {/* Ticket dialog */}
+      <Dialog open={receiptOpen} onOpenChange={setReceiptOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-slate-100">
+              <Printer className="h-4 w-4" />
+              Ticket de venta
+            </DialogTitle>
+            <DialogDescription>
+              Venta registrada correctamente
+            </DialogDescription>
+          </DialogHeader>
+          {lastSale && <TicketReceipt sale={lastSale} />}
+          <DialogFooter className="gap-2 sm:gap-0">
+            <DialogClose asChild>
+              <Button variant="secondary">Cerrar</Button>
+            </DialogClose>
+            <Button onClick={() => window.print()} className="bg-emerald-600 hover:bg-emerald-500">
+              <Printer className="mr-2 h-4 w-4" />
+              Imprimir
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Zona imprimible (solo visible al imprimir) */}
+      {lastSale && <PrintArea sale={lastSale} />}
+      <style jsx global>{`
+        @media print {
+          body * { visibility: hidden; }
+          #print-area, #print-area * { visibility: visible; }
+          #print-area {
+            display: block !important;
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            padding: 24px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+          }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+function TicketReceipt({ sale }: { sale: SaleTicket }) {
+  const date = new Date().toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' });
+  return (
+    <div className="rounded-lg border border-slate-700 bg-slate-800/50 p-4 text-sm">
+      <div className="mb-3 text-center">
+        <p className="font-bold text-slate-100">TICKET DE VENTA</p>
+        <p className="text-xs text-slate-500">Venta #{sale.id}</p>
+        <p className="text-xs text-slate-500">{date}</p>
+      </div>
+      <div className="space-y-1.5">
+        {sale.items.map((item, i) => (
+          <div key={i} className="flex items-start justify-between gap-2 text-slate-200">
+            <span className="flex-1">
+              <span className="block truncate">{item.product.name}</span>
+              <span className="text-xs text-slate-500">
+                {item.quantity} x {formatCurrency(item.price)}
+              </span>
+            </span>
+            <span className="shrink-0">{formatCurrency(item.price * item.quantity)}</span>
+          </div>
+        ))}
+      </div>
+      <div className="mt-3 space-y-1 border-t border-slate-700 pt-2 text-slate-300">
+        {sale.discountTotal > 0 && (
+          <div className="flex justify-between">
+            <span>Descuento</span>
+            <span>-{formatCurrency(sale.discountTotal)}</span>
+          </div>
+        )}
+        <div className="flex justify-between text-base font-bold text-emerald-400">
+          <span>Total</span>
+          <span>{formatCurrency(sale.total)}</span>
+        </div>
+        <div className="flex justify-between text-xs text-slate-500">
+          <span>Método de pago</span>
+          <span>{sale.paymentMethod?.name || '—'}</span>
+        </div>
+        {sale.user?.name && (
+          <div className="flex justify-between text-xs text-slate-500">
+            <span>Cajero</span>
+            <span>{sale.user.name}</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PrintArea({ sale }: { sale: SaleTicket }) {
+  const date = new Date().toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' });
+  return (
+    <div id="print-area" className="hidden text-sm text-black">
+      <div className="mb-3 text-center">
+        <p className="font-bold">TICKET DE VENTA</p>
+        <p>Venta #{sale.id}</p>
+        <p>{date}</p>
+      </div>
+      <div className="mb-2 border-t border-dashed border-black pt-2">
+        {sale.items.map((item, i) => (
+          <div key={i} className="flex justify-between gap-2">
+            <span className="flex-1">
+              <span className="block">{item.product.name}</span>
+              <span className="text-xs">
+                {item.quantity} x {formatCurrency(item.price)}
+              </span>
+            </span>
+            <span>{formatCurrency(item.price * item.quantity)}</span>
+          </div>
+        ))}
+      </div>
+      <div className="mb-2 border-t border-dashed border-black pt-2">
+        {sale.discountTotal > 0 && (
+          <div className="flex justify-between">
+            <span>Descuento</span>
+            <span>-{formatCurrency(sale.discountTotal)}</span>
+          </div>
+        )}
+        <div className="flex justify-between text-base font-bold">
+          <span>Total</span>
+          <span>{formatCurrency(sale.total)}</span>
+        </div>
+      </div>
+      <div className="flex justify-between text-xs">
+        <span>Método de pago</span>
+        <span>{sale.paymentMethod?.name || '—'}</span>
+      </div>
+      {sale.user?.name && (
+        <div className="flex justify-between text-xs">
+          <span>Cajero</span>
+          <span>{sale.user.name}</span>
+        </div>
+      )}
     </div>
   );
 }

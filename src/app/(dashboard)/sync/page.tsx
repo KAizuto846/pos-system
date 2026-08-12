@@ -23,12 +23,23 @@ import {
   Network,
   Globe,
   Users,
+  KeyRound,
+  Unplug,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+  DialogTrigger,
+} from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 
 interface SyncStats {
@@ -74,6 +85,12 @@ export default function SyncPage() {
 
   // Tailscale (acceso remoto)
   const [tsState, setTsState] = useState<{ available?: boolean; online?: boolean; ip?: string | null; dnsName?: string | null; funnelUrl?: string | null; error?: string | null }>({});
+  const [tsDialogOpen, setTsDialogOpen] = useState(false);
+  const [tsAuthkey, setTsAuthkey] = useState('');
+  const [tsFunnelOn, setTsFunnelOn] = useState(true);
+  const [tsBusy, setTsBusy] = useState<'connect' | 'disconnect' | null>(null);
+  const [tsProgress, setTsProgress] = useState<string[]>([]);
+  const [tsDone, setTsDone] = useState<string | null>(null);
 
   const loadTailscaleStatus = useCallback(async () => {
     try {
@@ -91,6 +108,64 @@ export default function SyncPage() {
     const t = setInterval(loadTailscaleStatus, 30000);
     return () => clearInterval(t);
   }, [loadTailscaleStatus]);
+
+  // Progreso del asistente de conexion remota (electron)
+  useEffect(() => {
+    if (!tsDialogOpen || !win.electronAPI?.onTailscaleProgress) return;
+    const off = win.electronAPI.onTailscaleProgress((msg: string) => {
+      setTsProgress((prev) => [...prev, msg]);
+    });
+    return off;
+  }, [tsDialogOpen]);
+
+  const openTsSetup = () => {
+    setTsAuthkey('');
+    setTsFunnelOn(true);
+    setTsProgress([]);
+    setTsDone(null);
+    setTsDialogOpen(true);
+  };
+
+  const runTsSetup = async () => {
+    if (tsBusy) return;
+    setTsBusy('connect');
+    setTsProgress([]);
+    setTsDone(null);
+    try {
+      const res = await win.electronAPI?.setupTailscale?.({
+        authkey: tsAuthkey.trim(),
+        funnel: tsFunnelOn,
+        port: deviceInfo.serverPort || 3000,
+      });
+      if (!res) throw new Error('No disponible en esta version de la app');
+      setTsDone(res.ok ? 'Conexion remota lista. Ya puedes abrir el POS desde el celular.' : `Error: ${res.error || 'desconocido'}`);
+      if (res.ok) loadTailscaleStatus();
+    } catch (e) {
+      setTsDone(e instanceof Error ? e.message : 'Error al conectar');
+    } finally {
+      setTsBusy(null);
+    }
+  };
+
+  const runTsDisconnect = async () => {
+    if (tsBusy) return;
+    if (!window.confirm('¿Desconectar este equipo de Tailscale y apagar la URL publica?')) return;
+    setTsBusy('disconnect');
+    setTsProgress([]);
+    setTsDone(null);
+    try {
+      const res = await win.electronAPI?.disconnectTailscale?.();
+      setTsDone(res?.ok ? 'Desconectado. La URL publica ya no funciona.' : `Error: ${res?.error || 'desconocido'}`);
+      if (res?.ok) {
+        loadTailscaleStatus();
+        setTimeout(loadTailscaleStatus, 2500);
+      }
+    } catch (e) {
+      setTsDone(e instanceof Error ? e.message : 'Error al desconectar');
+    } finally {
+      setTsBusy(null);
+    }
+  };
 
   const win = window as unknown as { electronAPI?: Window['electronAPI'] };
   const isDesktop = !!win.electronAPI;
@@ -463,6 +538,20 @@ export default function SyncPage() {
               {tsState.error && <p className="text-xs text-red-400">{tsState.error}</p>}
             </>
           )}
+          {isDesktop && (
+            <div className="flex flex-wrap gap-2 pt-1">
+              <Button variant="outline" size="sm" type="button" onClick={openTsSetup} className="text-xs">
+                <KeyRound className="h-3.5 w-3.5 mr-1.5" />
+                Configurar / Reparar conexion
+              </Button>
+              {tsState.available && (
+                <Button variant="outline" size="sm" type="button" onClick={runTsDisconnect} disabled={tsBusy !== null} className="text-xs text-red-400 hover:text-red-300 border-red-800/60 hover:border-red-700">
+                  {tsBusy === 'disconnect' ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Unplug className="h-3.5 w-3.5 mr-1.5" />}
+                  Desconectar
+                </Button>
+              )}
+            </div>
+          )}
         </CardContent>
       </Card>
       <Card className="border-slate-700 bg-slate-800">
@@ -470,8 +559,7 @@ export default function SyncPage() {
           <CardTitle className="text-lg text-slate-100 flex items-center gap-2">
             <Network className="h-5 w-5 text-emerald-500" />
             Conectar mis equipos (red local)
-          </CardTitle>
-          <CardDescription>
+          </CardTitle>          <CardDescription>
             Tres pasos simples. Los equipos conectados se sincronizan solos en tiempo real (cada 5 segundos).
           </CardDescription>
         </CardHeader>
@@ -773,6 +861,66 @@ SYNC_SECRET="tu-secreto" PORT=8099 node server.js`}
           </GuideSection>
         </CardContent>
       </Card>
+
+      {/* Asistente de conexion remota (solo app de escritorio) */}
+      <Dialog open={tsDialogOpen} onOpenChange={(o) => { if (!tsBusy) setTsDialogOpen(o); }}>
+        <DialogContent className="border-slate-700 bg-slate-800 sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-slate-100 flex items-center gap-2">
+              <Globe className="h-5 w-5 text-sky-500" />
+              Conexion remota (Tailscale)
+            </DialogTitle>
+            <DialogDescription>
+              Vuelve a ejecutar el paso de conexion remota del asistente de instalacion. Se instala Tailscale si falta, se une con la authkey y (opcional) publica el POS en internet.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="ts-authkey">Authkey de Tailscale</Label>
+              <Input
+                id="ts-authkey"
+                value={tsAuthkey}
+                onChange={(e) => setTsAuthkey(e.target.value)}
+                placeholder="tskey-auth-..."
+                className="w-full font-mono text-sm"
+                disabled={tsBusy !== null}
+              />
+              <p className="text-[11px] text-slate-500">
+                Se genera en la consola de Tailscale (Settings &rarr; Keys). Marca la casilla &ldquo;Reusable&rdquo; si la vas a reutilizar.
+              </p>
+            </div>
+            <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={tsFunnelOn}
+                onChange={(e) => setTsFunnelOn(e.target.checked)}
+                disabled={tsBusy !== null}
+                className="h-4 w-4 accent-emerald-600"
+              />
+              Publicar en internet (Funnel) &mdash; para abrir desde cualquier WiFi
+            </label>
+            {tsProgress.length > 0 && (
+              <div className="rounded-md border border-slate-700 bg-slate-950 p-3">
+                {tsProgress.map((m, i) => (
+                  <p key={i} className="text-xs text-slate-400 font-mono">{m}</p>
+                ))}
+              </div>
+            )}
+            {tsDone && (
+              <p className={cn('text-sm', tsDone.startsWith('Error') ? 'text-red-400' : 'text-emerald-400')}>{tsDone}</p>
+            )}
+          </div>
+          <DialogFooter className="flex gap-2">
+            <Button type="button" variant="outline" onClick={() => setTsDialogOpen(false)} disabled={tsBusy !== null}>
+              Cerrar
+            </Button>
+            <Button type="button" onClick={runTsSetup} disabled={tsBusy !== null || !tsAuthkey.trim()}>
+              {tsBusy === 'connect' ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Plug className="h-4 w-4 mr-2" />}
+              Conectar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

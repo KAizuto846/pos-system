@@ -141,6 +141,15 @@ async function setFunnel(enabled, port) {
   return { ok: true, enabled: true, url: await getFunnelUrl() };
 }
 
+// ─── Desconectar / revertir ─────────────────────────────────
+async function disconnect() {
+  const res = await tailscale(['down'], 30000);
+  if (!res.ok) {
+    return { ok: false, error: res.error || res.code };
+  }
+  return { ok: true };
+}
+
 // ─── Flujo completo (primer arranque) ────────────────────────
 async function runTailscaleFlow(opts) {
   const { authkey, hostname, funnel, port, onProgress } = opts || {};
@@ -174,4 +183,4 @@ async function runTailscaleFlow(opts) {
   };
 }
 
-module.exports = { ensureInstalled, getStatus, getFunnelUrl, join, setFunnel, runTailscaleFlow };
+module.exports = { ensureInstalled, getStatus, getFunnelUrl, join, setFunnel, disconnect, runTailscaleFlow };

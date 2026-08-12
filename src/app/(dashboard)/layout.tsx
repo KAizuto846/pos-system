@@ -20,11 +20,11 @@ function DashboardLayoutContent({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    // Route protection: CASHIER cannot access /users or /importar
+    // Route protection: CASHIER cannot access /users, /importar or /taxes
     if (
       status === 'authenticated' &&
       session?.user?.role === 'CASHIER' &&
-      (pathname.startsWith('/users') || pathname.startsWith('/importar'))
+      (pathname.startsWith('/users') || pathname.startsWith('/importar') || pathname.startsWith('/taxes'))
     ) {
       router.push('/');
     }

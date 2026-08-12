@@ -206,6 +206,11 @@ La app de Windows integra Tailscale en el wizard de primer arranque:
      Configuracion > Sincronizacion (card "Acceso desde cualquier WiFi").
 3. **Estado y URL**: la pagina de Sincronizacion muestra IP privada y URL publica
    (`https://<equipo>.<red>.ts.net`), con boton para copiarla.
+4. **Reparar / reconfigurar despues**: si el usuario se equivoco o el paso fallo,
+   la app de escritorio tiene dos botones en la card "Acceso desde cualquier WiFi":
+   - **Configurar / Reparar conexion**: abre un asistente con authkey + Funnel
+     para repetir el paso del wizard (util si se fallo, o para cambiar de red).
+   - **Desconectar**: apaga el Funnel y saca el equipo de Tailscale (revertir).
 
 Requisitos del dueno de la red (una sola vez):
 - Activar "Serve" y "Funnel" para los dispositivos en la consola de Tailscale

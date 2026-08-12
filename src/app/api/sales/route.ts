@@ -220,10 +220,37 @@ export async function POST(request: Request) {
         await consumeBatch(tx, item.productId, item.quantity);
       }
 
+      // Impuesto/recargo por horario: el servidor es la fuente de verdad.
+      // Si esta activo, cobra ceil(precio * (1 + pct/100)) y recalcula el total.
+      const { getTaxRule, applyTaxToPrice, taxMatchesScope, isTaxActive } = await import("@/lib/tax-rule");
+      const taxRule = await getTaxRule();
+      const taxActive = Boolean(taxRule && isTaxActive(taxRule) && taxRule.percentage > 0);
+      let taxedPrices: Record<number, number> = {};
+      let recomputedTotal = 0;
+      if (taxActive && taxRule) {
+        const productIds = data.items.map((i) => i.productId);
+        const products = await tx.product.findMany({
+          where: { id: { in: productIds } },
+          select: { id: true, supplierId: true, departmentId: true, price: true },
+        });
+        const productMap = new Map(products.map((p) => [p.id, p]));
+        for (const item of data.items) {
+          const prod = productMap.get(item.productId);
+          const base = prod?.price ?? item.price;
+          const matches = prod
+            ? taxMatchesScope(taxRule, { supplierId: prod.supplierId, departmentId: prod.departmentId, price: prod.price })
+            : false;
+          const finalPrice = matches ? applyTaxToPrice(taxRule, base) : base;
+          taxedPrices[item.productId] = finalPrice;
+          recomputedTotal += finalPrice * item.quantity;
+        }
+        recomputedTotal -= data.discountTotal || 0;
+      }
+
       // Create the sale
       const newSale = await tx.sale.create({
         data: {
-          total: data.total,
+          total: taxActive ? recomputedTotal : data.total,
           discountTotal: data.discountTotal || 0,
           paymentMethodId: data.paymentMethodId,
           userId,
@@ -232,7 +259,7 @@ export async function POST(request: Request) {
             create: data.items.map((item) => ({
               productId: item.productId,
               quantity: item.quantity,
-              price: item.price,
+              price: taxActive ? taxedPrices[item.productId] : item.price,
             })),
           },
         },
