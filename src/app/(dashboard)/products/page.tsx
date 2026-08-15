@@ -103,6 +103,11 @@ interface FormBatch {
   year: string;
   costPrice: string;
   removed?: boolean;
+  // Valores originales (solo para lotes existentes) para detectar cambios
+  origQuantity?: string;
+  origMonth?: string;
+  origYear?: string;
+  origCostPrice?: string;
 }
 
 interface PieceBox {
@@ -475,24 +480,49 @@ export default function ProductsPage() {
     const body = buildProductBody();
     body.stock = parseInt(formStock, 10) || 0;
 
-    // Lotes: agregar nuevos, eliminar marcados como quitados
+    // Lotes: agregar nuevos, actualizar existentes y eliminar marcados.
+    // Antes solo se enviaban add/delete, por lo que modificar la caducidad o
+    // cantidad de un lote existente se ignoraba silenciosamente.
     const batchOps: Array<{
       action: string;
       id?: number;
       quantity?: number;
       expiresAt?: string | null;
       costPrice?: number | null;
-    }> = formBatches
-      .filter(b => !b.removed && b.id === undefined && parseInt(b.quantity) > 0)
-      .map(b => ({
-        action: 'add',
-        quantity: parseInt(b.quantity),
-        expiresAt: b.month && b.year ? `${b.month}/${b.year}` : null,
-        costPrice: b.costPrice ? parseFloat(b.costPrice) : null,
-      }));
+    }> = [];
     for (const b of formBatches) {
+      const qty = parseInt(b.quantity);
+      const expiresAt = b.month && b.year ? `${b.month}/${b.year}` : null;
+      const costPrice = b.costPrice ? parseFloat(b.costPrice) : null;
+
       if (b.removed && b.id !== undefined) {
         batchOps.push({ action: 'delete', id: b.id });
+        continue;
+      }
+      if (b.removed) continue;
+
+      if (b.id === undefined) {
+        // Lote nuevo: solo si tiene cantidad
+        if (!Number.isNaN(qty) && qty > 0) {
+          batchOps.push({ action: 'add', quantity: qty, expiresAt, costPrice });
+        }
+        continue;
+      }
+
+      // Lote existente: detectar si cambió para enviar 'update'
+      const origD = b.origMonth && b.origYear ? `${b.origMonth}/${b.origYear}` : null;
+      const changed =
+        b.quantity !== b.origQuantity ||
+        expiresAt !== origD ||
+        (b.costPrice || '') !== (b.origCostPrice || '');
+      if (changed) {
+        batchOps.push({
+          action: 'update',
+          id: b.id,
+          quantity: Number.isNaN(qty) ? 0 : qty,
+          expiresAt,
+          costPrice,
+        });
       }
     }
     if (batchOps.length > 0) body.batchOps = batchOps;
@@ -670,13 +700,21 @@ export default function ProductsPage() {
       setFormBatches(
         product.batches.map(b => {
           const d = b.expiresAt ? new Date(b.expiresAt) : null;
+          const month = d ? String(d.getMonth() + 1).padStart(2, '0') : '';
+          const year = d ? String(d.getFullYear()) : '';
+          const quantity = String(b.quantity);
+          const costPrice = b.costPrice ? String(b.costPrice) : '';
           return {
             id: b.id,
-            quantity: String(b.quantity),
-            month: d ? String(d.getMonth() + 1).padStart(2, '0') : '',
-            year: d ? String(d.getFullYear()) : '',
-            costPrice: b.costPrice ? String(b.costPrice) : '',
+            quantity,
+            month,
+            year,
+            costPrice,
             removed: false,
+            origQuantity: quantity,
+            origMonth: month,
+            origYear: year,
+            origCostPrice: costPrice,
           };
         })
       );

@@ -827,46 +827,85 @@ function openFirewallSettings() {
 // ─── Ticket printer (texto plano) ───────────────────────────
 // La mayoria de impresoras de tickets (58mm/80mm) usan driver "Generic / Text
 // Only": solo aceptan texto plano, sin imagenes. Electron no puede enviarles
-// HTML, asi que escribimos el texto directamente al recurso compartido de la
-// impresora (\\\\localhost\\<nombre>) o usamos el comando de impresion del SO.
-function printPlainText(text, printerName) {
+// HTML. Estrategias en Windows, en orden:
+//   1. PowerShell Get-Content | Out-Printer -Name "<impresora>": envia el
+//      texto a traves del spooler de Windows usando el driver instalado.
+//      Funciona con impresoras compartidas y NO compartidas.
+//   2. copy /b archivo \\localhost\<impresora>: envia bytes crudos al recurso
+//      compartido (solo si la impresora esta compartida como Generic/Text Only).
+function execPrint(args, shellCmd) {
   return new Promise((resolve) => {
+    const child = shellCmd
+      ? spawn('cmd.exe', ['/c', shellCmd], { windowsHide: true, shell: false })
+      : spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', args], { windowsHide: true, shell: false });
+    let stderr = '';
+    let stdout = '';
+    child.stderr.on('data', (d) => { stderr += d.toString(); });
+    child.stdout.on('data', (d) => { stdout += d.toString(); });
+    const timer = setTimeout(() => { try { child.kill(); } catch (e) {} }, 20000);
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      resolve({ code, stderr, stdout });
+    });
+    child.on('error', (e) => {
+      clearTimeout(timer);
+      resolve({ code: -1, stderr: e.message, stdout: '' });
+    });
+  });
+}
+
+function printPlainText(text, printerName) {
+  return new Promise(async (resolve) => {
     if (!text) return resolve({ ok: false, error: 'Texto vacio' });
     const tmpFile = path.join(app.getPath('temp'), `pos-ticket-${Date.now()}.txt`);
     try {
-      fs.writeFileSync(tmpFile, text, 'utf8');
+      // UTF-8 con BOM: el driver de Windows lo interpreta mejor y conserva acentos
+      fs.writeFileSync(tmpFile, '\ufeff' + text, 'utf8');
     } catch (e) {
-      return resolve({ ok: false, error: e.message });
+      return resolve({ ok: false, error: 'No se pudo escribir el archivo temporal: ' + e.message });
     }
 
     const cleanup = () => { try { fs.unlinkSync(tmpFile); } catch (e) {} };
 
-    if (process.platform === 'win32') {
-      // Generic/Text Only se comparten en \\localhost\<nombre de la impresora>.
-      // El comando copy /b envia los bytes sin interpretar (texto plano).
-      const share = `\\\\localhost\\${printerName}`;
-      const cmd = `copy /b "${tmpFile}" "${share}" >nul 2>&1`;
-      const child = spawn('cmd.exe', ['/c', cmd], { windowsHide: true, shell: false });
-      const timer = setTimeout(() => { try { child.kill(); } catch (e) {} }, 15000);
-      child.on('close', (code) => {
-        clearTimeout(timer);
+    try {
+      if (process.platform === 'win32') {
+        // Estrategia 1: PowerShell Out-Printer (usa el spooler, sirve para
+        // cualquier impresora instalada, compartida o no).
+        const psCmd = `Get-Content -LiteralPath '${tmpFile.replace(/'/g, "''")}' -Encoding UTF8 | Out-Printer -Name '${printerName.replace(/'/g, "''")}'`;
+        const ps = await execPrint(psCmd, null);
+        if (ps.code === 0) {
+          cleanup();
+          return resolve({ ok: true, method: 'out-printer' });
+        }
+
+        // Estrategia 2: copy /b al recurso compartido \\localhost\<impresora>
+        const share = `\\\\localhost\\${printerName}`;
+        const cmd = `copy /b "${tmpFile}" "${share}"`;
+        const cp = await execPrint(null, cmd);
+        if (cp.code === 0) {
+          cleanup();
+          return resolve({ ok: true, method: 'copy-share' });
+        }
+
         cleanup();
-        if (code === 0) resolve({ ok: true });
-        else resolve({ ok: false, error: `cmd copy salio con codigo ${code}. Verifica que la impresora este compartida en Windows (\\\\localhost\\${printerName}).` });
-      });
-      child.on('error', (e) => {
-        clearTimeout(timer);
-        cleanup();
-        resolve({ ok: false, error: e.message });
-      });
-    } else {
+        return resolve({
+          ok: false,
+          error: `No se pudo imprimir en "${printerName}".\n` +
+            `PowerShell: codigo ${ps.code}${ps.stderr ? ' - ' + ps.stderr.trim().split('\n')[0] : ''}\n` +
+            `copy /b: codigo ${cp.code}${cp.stderr ? ' - ' + cp.stderr.trim().split('\n')[0] : ''}\n\n` +
+            'En Windows activa el checkbox "Compartir esta impresora" en ' +
+            'Configuracion > Bluetooth y dispositivos > Impresoras y escaneres > ' +
+            `tu impresora > Propiedades de la impresora > Compartir.`
+        });
+      }
+
       // Linux / macOS: lp -d <nombre>
       const child = spawn('lp', ['-d', printerName, tmpFile], { stdio: 'ignore' });
-      const timer = setTimeout(() => { try { child.kill(); } catch (e) {} }, 15000);
+      const timer = setTimeout(() => { try { child.kill(); } catch (e) {} }, 20000);
       child.on('close', (code) => {
         clearTimeout(timer);
         cleanup();
-        if (code === 0) resolve({ ok: true });
+        if (code === 0) resolve({ ok: true, method: 'lp' });
         else resolve({ ok: false, error: `lp salio con codigo ${code}.` });
       });
       child.on('error', (e) => {
@@ -874,6 +913,9 @@ function printPlainText(text, printerName) {
         cleanup();
         resolve({ ok: false, error: e.message });
       });
+    } catch (e) {
+      cleanup();
+      resolve({ ok: false, error: e.message || 'Error interno al imprimir' });
     }
   });
 }
@@ -900,6 +942,58 @@ ipcMain.handle('get-printers', async () => {
 ipcMain.handle('print-plain-text', async (e, { text, printerName }) => {
   if (!printerName) return { ok: false, error: 'No se selecciono una impresora' };
   return await printPlainText(text, printerName);
+});
+
+// Diagnostico completo de impresion: estado del spooler, impresoras instaladas
+// y compartidas, y prueba real de ambos metodos con un texto corto.
+ipcMain.handle('print-diagnostic', async () => {
+  const out = {
+    platform: process.platform,
+    printers: [],
+    shared: [],
+    spooler: null,
+    test: null,
+    raw: {},
+  };
+  try {
+    if (!mainWindow) return { ...out, error: 'Ventana no disponible' };
+    const printers = await mainWindow.webContents.getPrinters();
+    out.printers = printers.map((p) => ({
+      name: p.name || p.displayName || '',
+      isDefault: Boolean(p.isDefault),
+      status: p.status,
+    }));
+  } catch (e) {
+    out.printers = [];
+    out.error = (out.error ? out.error + '; ' : '') + 'getPrinters: ' + (e.message || e);
+  }
+
+  if (process.platform === 'win32') {
+    // Estado del spooler
+    const sp = await execPrint(`(Get-Service -Name Spooler).Status`, null);
+    out.spooler = sp.code === 0 ? sp.stdout.trim() : ('error ' + sp.code + ' ' + sp.stderr.trim());
+
+    // Impresoras compartidas (con nombre de recurso)
+    const sh = await execPrint(`Get-Printer | Where-Object { $_.Shared } | Select-Object -Property Name, ShareName, PortName | Format-List`, null);
+    out.shared = sh.code === 0 ? sh.stdout.trim() : '';
+
+    // Probar impresion real con ambos metodos a la impresora seleccionada
+    if (out.printers.length > 0) {
+      const testFile = path.join(app.getPath('temp'), 'pos-print-test.txt');
+      fs.writeFileSync(testFile, '\ufeffPRUEBA POS SYSTEM\nLinea de texto\n1234567890\n', 'utf8');
+      const target = out.printers[0].name;
+      const ps = await execPrint(`Get-Content -LiteralPath '${testFile.replace(/'/g, "''")}' -Encoding UTF8 | Out-Printer -Name '${target.replace(/'/g, "''")}'`, null);
+      const share = `\\\\localhost\\${target}`;
+      const cp = await execPrint(null, `copy /b "${testFile}" "${share}"`);
+      out.test = {
+        printer: target,
+        powershell: { code: ps.code, stderr: ps.stderr.trim().split('\n').slice(0, 3).join(' | ') },
+        copyShare: { code: cp.code, stderr: cp.stderr.trim().split('\n').slice(0, 3).join(' | ') },
+      };
+      try { fs.unlinkSync(testFile); } catch (e) {}
+    }
+  }
+  return out;
 });
 
 ipcMain.handle('get-config', () => ({ ...config, platform: process.platform }));

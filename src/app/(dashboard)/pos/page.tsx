@@ -130,6 +130,7 @@ export default function PosPage() {
   const [receiptOpen, setReceiptOpen] = useState(false);
   const [printingTicket, setPrintingTicket] = useState(false);
   const [printerName, setPrinterName] = useState('');
+  const [ticketWidth, setTicketWidth] = useState(32);
 
   // Loyalty/customer
   const [customerSearch, setCustomerSearch] = useState('');
@@ -249,10 +250,13 @@ export default function PosPage() {
 
   // Cargar impresora de tickets configurada (Electron)
   useEffect(() => {
-    const win = window as unknown as { electronAPI?: { getConfig?: () => Promise<{ ticketPrinter?: string }> } };
+    const win = window as unknown as { electronAPI?: { getConfig?: () => Promise<{ ticketPrinter?: string; ticketWidth?: number }> } };
     if (win.electronAPI?.getConfig) {
       win.electronAPI.getConfig()
-        .then((cfg) => { if (cfg.ticketPrinter) setPrinterName(cfg.ticketPrinter); })
+        .then((cfg) => {
+          if (cfg.ticketPrinter) setPrinterName(cfg.ticketPrinter);
+          if (cfg.ticketWidth) setTicketWidth(cfg.ticketWidth);
+        })
         .catch(() => {});
     }
   }, []);
@@ -512,17 +516,35 @@ export default function PosPage() {
     }
   };
 
-  // Imprime el ticket. Si hay una impresora de tickets configurada (Electron),
-  // envia TEXTO PLANO (las impresoras de tickets solo imprimen texto, no
-  // imagenes). De lo contrario usa la vista HTML con window.print().
+  // Imprime el ticket. Estrategia en orden:
+  // 1) Servidor (POST /api/print/ticket): el server escribe ESC/POS directo a
+  //    la impresora USB. Funciona desde CUALQUIER navegador (Windows, celular,
+  //    LAN, Tailscale) porque la impresora esta pegada al host del server.
+  // 2) Electron (printPlainText): cuando la app desktop corre en la misma
+  //    maquina que la impresora.
+  // 3) window.print(): ultimo recurso (dialogo del navegador).
   const handlePrintSale = async (sale: SaleTicket) => {
     setPrintingTicket(true);
     try {
+      const text = buildPlainTextTicket(sale, ticketWidth);
+      try {
+        const res = await fetch('/api/print/ticket', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text }),
+        });
+        if (res.ok) {
+          toast.success('Ticket impreso');
+          return;
+        }
+      } catch {
+        // Sin conexion con el server: seguir con los otros metodos.
+      }
+
       const win = window as unknown as {
         electronAPI?: { printPlainText?: (text: string, printer: string) => Promise<{ ok: boolean; error?: string }> };
       };
       if (printerName && win.electronAPI?.printPlainText) {
-        const text = buildPlainTextTicket(sale);
         const res = await win.electronAPI.printPlainText(text, printerName);
         if (res?.ok) toast.success('Ticket impreso');
         else toast.error(res?.error || 'No se pudo imprimir el ticket');
@@ -1229,14 +1251,14 @@ function TicketReceipt({ sale }: { sale: SaleTicket }) {
 
 // Genera el ticket como TEXTO PLANO para impresoras de tickets (58mm/80mm).
 // Estas impresoras suelen usar driver "Generic / Text Only" que solo imprime
-// texto; no soportan imagenes ni HTML. El ancho de 40 columnas es compatible
-// con 58mm (32-48 chars) y 80mm (48 chars) usando fuente monoespaciada.
-function buildPlainTextTicket(sale: SaleTicket): string {
-  const W = 40;
+// texto; no soportan imagenes ni HTML.
+// Ancho en caracteres por linea: 32 = 58mm estandar, 42/48 = 80mm.
+function buildPlainTextTicket(sale: SaleTicket, width = 32): string {
+  const W = Math.max(24, Math.min(48, width));
   const line = (char: string) => char.repeat(W);
   const leftRight = (l: string, r: string) => {
-    const ltrunc = l.slice(0, W - 2);
-    const rtrunc = r.slice(0, 14);
+    const rtrunc = r.slice(0, Math.max(8, Math.floor(W * 0.4)));
+    const ltrunc = l.slice(0, Math.max(8, W - rtrunc.length - 2));
     const pad = Math.max(1, W - ltrunc.length - rtrunc.length);
     return ltrunc + ' '.repeat(pad) + rtrunc;
   };

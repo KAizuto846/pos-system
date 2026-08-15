@@ -7,6 +7,20 @@ import { logChange } from "@/lib/sync-engine";
 import { getDeviceId } from "@/lib/sync-utils";
 import type { Prisma } from "@prisma/client";
 
+// Convierte "MM/YYYY" o "MM-YYYY" al ultimo instante de ese mes (fin del dia).
+function parseExpiry(value: string): Date {
+  const [month, year] = value.split(/[/-]/);
+  return new Date(
+    parseInt(year, 10),
+    parseInt(month, 10),
+    0,
+    23,
+    59,
+    59,
+    999
+  );
+}
+
 export async function PUT(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -89,18 +103,41 @@ export async function PUT(
           costPrice?: number | null;
         }>;
 
+        // Suma de piezas en lotes (excluyendo los que se van a eliminar o
+        // reemplazar) para saber cuánto stock libre queda disponible.
+        const excludedIds = new Set<number>();
+        for (const op of ops) {
+          if (op.action === "update" && typeof op.id === "number") {
+            excludedIds.add(op.id);
+          }
+        }
+        const keepTotal = current.batches
+          .filter((b) => !excludedIds.has(b.id))
+          .reduce((s, b) => s + b.quantity, 0);
+        const newStock = typeof body.stock === "number" ? body.stock : current.stock;
+
         for (const op of ops) {
           if (op.action === "add") {
             const qty = op.quantity;
             if (!Number.isInteger(qty) || (qty ?? 0) <= 0) {
               throw new Error("Cantidad de lote inválida");
             }
-            const batchTotal = current.batches.reduce((s, b) => s + b.quantity, 0);
-            const newStock =
-              typeof body.stock === "number" ? body.stock : current.stock;
-            if (batchTotal + (qty ?? 0) > newStock) {
+            if (keepTotal + (qty ?? 0) > newStock) {
               throw new Error(
-                `No hay suficiente stock libre para el lote. Disponible: ${Math.max(0, newStock - batchTotal)}`
+                `No hay suficiente stock libre para el lote. Disponible: ${Math.max(0, newStock - keepTotal)}`
+              );
+            }
+          }
+          if (op.action === "update" && typeof op.id === "number") {
+            const batch = current.batches.find((b) => b.id === op.id);
+            if (!batch) throw new Error(`Lote ${op.id} no encontrado`);
+            const qty = op.quantity;
+            if (!Number.isInteger(qty) || (qty ?? 0) < 0) {
+              throw new Error("Cantidad de lote inválida");
+            }
+            if (keepTotal + (qty ?? 0) > newStock) {
+              throw new Error(
+                `No hay suficiente stock libre para el lote. Disponible: ${Math.max(0, newStock - keepTotal)}`
               );
             }
           }
@@ -134,23 +171,28 @@ export async function PUT(
         }>) {
           if (op.action === "add") {
             const qty = op.quantity ?? 0;
-            const expiresAt = op.expiresAt
-              ? new Date(
-                  parseInt(op.expiresAt.split(/[/-]/)[1], 10),
-                  parseInt(op.expiresAt.split(/[/-]/)[0], 10),
-                  0,
-                  23,
-                  59,
-                  59,
-                  999
-                )
-              : null;
+            const expiresAt = op.expiresAt ? parseExpiry(op.expiresAt) : null;
             await tx.productBatch.create({
               data: {
                 productId,
                 quantity: qty,
                 expiresAt,
                 costPrice: op.costPrice ?? updated.cost ?? 0,
+              },
+            });
+          }
+          if (op.action === "update" && typeof op.id === "number") {
+            const batch = await tx.productBatch.findUnique({
+              where: { id: op.id },
+            });
+            if (!batch) throw new Error(`Lote ${op.id} no encontrado`);
+            const expiresAt = op.expiresAt ? parseExpiry(op.expiresAt) : null;
+            await tx.productBatch.update({
+              where: { id: op.id },
+              data: {
+                quantity: op.quantity ?? batch.quantity,
+                expiresAt,
+                costPrice: op.costPrice ?? batch.costPrice,
               },
             });
           }

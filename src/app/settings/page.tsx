@@ -70,7 +70,10 @@ export default function SettingsPage() {
   // Impresora de tickets
   const [printers, setPrinters] = useState<{ name: string; isDefault: boolean; displayName: string }[]>([]);
   const [printerName, setPrinterName] = useState('');
+  const [ticketWidth, setTicketWidth] = useState(32);
   const [printingTest, setPrintingTest] = useState(false);
+  const [diagnostic, setDiagnostic] = useState<null | string>(null);
+  const [runningDiag, setRunningDiag] = useState(false);
 
   useEffect(() => {
     if (!lanUrl) return;
@@ -120,6 +123,7 @@ export default function SettingsPage() {
           serverIP?: string;
           deviceName?: string;
           ticketPrinter?: string;
+          ticketWidth?: number;
         }>;
         getPrinters?: () => Promise<{ ok: boolean; printers?: { name: string; isDefault: boolean; displayName: string }[]; error?: string }>;
       };
@@ -135,6 +139,7 @@ export default function SettingsPage() {
         });
         if (cfg.serverIP) setLanUrl(`http://${cfg.serverIP}:${cfg.serverPort || 3000}`);
         if (cfg.ticketPrinter) setPrinterName(cfg.ticketPrinter);
+        if (cfg.ticketWidth) setTicketWidth(cfg.ticketWidth);
       });
 
       if (win.electronAPI?.getPrinters) {
@@ -278,7 +283,7 @@ export default function SettingsPage() {
   };
 
   const handleSavePrinter = useCallback(async () => {
-    const win = window as unknown as { electronAPI?: { setConfig?: (k: string, v: string) => Promise<boolean> } };
+    const win = window as unknown as { electronAPI?: { setConfig?: (k: string, v: string | number) => Promise<boolean> } };
     if (!win.electronAPI?.setConfig) {
       toast.error('Solo disponible en la aplicación de escritorio (Electron)');
       return;
@@ -289,11 +294,12 @@ export default function SettingsPage() {
     }
     try {
       await win.electronAPI.setConfig('ticketPrinter', printerName);
+      await win.electronAPI.setConfig('ticketWidth', ticketWidth);
       toast.success('Impresora de tickets guardada');
     } catch {
       toast.error('No se pudo guardar la impresora');
     }
-  }, [printerName]);
+  }, [printerName, ticketWidth]);
 
   const handlePrintTest = useCallback(async () => {
     const win = window as unknown as { electronAPI?: { printPlainText?: (text: string, printer: string) => Promise<{ ok: boolean; error?: string }> } };
@@ -307,18 +313,20 @@ export default function SettingsPage() {
     }
     setPrintingTest(true);
     const now = new Date();
+    const W = ticketWidth;
+    const line = '='.repeat(W);
     const text = [
-      `  ${businessName || 'MI NEGOCIO'}  `,
-      '==============================',
-      'PRUEBA DE IMPRESORA DE TICKETS',
-      '==============================',
-      `Fecha: ${now.toLocaleString('es-MX')}`,
-      'Producto ............ $10.00',
-      'Producto 2 .......... $25.50',
-      '==============================',
-      'TOTAL ............... $35.50',
+      (businessName || 'MI NEGOCIO').toUpperCase().padStart(Math.floor((W + (businessName || 'MI NEGOCIO').length) / 2)).slice(0, W),
+      line,
+      'PRUEBA DE IMPRESORA DE TICKETS'.slice(0, W),
+      line,
+      `Fecha: ${now.toLocaleString('es-MX')}`.slice(0, W),
+      'Producto 1'.padEnd(Math.max(8, W - 10)) + '$10.00',
+      'Producto 2'.padEnd(Math.max(8, W - 10)) + '$25.50',
+      line,
+      'TOTAL'.padEnd(Math.max(8, W - 8)) + '$35.50',
       '',
-      '  ¡Gracias por su compra!  ',
+      'Gracias por su compra!'.padStart(Math.floor(W / 2) + 10).slice(0, W),
       '',
     ].join('\n');
     try {
@@ -330,7 +338,25 @@ export default function SettingsPage() {
     } finally {
       setPrintingTest(false);
     }
-  }, [printerName, businessName]);
+  }, [printerName, businessName, ticketWidth]);
+
+  const handleDiagnostic = useCallback(async () => {
+    const win = window as unknown as { electronAPI?: { printDiagnostic?: () => Promise<unknown> } };
+    if (!win.electronAPI?.printDiagnostic) {
+      toast.error('Solo disponible en la aplicación de escritorio (Electron)');
+      return;
+    }
+    setRunningDiag(true);
+    setDiagnostic(null);
+    try {
+      const res = await win.electronAPI.printDiagnostic();
+      setDiagnostic(JSON.stringify(res, null, 2));
+    } catch (err) {
+      setDiagnostic('Error: ' + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setRunningDiag(false);
+    }
+  }, []);
 
   // Tema aplicado actualmente (leído tras montar, para no romper la hidratación)
   const [appliedTheme, setAppliedTheme] = useState({ paletteId: 'emerald', fontId: 'sistema' });
@@ -621,10 +647,35 @@ export default function SettingsPage() {
                   </SelectContent>
                 </Select>
               )}
-              <p className="text-xs text-slate-500">
-                El ticket se imprime con <span className="font-mono text-slate-300">copy /b \\localhost\&lt;impresora&gt;</span> en Windows (driver texto plano) o <span className="font-mono text-slate-300">lp</span> en Linux.
-              </p>
             </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="ticket-width" className="text-xs text-slate-400">Ancho del ticket (caracteres)</Label>
+                <Select value={String(ticketWidth)} onValueChange={(v) => setTicketWidth(parseInt(v, 10))}>
+                  <SelectTrigger id="ticket-width" className="w-full border-slate-600 bg-slate-900 text-slate-100">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="32">32 — 58mm (mini térmica)</SelectItem>
+                    <SelectItem value="42">42 — 58mm ancho / 80mm</SelectItem>
+                    <SelectItem value="48">48 — 80mm estándar</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-slate-400">Envío</Label>
+                <p className="rounded-md border border-slate-700 bg-slate-900/60 px-3 py-2 text-xs text-slate-400">
+                  Se envía como <span className="text-slate-300">texto plano</span> vía PowerShell
+                  (<span className="font-mono">Out-Printer</span>) y, si falla, por
+                  <span className="font-mono"> copy /b \\localhost\impresora</span>.
+                </p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-500">
+              Si el ancho no cuadra con tu impresora, el texto se cortará o hará saltos de línea. Prueba el botón &quot;Imprimir prueba&quot; para calibrar.
+            </p>
 
             <div className="flex flex-wrap items-center gap-2">
               <Button size="sm" onClick={handlePrintTest} disabled={printingTest || !printerName}>
@@ -635,9 +686,18 @@ export default function SettingsPage() {
                 <Save className="mr-2 h-3.5 w-3.5" />
                 Guardar impresora
               </Button>
+              <Button size="sm" variant="outline" onClick={handleDiagnostic} disabled={runningDiag}>
+                <Plug className="mr-2 h-3.5 w-3.5" />
+                {runningDiag ? 'Ejecutando...' : 'Diagnóstico'}
+              </Button>
             </div>
+            {diagnostic && (
+              <pre className="max-h-64 overflow-auto rounded-md border border-slate-700 bg-slate-950/80 px-3 py-2 font-mono text-[11px] text-slate-300 whitespace-pre-wrap break-all">
+                {diagnostic}
+              </pre>
+            )}
             <p className="text-xs text-slate-500">
-              Guarda la impresora para que el POS la use al emitir el ticket de venta. También puedes seleccionarla directamente.
+              Guarda la impresora para que el POS la use al emitir el ticket de venta. El botón Diagnóstico muestra el estado del spooler, impresoras compartidas y el resultado real de cada método de envío.
             </p>
           </CardContent>
         </Card>

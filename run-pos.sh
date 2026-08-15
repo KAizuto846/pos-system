@@ -20,7 +20,7 @@ start() {
   fi
   echo "Arrancando POS en $URL (log: $LOG)..."
   cd "$PROJECT" || { echo "ERROR: no existe $PROJECT"; exit 1; }
-  setsid nohup env PORT=$PORT npm run dev > "$LOG" 2>&1 < /dev/null &
+  setsid nohup sg lp -c "env PORT=$PORT npm run dev" > "$LOG" 2>&1 < /dev/null &
   echo $! > "$PIDFILE"
   # Esperar hasta 90s a que responda (primera compilacion tarda)
   for _ in $(seq 1 30); do
