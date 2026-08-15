@@ -2,14 +2,29 @@
 
 import { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
-import { Users, Package, DollarSign, ShoppingCart, CalendarClock } from 'lucide-react';
+import toast from 'react-hot-toast';
+import { Users, Package, DollarSign, ShoppingCart, CalendarClock, FileText, Download } from 'lucide-react';
 import {
   Card,
   CardHeader,
   CardTitle,
   CardContent,
 } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+
+// Descarga el contenido como archivo de texto plano
+function downloadTextFile(filename: string, content: string) {
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
 
 interface Stats {
   totalUsers: number;
@@ -70,6 +85,49 @@ export default function DashboardPage() {
     },
   ];
 
+  const exportLowStock = () => {
+    if (!stats) return;
+    const now = new Date().toLocaleString('es-MX');
+    const lines: string[] = [
+      `LISTA DE PRODUCTOS BAJOS / SIN STOCK`,
+      `Generado: ${now}`,
+      '=======================================',
+      '',
+      `${'Producto'.padEnd(38)}Stock`,
+      '---------------------------------------',
+      ...(stats.lowStockProducts.length > 0
+        ? stats.lowStockProducts.map((p) => `${p.name.slice(0, 38).padEnd(38)}${p.stock}`)
+        : ['No hay productos bajos de stock.']),
+      '',
+      `Total de productos: ${stats.lowStockProducts.length}`,
+    ];
+    downloadTextFile(`stock-bajo-${new Date().toISOString().slice(0, 10)}.txt`, lines.join('\n'));
+    toast('Archivo de stock bajo exportado');
+  };
+
+  const exportExpiring = () => {
+    if (!stats) return;
+    const now = new Date().toLocaleString('es-MX');
+    const lines: string[] = [
+      `LISTA DE PRODUCTOS POR CADUCAR (60 dias)`,
+      `Generado: ${now}`,
+      '=======================================',
+      '',
+      `${'Producto'.padEnd(28)}${'Piezas'.padEnd(8)}Vence`,
+      '---------------------------------------',
+      ...(stats.expiringProducts.length > 0
+        ? stats.expiringProducts.map((b) => {
+            const d = new Date(b.expiresAt).toLocaleDateString('es-MX', { month: '2-digit', year: 'numeric' });
+            return `${b.name.slice(0, 28).padEnd(28)}${String(b.quantity).padEnd(8)}${d}`;
+          })
+        : ['No hay productos próximos a caducar.']),
+      '',
+      `Total de lotes: ${stats.expiringProducts.length}`,
+    ];
+    downloadTextFile(`por-caducar-${new Date().toISOString().slice(0, 10)}.txt`, lines.join('\n'));
+    toast('Archivo de productos por caducar exportado');
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -119,11 +177,15 @@ export default function DashboardPage() {
       {/* Expiring Products Alerts */}
       {stats && stats.expiringProducts && stats.expiringProducts.length > 0 && (
         <Card className="border-red-900/60 bg-slate-800">
-          <CardHeader>
+          <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle className="flex items-center gap-2 text-slate-100">
               <CalendarClock className="h-4 w-4 text-amber-400" />
               Próximos a Caducar (60 días)
             </CardTitle>
+            <Button variant="outline" size="sm" onClick={exportExpiring} className="border-amber-700/50 text-amber-300 hover:bg-amber-900/20">
+              <FileText className="mr-2 h-3.5 w-3.5" />
+              Exportar .txt
+            </Button>
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
@@ -160,8 +222,12 @@ export default function DashboardPage() {
       {/* Low Stock Alerts */}
       {stats && stats.lowStockProducts && stats.lowStockProducts.length > 0 && (
         <Card className="border-slate-700 bg-slate-800">
-          <CardHeader>
+          <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle className="text-slate-100">Low Stock Alerts</CardTitle>
+            <Button variant="outline" size="sm" onClick={exportLowStock} className="border-slate-600 text-slate-300 hover:bg-slate-700">
+              <Download className="mr-2 h-3.5 w-3.5" />
+              Exportar .txt
+            </Button>
           </CardHeader>
           <CardContent>
             <div className="space-y-2">

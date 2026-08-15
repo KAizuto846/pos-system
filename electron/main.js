@@ -824,7 +824,84 @@ function openFirewallSettings() {
   }
 }
 
-// ─── IPC handlers ──────────────────────────────────────────
+// ─── Ticket printer (texto plano) ───────────────────────────
+// La mayoria de impresoras de tickets (58mm/80mm) usan driver "Generic / Text
+// Only": solo aceptan texto plano, sin imagenes. Electron no puede enviarles
+// HTML, asi que escribimos el texto directamente al recurso compartido de la
+// impresora (\\\\localhost\\<nombre>) o usamos el comando de impresion del SO.
+function printPlainText(text, printerName) {
+  return new Promise((resolve) => {
+    if (!text) return resolve({ ok: false, error: 'Texto vacio' });
+    const tmpFile = path.join(app.getPath('temp'), `pos-ticket-${Date.now()}.txt`);
+    try {
+      fs.writeFileSync(tmpFile, text, 'utf8');
+    } catch (e) {
+      return resolve({ ok: false, error: e.message });
+    }
+
+    const cleanup = () => { try { fs.unlinkSync(tmpFile); } catch (e) {} };
+
+    if (process.platform === 'win32') {
+      // Generic/Text Only se comparten en \\localhost\<nombre de la impresora>.
+      // El comando copy /b envia los bytes sin interpretar (texto plano).
+      const share = `\\\\localhost\\${printerName}`;
+      const cmd = `copy /b "${tmpFile}" "${share}" >nul 2>&1`;
+      const child = spawn('cmd.exe', ['/c', cmd], { windowsHide: true, shell: false });
+      const timer = setTimeout(() => { try { child.kill(); } catch (e) {} }, 15000);
+      child.on('close', (code) => {
+        clearTimeout(timer);
+        cleanup();
+        if (code === 0) resolve({ ok: true });
+        else resolve({ ok: false, error: `cmd copy salio con codigo ${code}. Verifica que la impresora este compartida en Windows (\\\\localhost\\${printerName}).` });
+      });
+      child.on('error', (e) => {
+        clearTimeout(timer);
+        cleanup();
+        resolve({ ok: false, error: e.message });
+      });
+    } else {
+      // Linux / macOS: lp -d <nombre>
+      const child = spawn('lp', ['-d', printerName, tmpFile], { stdio: 'ignore' });
+      const timer = setTimeout(() => { try { child.kill(); } catch (e) {} }, 15000);
+      child.on('close', (code) => {
+        clearTimeout(timer);
+        cleanup();
+        if (code === 0) resolve({ ok: true });
+        else resolve({ ok: false, error: `lp salio con codigo ${code}.` });
+      });
+      child.on('error', (e) => {
+        clearTimeout(timer);
+        cleanup();
+        resolve({ ok: false, error: e.message });
+      });
+    }
+  });
+}
+
+// Lista las impresoras del sistema (nombre, si es predeterminada, estado)
+ipcMain.handle('get-printers', async () => {
+  try {
+    if (!mainWindow) return { ok: true, printers: [] };
+    const printers = await mainWindow.webContents.getPrinters();
+    return {
+      ok: true,
+      printers: printers.map((p) => ({
+        name: p.name || p.displayName || 'Impresora',
+        isDefault: Boolean(p.isDefault),
+        status: p.status || 0,
+        displayName: p.displayName || p.name || '',
+      })),
+    };
+  } catch (e) {
+    return { ok: false, error: e.message || 'No se pudieron listar las impresoras', printers: [] };
+  }
+});
+
+ipcMain.handle('print-plain-text', async (e, { text, printerName }) => {
+  if (!printerName) return { ok: false, error: 'No se selecciono una impresora' };
+  return await printPlainText(text, printerName);
+});
+
 ipcMain.handle('get-config', () => ({ ...config, platform: process.platform }));
 ipcMain.handle('set-config', (e, key, value) => { config[key] = value; saveConfig(); return true; });
 ipcMain.handle('get-discovered-servers', () => discoveredServers);

@@ -17,7 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Server, Monitor, Wifi, Database, Smartphone, Copy, ArrowLeft, Building2, Palette, Save, Upload, Trash2, Check, Globe, Plug } from 'lucide-react';
+import { Server, Monitor, Wifi, Database, Smartphone, Copy, ArrowLeft, Building2, Palette, Save, Upload, Trash2, Check, Globe, Plug, Printer, FileText } from 'lucide-react';
 import { PALETTES, APP_FONTS, applyTheme, getSavedTheme } from '@/lib/themes';
 import { notifyBusinessUpdated } from '@/hooks/useBusiness';
 import { cn } from '@/lib/utils';
@@ -67,6 +67,11 @@ export default function SettingsPage() {
   const [relayTesting, setRelayTesting] = useState(false);
   const [relaySaving, setRelaySaving] = useState(false);
 
+  // Impresora de tickets
+  const [printers, setPrinters] = useState<{ name: string; isDefault: boolean; displayName: string }[]>([]);
+  const [printerName, setPrinterName] = useState('');
+  const [printingTest, setPrintingTest] = useState(false);
+
   useEffect(() => {
     if (!lanUrl) return;
     QRCode.toDataURL(lanUrl, { width: 220, margin: 1 })
@@ -114,7 +119,9 @@ export default function SettingsPage() {
           serverPort?: number;
           serverIP?: string;
           deviceName?: string;
+          ticketPrinter?: string;
         }>;
+        getPrinters?: () => Promise<{ ok: boolean; printers?: { name: string; isDefault: boolean; displayName: string }[]; error?: string }>;
       };
     };
 
@@ -127,7 +134,25 @@ export default function SettingsPage() {
           deviceName: cfg.deviceName || '',
         });
         if (cfg.serverIP) setLanUrl(`http://${cfg.serverIP}:${cfg.serverPort || 3000}`);
+        if (cfg.ticketPrinter) setPrinterName(cfg.ticketPrinter);
       });
+
+      if (win.electronAPI?.getPrinters) {
+        const getPrinters = win.electronAPI.getPrinters;
+        queueMicrotask(() => {
+          getPrinters()
+            .then((res) => {
+              const list = res?.printers;
+              if (res?.ok && list) {
+                setPrinters(list);
+                const def = list.find((p) => p.isDefault);
+                if (def) setPrinterName((prev) => prev || def.name);
+                else if (list.length > 0) setPrinterName((prev) => prev || list[0].name);
+              }
+            })
+            .catch(() => {});
+        });
+      }
     } else {
       // Modo web: leer config persistida en la DB (setup web)
       fetch('/api/setup/config')
@@ -252,11 +277,69 @@ export default function SettingsPage() {
     }
   };
 
+  const handleSavePrinter = useCallback(async () => {
+    const win = window as unknown as { electronAPI?: { setConfig?: (k: string, v: string) => Promise<boolean> } };
+    if (!win.electronAPI?.setConfig) {
+      toast.error('Solo disponible en la aplicación de escritorio (Electron)');
+      return;
+    }
+    if (!printerName) {
+      toast.error('Selecciona una impresora');
+      return;
+    }
+    try {
+      await win.electronAPI.setConfig('ticketPrinter', printerName);
+      toast.success('Impresora de tickets guardada');
+    } catch {
+      toast.error('No se pudo guardar la impresora');
+    }
+  }, [printerName]);
+
+  const handlePrintTest = useCallback(async () => {
+    const win = window as unknown as { electronAPI?: { printPlainText?: (text: string, printer: string) => Promise<{ ok: boolean; error?: string }> } };
+    if (!win.electronAPI?.printPlainText) {
+      toast.error('Solo disponible en la aplicación de escritorio (Electron)');
+      return;
+    }
+    if (!printerName) {
+      toast.error('Selecciona una impresora');
+      return;
+    }
+    setPrintingTest(true);
+    const now = new Date();
+    const text = [
+      `  ${businessName || 'MI NEGOCIO'}  `,
+      '==============================',
+      'PRUEBA DE IMPRESORA DE TICKETS',
+      '==============================',
+      `Fecha: ${now.toLocaleString('es-MX')}`,
+      'Producto ............ $10.00',
+      'Producto 2 .......... $25.50',
+      '==============================',
+      'TOTAL ............... $35.50',
+      '',
+      '  ¡Gracias por su compra!  ',
+      '',
+    ].join('\n');
+    try {
+      const res = await win.electronAPI.printPlainText(text, printerName);
+      if (res?.ok) toast.success('Texto enviado a la impresora');
+      else toast.error(res?.error || 'No se pudo imprimir');
+    } catch {
+      toast.error('Error al imprimir');
+    } finally {
+      setPrintingTest(false);
+    }
+  }, [printerName, businessName]);
+
   // Tema aplicado actualmente (leído tras montar, para no romper la hidratación)
   const [appliedTheme, setAppliedTheme] = useState({ paletteId: 'emerald', fontId: 'sistema' });
   useLayoutEffect(() => {
     const saved = getSavedTheme();
-    if (saved) setAppliedTheme({ paletteId: saved.paletteId, fontId: saved.fontId });
+    if (saved) {
+      const t = saved;
+      queueMicrotask(() => setAppliedTheme({ paletteId: t.paletteId, fontId: t.fontId }));
+    }
   }, []);
   const currentPalette = appliedTheme.paletteId;
   const currentFont = appliedTheme.fontId;
@@ -504,6 +587,58 @@ export default function SettingsPage() {
               <span className="text-slate-400">Usuario:</span>
               <span className="text-slate-200">{session?.user?.name || '—'}</span>
             </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-slate-700 bg-slate-800">
+          <CardHeader>
+            <CardTitle className="text-lg text-slate-100 flex items-center gap-2">
+              <Printer className="h-5 w-5 text-emerald-400" />
+              Impresora de Tickets
+            </CardTitle>
+            <CardDescription>
+              Las impresoras de tickets (58mm/80mm) suelen imprimir solo texto plano. El ticket se envía como texto puro, sin imágenes.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="printer-select" className="text-xs text-slate-400">Impresora del sistema</Label>
+              {printers.length === 0 ? (
+                <p className="text-sm text-slate-500">
+                  No se detectaron impresoras. Este ajuste está disponible en la app de escritorio (Electron).
+                </p>
+              ) : (
+                <Select value={printerName} onValueChange={setPrinterName}>
+                  <SelectTrigger id="printer-select" className="w-full border-slate-600 bg-slate-900 text-slate-100">
+                    <SelectValue placeholder="Seleccionar impresora" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {printers.map((p) => (
+                      <SelectItem key={p.name} value={p.name}>
+                        {p.displayName || p.name}{p.isDefault ? ' (predeterminada)' : ''}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+              <p className="text-xs text-slate-500">
+                El ticket se imprime con <span className="font-mono text-slate-300">copy /b \\localhost\&lt;impresora&gt;</span> en Windows (driver texto plano) o <span className="font-mono text-slate-300">lp</span> en Linux.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <Button size="sm" onClick={handlePrintTest} disabled={printingTest || !printerName}>
+                <FileText className="mr-2 h-3.5 w-3.5" />
+                {printingTest ? 'Imprimiendo...' : 'Imprimir prueba'}
+              </Button>
+              <Button size="sm" variant="outline" onClick={handleSavePrinter} disabled={!printerName}>
+                <Save className="mr-2 h-3.5 w-3.5" />
+                Guardar impresora
+              </Button>
+            </div>
+            <p className="text-xs text-slate-500">
+              Guarda la impresora para que el POS la use al emitir el ticket de venta. También puedes seleccionarla directamente.
+            </p>
           </CardContent>
         </Card>
 

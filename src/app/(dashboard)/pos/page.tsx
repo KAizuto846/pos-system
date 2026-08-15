@@ -128,6 +128,8 @@ export default function PosPage() {
   const [cashReceived, setCashReceived] = useState<number | null>(null);
   const [lastSale, setLastSale] = useState<SaleTicket | null>(null);
   const [receiptOpen, setReceiptOpen] = useState(false);
+  const [printingTicket, setPrintingTicket] = useState(false);
+  const [printerName, setPrinterName] = useState('');
 
   // Loyalty/customer
   const [customerSearch, setCustomerSearch] = useState('');
@@ -223,6 +225,11 @@ export default function PosPage() {
     return () => clearTimeout(timer);
   }, [debouncedSearch, fetchProducts]);
 
+  // Enfocar el buscador al abrir la ventana de POS
+  useEffect(() => {
+    searchRef.current?.focus();
+  }, []);
+
   // Infinite scroll
   useEffect(() => {
     const grid = gridRef.current;
@@ -239,6 +246,16 @@ export default function PosPage() {
     grid.addEventListener('scroll', handleScroll);
     return () => grid.removeEventListener('scroll', handleScroll);
   }, [hasMore, loadingMore, loading, debouncedSearch, page, fetchProducts]);
+
+  // Cargar impresora de tickets configurada (Electron)
+  useEffect(() => {
+    const win = window as unknown as { electronAPI?: { getConfig?: () => Promise<{ ticketPrinter?: string }> } };
+    if (win.electronAPI?.getConfig) {
+      win.electronAPI.getConfig()
+        .then((cfg) => { if (cfg.ticketPrinter) setPrinterName(cfg.ticketPrinter); })
+        .catch(() => {});
+    }
+  }, []);
 
   // Fetch payment methods
   useEffect(() => {
@@ -282,37 +299,6 @@ export default function PosPage() {
     searchRef.current?.focus();
   }, [addItem, setSearchTerm]);
 
-  // Keyboard shortcuts
-  const count = itemCount();
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'F2') {
-        e.preventDefault();
-        searchRef.current?.focus();
-      }
-      if (e.key === 'F3') {
-        e.preventDefault();
-        if (count > 0 && !checkoutOpen && !receiptOpen) {
-          setCashReceived(null);
-          setCheckoutOpen(true);
-        }
-      }
-      if (e.key === 'Enter' && document.activeElement === searchRef.current) {
-        const term = searchTerm.trim();
-        if (term && products.length === 1) {
-          e.preventDefault();
-          handleBarcodeScan(products[0]);
-        }
-      }
-      if (e.key === 'Escape') {
-        setSearchTerm('');
-        searchRef.current?.blur();
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [products, searchTerm, handleBarcodeScan, count, checkoutOpen, receiptOpen]);
-
   // Impuesto/recargo por horario: el servidor decide si esta activo
   const [taxState, setTaxState] = useState<{ active: boolean; percentage: number }>({ active: false, percentage: 0 });
   useEffect(() => {
@@ -332,7 +318,63 @@ export default function PosPage() {
   const tx = (base: number): number => (taxState.active ? Math.ceil(base * (1 + taxState.percentage / 100)) : base);
   const taxedTotal = cart.reduce((sum, i) => sum + tx(i.price) * i.quantity, 0);
 
+  // Loyalty: calculate discounts per product
+  const getCustomerDiscount = (product: Product): number => {
+    if (!selectedCustomer || !product.loyaltyDiscount) return 0;
+    const margin = product.price - (product.cost || 0);
+    if (margin <= 0) return 0;
+    const tierPct = selectedCustomer.tier === 'gold' ? 33.33 : selectedCustomer.tier === 'silver' ? 20 : 10;
+    const tierLimit = (margin * tierPct) / 100;
+    const absoluteLimit = margin / 3;
+    return Math.round((Math.min(tierLimit, absoluteLimit)) * 100) / 100;
+  };
+
+  // Loyalty: calculate total discount
+  const loyaltyDiscount = cart.reduce((sum, item) => {
+    const product = products.find(p => p.id === item.productId);
+    if (!product) return sum;
+    return sum + getCustomerDiscount(product) * item.quantity;
+  }, 0);
+
+  const finalTotal = taxedTotal - loyaltyDiscount;
+
+  // Keyboard shortcuts
+  const count = itemCount();
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'F2') {
+        e.preventDefault();
+        searchRef.current?.focus();
+      }
+      if (e.key === 'F3') {
+        e.preventDefault();
+        if (count > 0 && !checkoutOpen && !receiptOpen) {
+          setCashReceived(finalTotal);
+          setCheckoutOpen(true);
+        }
+      }
+      if (e.key === 'Enter' && document.activeElement === searchRef.current) {
+        const term = searchTerm.trim();
+        if (term && products.length === 1) {
+          e.preventDefault();
+          handleBarcodeScan(products[0]);
+        }
+      }
+      if (e.key === 'Escape') {
+        setSearchTerm('');
+        searchRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [products, searchTerm, handleBarcodeScan, count, checkoutOpen, receiptOpen, finalTotal]);
+
   const handleAddItem = (product: Product) => {
+    if (product.stock <= 0) {
+      toast(`Sin stock: ${product.name}. Podrás cobrarlo pero quedará registrada la falta de existencia.`, {
+        icon: '⚠️',
+      });
+    }
     addItem({
       productId: product.id,
       name: product.name,
@@ -340,6 +382,7 @@ export default function PosPage() {
       price: product.price,
       stock: product.stock,
     });
+    searchRef.current?.focus();
   };
 
   // Loyalty: search customers
@@ -397,26 +440,6 @@ export default function PosPage() {
     } catch { toast.error('Error al escanear huella'); }
     finally { setScanningFingerprint(false); }
   };
-
-  // Loyalty: calculate discounts per product
-  const getCustomerDiscount = (product: Product): number => {
-    if (!selectedCustomer || !product.loyaltyDiscount) return 0;
-    const margin = product.price - (product.cost || 0);
-    if (margin <= 0) return 0;
-    const tierPct = selectedCustomer.tier === 'gold' ? 33.33 : selectedCustomer.tier === 'silver' ? 20 : 10;
-    const tierLimit = (margin * tierPct) / 100;
-    const absoluteLimit = margin / 3;
-    return Math.round((Math.min(tierLimit, absoluteLimit)) * 100) / 100;
-  };
-
-  // Loyalty: calculate total discount
-  const loyaltyDiscount = cart.reduce((sum, item) => {
-    const product = products.find(p => p.id === item.productId);
-    if (!product) return sum;
-    return sum + getCustomerDiscount(product) * item.quantity;
-  }, 0);
-
-  const finalTotal = taxedTotal - loyaltyDiscount;
 
   // Efectivo recibido / cambio (solo aplica a metodos que afectan caja)
   const selectedPaymentMethod = paymentMethods.find(
@@ -489,186 +512,203 @@ export default function PosPage() {
     }
   };
 
+  // Imprime el ticket. Si hay una impresora de tickets configurada (Electron),
+  // envia TEXTO PLANO (las impresoras de tickets solo imprimen texto, no
+  // imagenes). De lo contrario usa la vista HTML con window.print().
+  const handlePrintSale = async (sale: SaleTicket) => {
+    setPrintingTicket(true);
+    try {
+      const win = window as unknown as {
+        electronAPI?: { printPlainText?: (text: string, printer: string) => Promise<{ ok: boolean; error?: string }> };
+      };
+      if (printerName && win.electronAPI?.printPlainText) {
+        const text = buildPlainTextTicket(sale);
+        const res = await win.electronAPI.printPlainText(text, printerName);
+        if (res?.ok) toast.success('Ticket impreso');
+        else toast.error(res?.error || 'No se pudo imprimir el ticket');
+        return;
+      }
+      printTicketHtml(sale);
+    } finally {
+      setPrintingTicket(false);
+    }
+  };
+
   return (
-    <div className="-m-4 flex min-h-[calc(100vh-4rem)] flex-col gap-0 lg:-m-6 lg:h-[calc(100vh-4rem)] lg:flex-row">
-      {/* Left Panel — Product Search & List (2/3) */}
-      <div className="flex h-[65vh] w-full flex-col overflow-hidden lg:h-auto lg:w-2/3">
-        {/* Search bar with mode tabs */}
-        <div className="px-4 pt-4 pb-2 lg:px-6">
-          <div className="flex items-stretch gap-2">
-            {/* Search input */}
+    <div className="relative -m-4 flex min-h-[calc(100vh-4rem)] flex-col gap-0 overflow-hidden lg:-m-6 lg:h-[calc(100vh-4rem)]">
+      {/* Floating Search Island */}
+      <div className="pointer-events-none absolute inset-x-0 top-3 z-30 flex justify-center px-4 lg:top-5">
+        <div className="pointer-events-auto w-full max-w-2xl">
+          {/* Island bar */}
+          <div className="flex items-center gap-1.5 rounded-2xl border border-slate-600/80 bg-slate-800/95 p-1.5 shadow-2xl shadow-black/50 backdrop-blur">
             <div className="relative flex-1">
-              <Search className="absolute left-7 lg:left-9 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-400" />
               <Input
                 ref={searchRef}
                 placeholder="Buscar por nombre o código de barras..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="h-full bg-slate-800 border-slate-600 pl-10 pr-36 text-slate-100 placeholder:text-slate-500 focus-visible:ring-emerald-500"
+                className="h-10 border-slate-700 bg-slate-900/70 pl-9 pr-3 text-slate-100 placeholder:text-slate-500 focus-visible:ring-emerald-500"
               />
-              <span className="absolute right-7 lg:right-9 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
-                {searchTerm && (
+            </div>
+            {searchTerm && (
+              <button
+                type="button"
+                onClick={() => { setSearchTerm(''); searchRef.current?.focus(); }}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-700 text-slate-300 hover:bg-slate-600 hover:text-slate-100 transition-colors"
+                title="Limpiar búsqueda"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              className="h-9 w-9 shrink-0 border-slate-600"
+              title="Leer código de barras con la cámara"
+              onClick={() => setScannerOpen(true)}
+            >
+              <ScanLine className="h-4 w-4" />
+            </Button>
+            <span className="hidden shrink-0 rounded bg-slate-700 px-2 py-1 text-xs text-slate-400 sm:inline">
+              F2
+            </span>
+          </div>
+
+          {/* Results — only visible when there's a search */}
+          {searchTerm && (
+            <div className="mt-2 overflow-hidden rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl shadow-black/50">
+              {/* Department chips */}
+              {departments.length > 0 && (
+                <div className="flex gap-2 overflow-x-auto border-b border-slate-800 px-3 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                   <button
                     type="button"
-                    onClick={() => { setSearchTerm(''); searchRef.current?.focus(); }}
-                    className="rounded-full bg-slate-700 px-1.5 py-0.5 text-xs text-slate-300 hover:bg-slate-600 hover:text-slate-100 transition-colors"
-                    title="Limpiar búsqueda"
+                    onClick={() => setSelectedDepartmentId(null)}
+                    className={cn(
+                      'shrink-0 rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+                      selectedDepartmentId === null
+                        ? 'border-emerald-600 bg-emerald-600 text-emerald-950'
+                        : 'border-slate-600 bg-slate-800 text-slate-300 hover:bg-slate-700'
+                    )}
                   >
-                    <X className="h-3.5 w-3.5" />
+                    Todos
                   </button>
-                )}
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  className="h-7 w-7"
-                  title="Leer código de barras con la cámara"
-                  onClick={() => setScannerOpen(true)}
-                >
-                  <ScanLine className="h-3.5 w-3.5" />
-                </Button>
-                <span className="text-xs text-slate-500">
-                  {total > 0 ? `${products.length}/${total}` : ''}
-                </span>
-                <span className="rounded bg-slate-700 px-2 py-0.5 text-xs text-slate-400">
-                  F2
-                </span>
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* Department chips */}
-        {departments.length > 0 && (
-          <div className="flex gap-2 overflow-x-auto px-4 pb-2 lg:px-6 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            <button
-              type="button"
-              onClick={() => setSelectedDepartmentId(null)}
-              className={cn(
-                'shrink-0 rounded-full border px-3 py-1 text-xs font-medium transition-colors',
-                selectedDepartmentId === null
-                  ? 'border-emerald-600 bg-emerald-600 text-emerald-950'
-                  : 'border-slate-600 bg-slate-800 text-slate-300 hover:bg-slate-700'
-              )}
-            >
-              Todos
-            </button>
-            {departments.map((d) => (
-              <button
-                key={d.id}
-                type="button"
-                onClick={() => setSelectedDepartmentId(d.id)}
-                className={cn(
-                  'shrink-0 rounded-full border px-3 py-1 text-xs font-medium transition-colors',
-                  selectedDepartmentId === d.id
-                    ? 'border-emerald-600 bg-emerald-600 text-emerald-950'
-                    : 'border-slate-600 bg-slate-800 text-slate-300 hover:bg-slate-700'
-                )}
-              >
-                {d.name}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {/* Product List with infinite scroll */}
-        <div
-          ref={gridRef}
-          className="flex-1 overflow-y-auto px-4 pb-4 lg:px-6"
-        >
-          {loading ? (
-            <div className="space-y-2">
-              {Array.from({ length: 12 }).map((_, i) => (
-                <div key={i} className="flex items-center gap-3 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2.5">
-                  <Skeleton className="h-4 w-1/3 bg-slate-700" />
-                  <Skeleton className="h-5 w-1/6 bg-slate-700" />
-                  <Skeleton className="h-6 w-16 bg-slate-700" />
-                  <Skeleton className="h-8 w-20 bg-slate-700" />
-                </div>
-              ))}
-            </div>
-          ) : products.length === 0 ? (
-            <div className="flex h-full flex-col items-center justify-center text-slate-500">
-              <Search className="mb-2 h-12 w-12" />
-              <p className="text-sm">
-                {searchTerm
-                  ? 'No se encontraron productos'
-                  : 'No hay productos disponibles'}
-              </p>
-            </div>
-          ) : (
-            <>
-              <div className="space-y-2">
-                {products.map((product) => {
-                  const soldOut = product.stock <= 0;
-                  return (
-                    <div
-                      key={product.id}
+                  {departments.map((d) => (
+                    <button
+                      key={d.id}
+                      type="button"
+                      onClick={() => setSelectedDepartmentId(d.id)}
                       className={cn(
-                        'flex items-center gap-3 rounded-lg border px-3 py-2 transition-colors',
-                        soldOut
-                          ? 'border-slate-700/40 bg-slate-800/40 opacity-45'
-                          : 'border-slate-700 bg-slate-800 hover:border-emerald-600/50 hover:bg-slate-700'
+                        'shrink-0 rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+                        selectedDepartmentId === d.id
+                          ? 'border-emerald-600 bg-emerald-600 text-emerald-950'
+                          : 'border-slate-600 bg-slate-800 text-slate-300 hover:bg-slate-700'
                       )}
                     >
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-semibold leading-snug text-slate-100">
-                          {product.name}
-                        </p>
-                        {product.barcode && (
-                          <p className="mt-0.5 truncate font-mono text-[11px] text-slate-500">
-                            {product.barcode}
-                          </p>
-                        )}
-                      </div>
-                      <span className="shrink-0 text-sm font-bold text-emerald-400">
-                        {formatCurrency(tx(product.price))}
-                      </span>
-                      <Badge
-                        variant={soldOut ? 'destructive' : product.stock <= (product.minStock || 5) ? 'secondary' : 'outline'}
-                        className="w-[74px] shrink-0 justify-center text-xs"
-                      >
-                        {soldOut
-                          ? 'Sin stock'
-                          : `${product.stock} uds.`}
-                      </Badge>
-                      {!soldOut && (
-                        <Button
-                          size="sm"
-                          onClick={() => handleAddItem(product)}
-                          className="h-8 w-[84px] shrink-0 bg-emerald-600 text-xs font-bold text-emerald-950 hover:bg-emerald-500"
-                        >
-                          <Plus className="mr-1 h-3.5 w-3.5" />
-                          Agregar
-                        </Button>
-                      )}
-                    </div>
-                  );
-                })}
+                      {d.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Results count */}
+              <div className="px-3 pt-2 text-xs text-slate-500">
+                {total > 0 ? `${products.length} de ${total} resultados` : 'Buscando...'}
               </div>
 
-              {/* Loading more indicator */}
-              {loadingMore && (
-                <div className="flex items-center justify-center py-6">
-                  <Loader2 className="h-5 w-5 animate-spin text-emerald-400" />
-                  <span className="ml-2 text-sm text-slate-400">Cargando más productos...</span>
-                </div>
-              )}
+              {/* Product list */}
+              <div ref={gridRef} className="max-h-[55vh] overflow-y-auto p-2">
+                {loading ? (
+                  <div className="space-y-2">
+                    {Array.from({ length: 12 }).map((_, i) => (
+                      <div key={i} className="flex items-center gap-3 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2.5">
+                        <Skeleton className="h-4 w-1/3 bg-slate-700" />
+                        <Skeleton className="h-5 w-1/6 bg-slate-700" />
+                        <Skeleton className="h-6 w-16 bg-slate-700" />
+                        <Skeleton className="h-8 w-20 bg-slate-700" />
+                      </div>
+                    ))}
+                  </div>
+                ) : products.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-10 text-slate-500">
+                    <Search className="mb-2 h-10 w-10" />
+                    <p className="text-sm">No se encontraron productos</p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="space-y-1.5">
+                      {products.map((product) => {
+                        const soldOut = product.stock <= 0;
+                        return (
+                          <div
+                            key={product.id}
+                            className={cn(
+                              'flex items-center gap-3 rounded-lg border px-3 py-2 transition-colors',
+                              soldOut
+                                ? 'border-amber-800/40 bg-amber-950/20'
+                                : 'border-slate-700 bg-slate-800 hover:border-emerald-600/50 hover:bg-slate-700'
+                            )}
+                          >
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-semibold leading-snug text-slate-100">
+                                {product.name}
+                              </p>
+                              {product.barcode && (
+                                <p className="mt-0.5 truncate font-mono text-[11px] text-slate-500">
+                                  {product.barcode}
+                                </p>
+                              )}
+                            </div>
+                            <span className="shrink-0 text-sm font-bold text-emerald-400">
+                              {formatCurrency(tx(product.price))}
+                            </span>
+                            <Badge
+                              variant={soldOut ? 'destructive' : product.stock <= (product.minStock || 5) ? 'secondary' : 'outline'}
+                              className="w-[74px] shrink-0 justify-center text-xs"
+                            >
+                              {soldOut
+                                ? 'Sin stock'
+                                : `${product.stock} uds.`}
+                            </Badge>
+                            <Button
+                              size="sm"
+                              onClick={() => handleAddItem(product)}
+                              className="h-8 w-[84px] shrink-0 bg-emerald-600 text-xs font-bold text-emerald-950 hover:bg-emerald-500"
+                            >
+                              <Plus className="mr-1 h-3.5 w-3.5" />
+                              Agregar
+                            </Button>
+                          </div>
+                        );
+                      })}
+                    </div>
 
-              {!hasMore && products.length > 0 && (
-                <div className="py-4 text-center text-xs text-slate-600">
-                  — Todos los productos cargados ({total} en total) —
-                </div>
-              )}
-            </>
+                    {/* Loading more indicator */}
+                    {loadingMore && (
+                      <div className="flex items-center justify-center py-6">
+                        <Loader2 className="h-5 w-5 animate-spin text-emerald-400" />
+                        <span className="ml-2 text-sm text-slate-400">Cargando más productos...</span>
+                      </div>
+                    )}
+
+                    {!hasMore && products.length > 0 && (
+                      <div className="py-4 text-center text-xs text-slate-600">
+                        — Todos los productos cargados ({total} en total) —
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
           )}
         </div>
       </div>
 
-      {/* Right Panel — Shopping Cart (1/3) */}
-      <div className="flex min-h-[calc(100vh-4rem)] w-full flex-col border-t border-slate-700 bg-slate-800 lg:min-h-0 lg:w-1/3 lg:border-l lg:border-t-0">
+      {/* Full Screen Cart — Venta Actual */}
+      <div className="flex min-h-0 w-full flex-1 flex-col">
         {/* Cart Header */}
-        <div className="flex items-center justify-between border-b border-slate-700 px-4 py-3">
+        <div className="flex items-center justify-between border-b border-slate-700 bg-slate-800/60 px-6 py-3">
           <h2 className="flex items-center gap-2 text-lg font-semibold text-slate-100">
             🛒 Venta Actual
             {count > 0 && (
@@ -695,14 +735,17 @@ export default function PosPage() {
         </div>
 
         {/* Cart Items */}
-        <div className="flex-1 overflow-y-auto">
+        <div className="min-h-0 flex-1 overflow-y-auto">
           {count === 0 ? (
             <div className="flex h-full flex-col items-center justify-center text-slate-500">
-              <ShoppingCart className="mb-2 h-16 w-16" />
-              <p className="text-sm">Agrega productos al carrito</p>
+              <ShoppingCart className="mb-2 h-20 w-20 text-slate-700" />
+              <p className="text-base">Agrega productos al carrito</p>
+              <p className="mt-1 text-sm text-slate-600">
+                Escanea un código de barras o usa el buscador de arriba
+              </p>
             </div>
           ) : (
-            <div className="space-y-1 px-4 py-2">
+            <div className="mx-auto w-full max-w-3xl space-y-1.5 px-6 py-4">
               {cart.map((item) => (
                 <div
                   key={item.productId}
@@ -739,7 +782,7 @@ export default function PosPage() {
                       variant="ghost"
                       size="icon"
                       onClick={() => updateQuantity(item.productId, item.quantity + 1)}
-                      disabled={item.quantity >= item.stock}
+                      disabled={item.quantity >= item.stock && item.stock > 0}
                       className="h-7 w-7 rounded-full bg-emerald-700 text-white hover:bg-emerald-600 disabled:opacity-40"
                     >
                       <Plus className="h-3 w-3" />
@@ -765,124 +808,136 @@ export default function PosPage() {
         </div>
 
         {/* Bottom Section */}
-        <div className="border-t border-slate-700 px-4 py-3">
-          {/* Customer loyalty section */}
-          <div className="mb-3 space-y-2">
-            <label className="text-xs font-medium text-slate-400">Cliente (fidelidad)</label>
-            {selectedCustomer ? (
-              <div className="flex items-center justify-between rounded-lg border border-emerald-700 bg-emerald-900/20 p-2">
-                <div>
-                  <p className="text-sm font-medium text-emerald-400">{selectedCustomer.name}</p>
-                  <p className="text-xs text-emerald-600">{selectedCustomer.tier} - {selectedCustomer.purchaseCount} visitas</p>
-                </div>
-                <Button variant="ghost" size="sm" onClick={() => setSelectedCustomer(null)} className="h-7 text-xs text-slate-400 hover:text-red-400">Quitar</Button>
-              </div>
-            ) : (
-              <div className="space-y-1">
-                <div className="flex gap-1">
-                  <Input
-                    placeholder="Buscar cliente..."
-                    value={customerSearch}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      setCustomerSearch(value);
-                      if (value.trim().length < 2) {
-                        setCustomerResults([]);
-                        setSearchingCustomer(false);
-                      }
-                    }}
-                    className="h-8 text-xs border-slate-600 bg-slate-900 text-slate-100"
-                  />
-                  <Button variant="outline" size="sm" onClick={handleFingerprintScan} disabled={scanningFingerprint} className="h-8 border-slate-600 text-slate-300" title="Escanear huella (F5)">
-                    <Fingerprint className={`h-4 w-4 ${scanningFingerprint ? 'animate-pulse text-emerald-400' : ''}`} />
-                  </Button>
-                </div>
-                {searchingCustomer && customerSearch.length >= 2 && (
-                  <div className="px-3 py-1.5 text-xs text-slate-500">Buscando...</div>
-                )}
-                {customerResults.length > 0 && customerSearch.length >= 2 && (
-                  <div className="max-h-32 overflow-y-auto rounded-lg border border-slate-700 bg-slate-900">
-                    {customerResults.map((c) => (
-                      <div key={c.id} onClick={() => { setSelectedCustomer(c); setCustomerSearch(''); setCustomerResults([]); }} className="cursor-pointer px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-700">
-                        {c.name} <Badge className="ml-1 text-[10px]">{c.tier || 'bronce'}</Badge>
+        <div className="border-t border-slate-700 bg-slate-800/60 px-4 py-3 lg:px-6">
+          <div className="mx-auto grid w-full max-w-5xl gap-4 lg:grid-cols-2">
+            {/* Left column: customer + payment method */}
+            <div className="space-y-3">
+              {/* Customer loyalty section */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-slate-400">Cliente (fidelidad)</label>
+                {selectedCustomer ? (
+                  <div className="flex items-center justify-between rounded-lg border border-emerald-700 bg-emerald-900/20 p-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-emerald-400">{selectedCustomer.name}</p>
+                      <p className="text-xs text-emerald-600">{selectedCustomer.tier} - {selectedCustomer.purchaseCount} visitas</p>
+                    </div>
+                    <Button variant="ghost" size="sm" onClick={() => setSelectedCustomer(null)} className="h-7 text-xs text-slate-400 hover:text-red-400">Quitar</Button>
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    <div className="flex gap-1">
+                      <Input
+                        placeholder="Buscar cliente..."
+                        value={customerSearch}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setCustomerSearch(value);
+                          if (value.trim().length < 2) {
+                            setCustomerResults([]);
+                            setSearchingCustomer(false);
+                          }
+                        }}
+                        className="h-8 text-xs border-slate-600 bg-slate-900 text-slate-100"
+                      />
+                      <Button variant="outline" size="sm" onClick={handleFingerprintScan} disabled={scanningFingerprint} className="h-8 border-slate-600 text-slate-300" title="Escanear huella (F5)">
+                        <Fingerprint className={`h-4 w-4 ${scanningFingerprint ? 'animate-pulse text-emerald-400' : ''}`} />
+                      </Button>
+                    </div>
+                    {searchingCustomer && customerSearch.length >= 2 && (
+                      <div className="px-3 py-1.5 text-xs text-slate-500">Buscando...</div>
+                    )}
+                    {customerResults.length > 0 && customerSearch.length >= 2 && (
+                      <div className="max-h-28 overflow-y-auto rounded-lg border border-slate-700 bg-slate-900">
+                        {customerResults.map((c) => (
+                          <div key={c.id} onClick={() => { setSelectedCustomer(c); setCustomerSearch(''); setCustomerResults([]); }} className="cursor-pointer px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-700">
+                            {c.name} <Badge className="ml-1 text-[10px]">{c.tier || 'bronce'}</Badge>
+                          </div>
+                        ))}
                       </div>
-                    ))}
+                    )}
                   </div>
                 )}
               </div>
-            )}
-          </div>
 
-          <div className="flex items-center justify-between py-2">
-            <span className="text-sm text-slate-400">Subtotal</span>
-            <span className="text-lg font-bold text-slate-100">
-              {formatCurrency(taxedTotal)}
-            </span>
-          </div>
-
-          {taxState.active && (
-            <div className="flex items-center justify-between py-1">
-              <span className="text-xs text-amber-400 flex items-center gap-1">
-                <Percent className="h-3 w-3" /> Impuesto activo (+{taxState.percentage}%)
-              </span>
-              <span className="text-xs text-amber-300">
-                Precios redondeados al entero
-              </span>
+              <div className="space-y-1.5">
+                <label className="block text-xs font-medium text-slate-400">
+                  Método de pago
+                </label>
+                <Select
+                  value={selectedPaymentMethodId}
+                  onValueChange={setSelectedPaymentMethodId}
+                >
+                  <SelectTrigger className="w-full border-slate-600 bg-slate-900 text-slate-100">
+                    <SelectValue placeholder="Seleccionar método" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {paymentMethods.map((pm) => (
+                      <SelectItem key={pm.id} value={String(pm.id)}>
+                        {pm.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
-          )}
 
-          {loyaltyDiscount > 0 && (
-            <>
-              <div className="flex items-center justify-between py-1">
-                <span className="text-xs text-emerald-400 flex items-center gap-1">
-                  <Percent className="h-3 w-3" /> Descuento fidelidad
-                </span>
-                <span className="text-sm font-semibold text-emerald-400">
-                  -{formatCurrency(loyaltyDiscount)}
-                </span>
-              </div>
-              <div className="flex items-center justify-between py-1">
-                <span className="text-sm font-semibold text-slate-200">Total</span>
-                <span className="text-lg font-bold text-emerald-400">
-                  {formatCurrency(finalTotal)}
-                </span>
-              </div>
-            </>
-          )}
-          <Separator className="my-2" />
+            {/* Right column: totals + charge button */}
+            <div className="flex flex-col justify-between gap-2">
+              <div>
+                <div className="flex items-center justify-between py-1">
+                  <span className="text-sm text-slate-400">Subtotal</span>
+                  <span className="text-lg font-bold text-slate-100">
+                    {formatCurrency(taxedTotal)}
+                  </span>
+                </div>
 
-          <div className="py-2">
-            <label className="mb-1.5 block text-xs font-medium text-slate-400">
-              Método de pago
-            </label>
-            <Select
-              value={selectedPaymentMethodId}
-              onValueChange={setSelectedPaymentMethodId}
-            >
-              <SelectTrigger className="w-full border-slate-600 bg-slate-900 text-slate-100">
-                <SelectValue placeholder="Seleccionar método" />
-              </SelectTrigger>
-              <SelectContent>
-                {paymentMethods.map((pm) => (
-                  <SelectItem key={pm.id} value={String(pm.id)}>
-                    {pm.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+                {taxState.active && (
+                  <div className="flex items-center justify-between py-0.5">
+                    <span className="text-xs text-amber-400 flex items-center gap-1">
+                      <Percent className="h-3 w-3" /> Impuesto activo (+{taxState.percentage}%)
+                    </span>
+                    <span className="text-xs text-amber-300">
+                      Precios redondeados al entero
+                    </span>
+                  </div>
+                )}
+
+                {loyaltyDiscount > 0 && (
+                  <div className="flex items-center justify-between py-0.5">
+                    <span className="text-xs text-emerald-400 flex items-center gap-1">
+                      <Percent className="h-3 w-3" /> Descuento fidelidad
+                    </span>
+                    <span className="text-sm font-semibold text-emerald-400">
+                      -{formatCurrency(loyaltyDiscount)}
+                    </span>
+                  </div>
+                )}
+
+                <Separator className="my-1.5" />
+
+                <div className="flex items-center justify-between py-1">
+                  <span className="text-base font-semibold text-slate-200">Total</span>
+                  <span className="text-2xl font-extrabold text-emerald-400">
+                    {formatCurrency(finalTotal)}
+                  </span>
+                </div>
+              </div>
+
+              <div>
+                <Button
+                  size="lg"
+                  disabled={count === 0}
+                  onClick={() => { setCashReceived(finalTotal); setCheckoutOpen(true); }}
+                  className="w-full bg-emerald-600 py-6 text-lg font-bold text-white hover:bg-emerald-500"
+                >
+                  Cobrar — {formatCurrency(finalTotal)}
+                </Button>
+                <p className="mt-1.5 text-center text-[11px] text-slate-500">
+                  <span className="rounded bg-slate-700 px-1.5 py-0.5">F2</span> escanear · <span className="rounded bg-slate-700 px-1.5 py-0.5">F3</span> cobrar
+                </p>
+              </div>
+            </div>
           </div>
-
-          <Button
-            size="lg"
-            disabled={count === 0}
-            onClick={() => { setCashReceived(null); setCheckoutOpen(true); }}
-            className="mt-2 w-full bg-emerald-600 py-6 text-base font-bold text-white hover:bg-emerald-500"
-          >
-            Cobrar — {formatCurrency(finalTotal)}
-          </Button>
-          <p className="mt-1.5 text-center text-[11px] text-slate-500">
-            <span className="rounded bg-slate-700 px-1.5 py-0.5">F2</span> escanear · <span className="rounded bg-slate-700 px-1.5 py-0.5">F3</span> cobrar
-          </p>
         </div>
       </div>
 
@@ -1082,9 +1137,9 @@ export default function PosPage() {
             <DialogClose asChild>
               <Button variant="secondary">Cerrar</Button>
             </DialogClose>
-            <Button onClick={() => lastSale && printTicketHtml(lastSale)} className="bg-emerald-600 hover:bg-emerald-500">
+            <Button onClick={() => lastSale && handlePrintSale(lastSale)} className="bg-emerald-600 hover:bg-emerald-500">
               <Printer className="mr-2 h-4 w-4" />
-              Imprimir
+              {printingTicket ? 'Imprimiendo...' : 'Imprimir'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1170,6 +1225,67 @@ function TicketReceipt({ sale }: { sale: SaleTicket }) {
       </div>
     </div>
   );
+}
+
+// Genera el ticket como TEXTO PLANO para impresoras de tickets (58mm/80mm).
+// Estas impresoras suelen usar driver "Generic / Text Only" que solo imprime
+// texto; no soportan imagenes ni HTML. El ancho de 40 columnas es compatible
+// con 58mm (32-48 chars) y 80mm (48 chars) usando fuente monoespaciada.
+function buildPlainTextTicket(sale: SaleTicket): string {
+  const W = 40;
+  const line = (char: string) => char.repeat(W);
+  const leftRight = (l: string, r: string) => {
+    const ltrunc = l.slice(0, W - 2);
+    const rtrunc = r.slice(0, 14);
+    const pad = Math.max(1, W - ltrunc.length - rtrunc.length);
+    return ltrunc + ' '.repeat(pad) + rtrunc;
+  };
+  const center = (s: string) => {
+    const t = s.slice(0, W);
+    const pad = Math.max(0, Math.floor((W - t.length) / 2));
+    return ' '.repeat(pad) + t;
+  };
+
+  const date = sale.createdAt
+    ? new Date(sale.createdAt).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' })
+    : new Date().toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' });
+
+  const currency = (n: number) => formatCurrency(n);
+
+  const out: string[] = [];
+  out.push(center('TICKET DE VENTA'));
+  out.push(center('Venta #' + sale.id));
+  out.push(center(date));
+  out.push(line('='));
+  out.push(leftRight('Artículo', 'Importe'));
+  out.push(line('-'));
+
+  for (const item of sale.items) {
+    out.push(item.product.name.slice(0, W));
+    out.push(leftRight(`  ${item.quantity} x ${currency(item.price)}`, currency(item.price * item.quantity)));
+  }
+
+  out.push(line('='));
+
+  if (sale.taxBase !== undefined && sale.taxAmount !== undefined && sale.taxAmount > 0) {
+    out.push(leftRight('Subtotal (sin impuesto)', currency(sale.taxBase)));
+    out.push(leftRight(`Impuesto (+${sale.taxPercentage || 0}%)`, currency(sale.taxAmount)));
+  }
+  if (sale.discountTotal > 0) {
+    out.push(leftRight('Descuento', '-' + currency(sale.discountTotal)));
+  }
+  if (sale.cashReceived != null && sale.change != null) {
+    out.push(leftRight('Efectivo recibido', currency(sale.cashReceived)));
+    out.push(leftRight('Cambio', currency(sale.change)));
+  }
+  out.push(leftRight('TOTAL', currency(sale.total)));
+  out.push(line('-'));
+  out.push(leftRight('Método de pago', sale.paymentMethod?.name || '—'));
+  if (sale.user?.name) out.push(leftRight('Cajero', sale.user.name));
+  out.push('');
+  out.push(center('¡Gracias por su compra!'));
+  out.push('');
+  return out.join('\n');
 }
 
 // Imprime el ticket en un iframe oculto: funciona en el navegador y en Electron

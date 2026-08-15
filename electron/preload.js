@@ -21,6 +21,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Server
   restartServer: () => ipcRenderer.invoke('restart-server'),
 
+  // Ticket printer (texto plano)
+  getPrinters: () => ipcRenderer.invoke('get-printers'),
+  printPlainText: (text, printerName) => ipcRenderer.invoke('print-plain-text', { text, printerName }),
+
   // Updates
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
   installUpdate: () => ipcRenderer.invoke('install-update'),

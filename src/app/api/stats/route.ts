@@ -57,7 +57,6 @@ export async function GET() {
           stock: { lte: prisma.product.fields.minStock },
         },
         orderBy: { stock: "asc" },
-        take: 20,
       }),
       prisma.sale.groupBy({
         by: ["userId"],
