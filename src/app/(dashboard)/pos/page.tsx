@@ -286,6 +286,7 @@ export default function PosPage() {
   }, [addItem, setSearchTerm]);
 
   // Keyboard shortcuts
+  const count = itemCount();
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'F2') {
@@ -314,8 +315,6 @@ export default function PosPage() {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [products, searchTerm, handleBarcodeScan, count, checkoutOpen, receiptOpen]);
-
-  const count = itemCount();
 
   // Impuesto/recargo por horario: el servidor decide si esta activo
   const [taxState, setTaxState] = useState<{ active: boolean; percentage: number }>({ active: false, percentage: 0 });
