@@ -96,7 +96,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { startDate, endDate } = body;
+    const { startDate, endDate, preview } = body;
 
     if (!startDate || !endDate) {
       return Response.json(
@@ -247,6 +247,12 @@ export async function POST(request: Request) {
       byPaymentMethod,
       details,
     };
+
+    // Vista previa: calcula el resumen SIN guardar/actualizar el reporte.
+    // El usuario ve los datos antes de confirmar el corte de turno.
+    if (preview) {
+      return Response.json(data, { status: 200 });
+    }
 
     // Evitar duplicados: un reporte por usuario y dia de turno (startDate).
     // "Cerrar Turno" envia endDate = momento actual (cambia en cada click),

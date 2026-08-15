@@ -113,7 +113,6 @@ export default function PosPage() {
   const productsAbortRef = useRef<AbortController | null>(null);
   const customersAbortRef = useRef<AbortController | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [searchMode, setSearchMode] = useState<'name' | 'code'>('name');
   const [products, setProducts] = useState<Product[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [selectedDepartmentId, setSelectedDepartmentId] = useState<number | null>(null);
@@ -140,7 +139,6 @@ export default function PosPage() {
   // Camera barcode scanner
   const [scannerOpen, setScannerOpen] = useState(false);
   const handleScan = useCallback((code: string) => {
-    setSearchMode('code');
     setSearchTerm(code);
     searchRef.current?.focus();
   }, []);
@@ -169,7 +167,6 @@ export default function PosPage() {
       const params = new URLSearchParams();
       if (query) params.set('q', query);
       params.set('view', 'pos');
-      params.set('field', searchMode);
       if (selectedDepartmentId) params.set('departmentId', String(selectedDepartmentId));
       params.set('page', String(pageNum));
       params.set('limit', String(LIMIT));
@@ -213,7 +210,7 @@ export default function PosPage() {
         setLoadingMore(false);
       }
     }
-  }, [addItem, setSearchTerm, searchMode, selectedDepartmentId]);
+  }, [addItem, setSearchTerm, selectedDepartmentId]);
 
   useEffect(() => () => {
     productsAbortRef.current?.abort();
@@ -499,39 +496,12 @@ export default function PosPage() {
         {/* Search bar with mode tabs */}
         <div className="px-4 pt-4 pb-2 lg:px-6">
           <div className="flex items-stretch gap-2">
-            {/* Mode tabs */}
-            <div className="flex shrink-0 flex-col overflow-hidden rounded-lg border border-slate-600">
-              <button
-                type="button"
-                onClick={() => setSearchMode('name')}
-                className={cn(
-                  'flex-1 px-3 py-1.5 text-xs font-semibold transition-colors',
-                  searchMode === 'name'
-                    ? 'bg-emerald-600 text-emerald-950'
-                    : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
-                )}
-              >
-                Nombre
-              </button>
-              <button
-                type="button"
-                onClick={() => setSearchMode('code')}
-                className={cn(
-                  'flex-1 border-t border-slate-600 px-3 py-1.5 text-xs font-semibold transition-colors',
-                  searchMode === 'code'
-                    ? 'bg-emerald-600 text-emerald-950'
-                    : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
-                )}
-              >
-                Código
-              </button>
-            </div>
             {/* Search input */}
             <div className="relative flex-1">
               <Search className="absolute left-7 lg:left-9 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <Input
                 ref={searchRef}
-                placeholder={searchMode === 'code' ? 'Buscar por código de barras...' : 'Buscar productos por nombre...'}
+                placeholder="Buscar por nombre o código de barras..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="h-full bg-slate-800 border-slate-600 pl-10 pr-36 text-slate-100 placeholder:text-slate-500 focus-visible:ring-emerald-500"
@@ -645,7 +615,7 @@ export default function PosPage() {
                         <p className="text-sm font-semibold leading-snug text-slate-100">
                           {product.name}
                         </p>
-                        {searchMode === 'code' && (
+                        {product.barcode && (
                           <p className="mt-0.5 truncate font-mono text-[11px] text-slate-500">
                             {product.barcode}
                           </p>

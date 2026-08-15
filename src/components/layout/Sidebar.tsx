@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter, usePathname } from 'next/navigation';
 import {
@@ -114,6 +114,35 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
   const [closingShift, setClosingShift] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [shiftResult, setShiftResult] = useState<ShiftResult | null>(null);
+  const [shiftPreview, setShiftPreview] = useState<ShiftResult | null>(null);
+  const [loadingPreview, setLoadingPreview] = useState(false);
+
+  const buildShiftPayload = () => {
+    const now = new Date();
+    const startOfDay = new Date(now);
+    startOfDay.setHours(0, 0, 0, 0);
+    return {
+      startDate: startOfDay.toISOString(),
+      endDate: now.toISOString(),
+    };
+  };
+
+  const loadShiftPreview = useCallback(async () => {
+    setLoadingPreview(true);
+    try {
+      const res = await fetch('/api/shift-reports', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...buildShiftPayload(), preview: true }),
+      });
+      if (!res.ok) throw new Error('Error al cargar resumen');
+      setShiftPreview(await res.json());
+    } catch {
+      setShiftPreview(null);
+    } finally {
+      setLoadingPreview(false);
+    }
+  }, []);
 
   const businessName = business.businessName || 'POS System';
   const businessInitial = businessName.trim().charAt(0).toUpperCase() || 'P';
@@ -222,7 +251,14 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
               open={dialogOpen}
               onOpenChange={(o) => {
                 setDialogOpen(o);
-                if (!o) setShiftResult(null);
+                if (o) {
+                  setShiftResult(null);
+                  setShiftPreview(null);
+                  loadShiftPreview();
+                } else {
+                  setShiftResult(null);
+                  setShiftPreview(null);
+                }
               }}
             >
               <DialogTrigger asChild>
@@ -252,19 +288,21 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
                   <DialogDescription>
                     {shiftResult
                       ? 'Resumen de las ventas de tu turno.'
-                      : 'Se generará un reporte con las ventas de tu turno (desde las 00:00 hrs hasta ahora). ¿Estás seguro de que deseas cerrar tu turno?'}
+                      : shiftPreview
+                        ? 'Revisa los datos de tu turno antes de confirmar el corte.'
+                        : 'Se generará un reporte con las ventas de tu turno (desde las 00:00 hrs hasta ahora).'}
                   </DialogDescription>
                 </DialogHeader>
 
-                {shiftResult ? (
+                {shiftResult || shiftPreview ? (
                   <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
                     <div className="flex items-center justify-between rounded-lg border border-slate-700 bg-slate-800/50 px-4 py-2.5">
                       <span className="text-sm text-slate-400">Ventas totales</span>
-                      <span className="text-lg font-bold text-slate-100">{shiftResult.totalSales}</span>
+                      <span className="text-lg font-bold text-slate-100">{(shiftResult ?? shiftPreview)!.totalSales}</span>
                     </div>
                     <div className="flex items-center justify-between rounded-lg border border-slate-700 bg-slate-800/50 px-4 py-2.5">
                       <span className="text-sm text-slate-400">Monto total</span>
-                      <span className="text-lg font-bold text-emerald-400">{formatCurrency(shiftResult.totalAmount)}</span>
+                      <span className="text-lg font-bold text-emerald-400">{formatCurrency((shiftResult ?? shiftPreview)!.totalAmount)}</span>
                     </div>
 
                     <div>
@@ -272,7 +310,7 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
                         Por método de pago
                       </p>
                       <div className="space-y-1.5">
-                        {Object.entries(parsePm(shiftResult.byPaymentMethod)).map(([name, pm]) => (
+                        {Object.entries(parsePm((shiftResult ?? shiftPreview)!.byPaymentMethod)).map(([name, pm]) => (
                           <div
                             key={name}
                             className="rounded-lg border border-slate-700 bg-slate-800/50 px-4 py-2"
@@ -304,13 +342,13 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
                       </div>
                     </div>
 
-                    {shiftResult.totalRefunds > 0 && (
+                    {(shiftResult ?? shiftPreview)!.totalRefunds > 0 && (
                       <div className="flex items-center justify-between rounded-lg border border-red-900/40 bg-red-950/20 px-4 py-2.5">
                         <span className="text-sm text-slate-400">
-                          Reembolsos ({shiftResult.totalRefunds})
+                          Reembolsos ({(shiftResult ?? shiftPreview)!.totalRefunds})
                         </span>
                         <span className="text-sm font-semibold text-red-400">
-                          -{formatCurrency(shiftResult.refundAmount)}
+                          -{formatCurrency((shiftResult ?? shiftPreview)!.refundAmount)}
                         </span>
                       </div>
                     )}
@@ -320,9 +358,14 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
                     <div className="flex items-center justify-between rounded-lg bg-slate-950/60 px-4 py-3">
                       <span className="text-sm font-semibold text-slate-200">Neto del turno</span>
                       <span className="text-xl font-extrabold text-emerald-400">
-                        {formatCurrency(shiftResult.netAmount)}
+                        {formatCurrency((shiftResult ?? shiftPreview)!.netAmount)}
                       </span>
                     </div>
+                  </div>
+                ) : loadingPreview ? (
+                  <div className="flex items-center gap-3 rounded-lg border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-slate-300">
+                    <Loader2 className="h-4 w-4 shrink-0 animate-spin text-slate-500" />
+                    Cargando resumen del turno...
                   </div>
                 ) : (
                   <div className="space-y-4">
@@ -352,17 +395,10 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
                         onClick={async () => {
                           setClosingShift(true);
                           try {
-                            const now = new Date();
-                            const startOfDay = new Date(now);
-                            startOfDay.setHours(0, 0, 0, 0);
-
                             const res = await fetch('/api/shift-reports', {
                               method: 'POST',
                               headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({
-                                startDate: startOfDay.toISOString(),
-                                endDate: now.toISOString(),
-                              }),
+                              body: JSON.stringify(buildShiftPayload()),
                             });
 
                             if (!res.ok) {
@@ -388,7 +424,7 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
                             Generando...
                           </>
                         ) : (
-                          'Confirmar'
+                          'Confirmar corte'
                         )}
                       </Button>
                     </>
