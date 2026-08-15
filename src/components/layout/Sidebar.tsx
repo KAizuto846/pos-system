@@ -23,10 +23,14 @@ import {
   UserRound,
   Settings,
   RefreshCw,
+  CheckCircle2,
+  Loader2,
 } from 'lucide-react';
 import { signOut, useSession } from 'next-auth/react';
-import { cn } from '@/lib/utils';
+import { cn, formatCurrency } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Separator } from '@/components/ui/separator';
 import VersionBadge from '@/components/VersionBadge';
 import { useBusiness } from '@/hooks/useBusiness';
 import {
@@ -43,6 +47,34 @@ import {
 interface SidebarProps {
   open: boolean;
   onClose: () => void;
+}
+
+interface ShiftResult {
+  id: number;
+  startDate: string;
+  endDate: string;
+  totalSales: number;
+  totalAmount: number;
+  totalCost: number;
+  totalRefunds: number;
+  refundAmount: number;
+  netAmount: number;
+  byPaymentMethod: string;
+}
+
+interface PmBreakdown {
+  count: number;
+  total: number;
+  cashReceived: number;
+  change: number;
+}
+
+function parsePm(json: string): Record<string, PmBreakdown> {
+  try {
+    return JSON.parse(json);
+  } catch {
+    return {};
+  }
 }
 
 const navLinks = [
@@ -81,6 +113,7 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
   const canCloseShift = session?.user?.role === 'CASHIER' || isAdmin;
   const [closingShift, setClosingShift] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [shiftResult, setShiftResult] = useState<ShiftResult | null>(null);
 
   const businessName = business.businessName || 'POS System';
   const businessInitial = businessName.trim().charAt(0).toUpperCase() || 'P';
@@ -185,7 +218,13 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
             <span>Configuración</span>
           </Link>
           {canCloseShift && (
-            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+            <Dialog
+              open={dialogOpen}
+              onOpenChange={(o) => {
+                setDialogOpen(o);
+                if (!o) setShiftResult(null);
+              }}
+            >
               <DialogTrigger asChild>
                 <Button
                   variant="ghost"
@@ -195,54 +234,165 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
                   <span>Cerrar Turno</span>
                 </Button>
               </DialogTrigger>
-              <DialogContent className="sm:max-w-md">
-                <DialogHeader>
-                  <DialogTitle>Cerrar Turno</DialogTitle>
+              <DialogContent className="flex max-h-[85vh] flex-col sm:max-w-lg">
+                <DialogHeader className="shrink-0">
+                  <DialogTitle className="flex items-center gap-2">
+                    {shiftResult ? (
+                      <>
+                        <CheckCircle2 className="h-5 w-5 text-emerald-400" />
+                        Turno cerrado
+                      </>
+                    ) : (
+                      <>
+                        <ClipboardCheck className="h-5 w-5" />
+                        Cerrar Turno
+                      </>
+                    )}
+                  </DialogTitle>
                   <DialogDescription>
-                    Se generará un reporte con las ventas de tu turno (desde las 00:00 hrs hasta ahora).
-                    ¿Estás seguro de que deseas cerrar tu turno?
+                    {shiftResult
+                      ? 'Resumen de las ventas de tu turno.'
+                      : 'Se generará un reporte con las ventas de tu turno (desde las 00:00 hrs hasta ahora). ¿Estás seguro de que deseas cerrar tu turno?'}
                   </DialogDescription>
                 </DialogHeader>
-                <DialogFooter className="gap-2 sm:gap-0">
-                  <DialogClose asChild>
-                    <Button variant="outline">Cancelar</Button>
-                  </DialogClose>
-                  <Button
-                    onClick={async () => {
-                      setClosingShift(true);
-                      try {
-                        const now = new Date();
-                        const startOfDay = new Date(now);
-                        startOfDay.setHours(0, 0, 0, 0);
 
-                        const res = await fetch('/api/shift-reports', {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({
-                            startDate: startOfDay.toISOString(),
-                            endDate: now.toISOString(),
-                          }),
-                        });
+                {shiftResult ? (
+                  <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
+                    <div className="flex items-center justify-between rounded-lg border border-slate-700 bg-slate-800/50 px-4 py-2.5">
+                      <span className="text-sm text-slate-400">Ventas totales</span>
+                      <span className="text-lg font-bold text-slate-100">{shiftResult.totalSales}</span>
+                    </div>
+                    <div className="flex items-center justify-between rounded-lg border border-slate-700 bg-slate-800/50 px-4 py-2.5">
+                      <span className="text-sm text-slate-400">Monto total</span>
+                      <span className="text-lg font-bold text-emerald-400">{formatCurrency(shiftResult.totalAmount)}</span>
+                    </div>
 
-                        if (!res.ok) {
-                          const err = await res.json();
-                          alert('Error al cerrar turno: ' + (err.error || 'Error desconocido'));
-                          return;
-                        }
+                    <div>
+                      <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Por método de pago
+                      </p>
+                      <div className="space-y-1.5">
+                        {Object.entries(parsePm(shiftResult.byPaymentMethod)).map(([name, pm]) => (
+                          <div
+                            key={name}
+                            className="rounded-lg border border-slate-700 bg-slate-800/50 px-4 py-2"
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="text-sm font-medium text-slate-200">{name}</span>
+                              <Badge variant="outline" className="text-xs">
+                                {pm.count} {pm.count === 1 ? 'venta' : 'ventas'}
+                              </Badge>
+                            </div>
+                            <div className="mt-1 flex items-center justify-between text-sm">
+                              <span className="text-slate-400">Total</span>
+                              <span className="font-semibold text-slate-100">{formatCurrency(pm.total)}</span>
+                            </div>
+                            {pm.cashReceived > 0 && (
+                              <div className="flex items-center justify-between text-xs text-slate-500">
+                                <span>Efectivo recibido</span>
+                                <span>{formatCurrency(pm.cashReceived)}</span>
+                              </div>
+                            )}
+                            {pm.change > 0 && (
+                              <div className="flex items-center justify-between text-xs text-slate-500">
+                                <span>Cambio entregado</span>
+                                <span>{formatCurrency(pm.change)}</span>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
 
-                        setDialogOpen(false);
-                        router.push('/reports');
-                      } catch (error) {
-                        alert('Error de conexión al cerrar turno');
-                        console.error('Error closing shift:', error);
-                      } finally {
-                        setClosingShift(false);
-                      }
-                    }}
-                    disabled={closingShift}
-                  >
-                    {closingShift ? 'Generando...' : 'Confirmar'}
-                  </Button>
+                    {shiftResult.totalRefunds > 0 && (
+                      <div className="flex items-center justify-between rounded-lg border border-red-900/40 bg-red-950/20 px-4 py-2.5">
+                        <span className="text-sm text-slate-400">
+                          Reembolsos ({shiftResult.totalRefunds})
+                        </span>
+                        <span className="text-sm font-semibold text-red-400">
+                          -{formatCurrency(shiftResult.refundAmount)}
+                        </span>
+                      </div>
+                    )}
+
+                    <Separator className="my-1" />
+
+                    <div className="flex items-center justify-between rounded-lg bg-slate-950/60 px-4 py-3">
+                      <span className="text-sm font-semibold text-slate-200">Neto del turno</span>
+                      <span className="text-xl font-extrabold text-emerald-400">
+                        {formatCurrency(shiftResult.netAmount)}
+                      </span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-3 rounded-lg border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-slate-300">
+                      <Loader2 className="h-4 w-4 shrink-0 text-slate-500" />
+                      El reporte incluye el total de ventas y el desglose por método de pago de hoy.
+                    </div>
+                  </div>
+                )}
+
+                <DialogFooter className="shrink-0 gap-2 sm:gap-0">
+                  {shiftResult ? (
+                    <>
+                      <DialogClose asChild>
+                        <Button variant="outline">Cerrar</Button>
+                      </DialogClose>
+                      <Button onClick={() => router.push('/reports')} className="bg-emerald-600 hover:bg-emerald-500">
+                        Ver reportes
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <DialogClose asChild>
+                        <Button variant="outline">Cancelar</Button>
+                      </DialogClose>
+                      <Button
+                        onClick={async () => {
+                          setClosingShift(true);
+                          try {
+                            const now = new Date();
+                            const startOfDay = new Date(now);
+                            startOfDay.setHours(0, 0, 0, 0);
+
+                            const res = await fetch('/api/shift-reports', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({
+                                startDate: startOfDay.toISOString(),
+                                endDate: now.toISOString(),
+                              }),
+                            });
+
+                            if (!res.ok) {
+                              const err = await res.json();
+                              alert('Error al cerrar turno: ' + (err.error || 'Error desconocido'));
+                              return;
+                            }
+
+                            const report: ShiftResult = await res.json();
+                            setShiftResult(report);
+                          } catch (error) {
+                            alert('Error de conexión al cerrar turno');
+                            console.error('Error closing shift:', error);
+                          } finally {
+                            setClosingShift(false);
+                          }
+                        }}
+                        disabled={closingShift}
+                      >
+                        {closingShift ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            Generando...
+                          </>
+                        ) : (
+                          'Confirmar'
+                        )}
+                      </Button>
+                    </>
+                  )}
                 </DialogFooter>
               </DialogContent>
             </Dialog>

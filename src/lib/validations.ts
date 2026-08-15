@@ -69,6 +69,8 @@ export const saleSchema = z.object({
   total: z.number().min(0),
   discountTotal: z.number().min(0).default(0),
   customerId: z.number().nullable().optional(),
+  cashReceived: z.number().min(0).nullable().optional(),
+  change: z.number().min(0).nullable().optional(),
 });
 
 export const orderSchema = z.object({

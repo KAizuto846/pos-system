@@ -9,10 +9,6 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Separator } from '@/components/ui/separator';
 import {
-  Card,
-  CardContent,
-} from '@/components/ui/card';
-import {
   Select,
   SelectTrigger,
   SelectValue,
@@ -29,7 +25,7 @@ import {
   DialogClose,
 } from '@/components/ui/dialog';
 import { usePosStore } from '@/store/pos-store';
-import { formatCurrency } from '@/lib/utils';
+import { formatCurrency, cn } from '@/lib/utils';
 import { BarcodeScanner } from '@/components/BarcodeScanner';
 
 interface Product {
@@ -51,6 +47,11 @@ interface Customer {
   name: string;
   tier: string;
   purchaseCount: number;
+}
+
+interface Department {
+  id: number;
+  name: string;
 }
 
 interface PaymentMethod {
@@ -78,6 +79,9 @@ interface SaleTicket {
   taxBase?: number;
   taxAmount?: number;
   taxPercentage?: number;
+  cashReceived?: number;
+  change?: number;
+  createdAt?: string;
   paymentMethod?: { name: string };
   user?: { name: string };
   items: {
@@ -109,7 +113,10 @@ export default function PosPage() {
   const productsAbortRef = useRef<AbortController | null>(null);
   const customersAbortRef = useRef<AbortController | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [searchMode, setSearchMode] = useState<'name' | 'code'>('name');
   const [products, setProducts] = useState<Product[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [selectedDepartmentId, setSelectedDepartmentId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [page, setPage] = useState(1);
@@ -119,6 +126,7 @@ export default function PosPage() {
   const [selectedPaymentMethodId, setSelectedPaymentMethodId] = useState<string>('');
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [checkingOut, setCheckingOut] = useState(false);
+  const [cashReceived, setCashReceived] = useState<number | null>(null);
   const [lastSale, setLastSale] = useState<SaleTicket | null>(null);
   const [receiptOpen, setReceiptOpen] = useState(false);
 
@@ -132,6 +140,7 @@ export default function PosPage() {
   // Camera barcode scanner
   const [scannerOpen, setScannerOpen] = useState(false);
   const handleScan = useCallback((code: string) => {
+    setSearchMode('code');
     setSearchTerm(code);
     searchRef.current?.focus();
   }, []);
@@ -160,6 +169,8 @@ export default function PosPage() {
       const params = new URLSearchParams();
       if (query) params.set('q', query);
       params.set('view', 'pos');
+      params.set('field', searchMode);
+      if (selectedDepartmentId) params.set('departmentId', String(selectedDepartmentId));
       params.set('page', String(pageNum));
       params.set('limit', String(LIMIT));
       
@@ -202,7 +213,7 @@ export default function PosPage() {
         setLoadingMore(false);
       }
     }
-  }, [addItem, setSearchTerm]);
+  }, [addItem, setSearchTerm, searchMode, selectedDepartmentId]);
 
   useEffect(() => () => {
     productsAbortRef.current?.abort();
@@ -248,6 +259,18 @@ export default function PosPage() {
       .catch(() => toast.error('Error al cargar métodos de pago'));
   }, []);
 
+  // Fetch departments for the filter chips
+  useEffect(() => {
+    fetch('/api/departments')
+      .then((res) => res.json())
+      .then((data: Department[]) => {
+        if (Array.isArray(data)) {
+          setDepartments(data.filter((d) => d.name));
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   // Escaneo de código de barras: agrega el producto y limpia el campo
   // para poder escanear el siguiente inmediatamente.
   const handleBarcodeScan = useCallback((product: Product) => {
@@ -269,6 +292,13 @@ export default function PosPage() {
         e.preventDefault();
         searchRef.current?.focus();
       }
+      if (e.key === 'F3') {
+        e.preventDefault();
+        if (count > 0 && !checkoutOpen && !receiptOpen) {
+          setCashReceived(null);
+          setCheckoutOpen(true);
+        }
+      }
       if (e.key === 'Enter' && document.activeElement === searchRef.current) {
         const term = searchTerm.trim();
         if (term && products.length === 1) {
@@ -283,7 +313,7 @@ export default function PosPage() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [products, searchTerm, handleBarcodeScan]);
+  }, [products, searchTerm, handleBarcodeScan, count, checkoutOpen, receiptOpen]);
 
   const count = itemCount();
 
@@ -392,9 +422,24 @@ export default function PosPage() {
 
   const finalTotal = taxedTotal - loyaltyDiscount;
 
+  // Efectivo recibido / cambio (solo aplica a metodos que afectan caja)
+  const selectedPaymentMethod = paymentMethods.find(
+    (pm) => String(pm.id) === selectedPaymentMethodId
+  );
+  const isCashMethod = selectedPaymentMethod?.affectsCash ?? true;
+  const change = cashReceived !== null && isCashMethod
+    ? Math.max(0, Math.round((cashReceived - finalTotal) * 100) / 100)
+    : null;
+  const hasEnoughCash = cashReceived !== null && cashReceived >= finalTotal;
+
   const handleCheckout = async () => {
     if (!selectedPaymentMethodId) {
       toast.error('Selecciona un metodo de pago');
+      return;
+    }
+
+    if (isCashMethod && !hasEnoughCash) {
+      toast.error('El efectivo recibido es insuficiente');
       return;
     }
 
@@ -410,6 +455,8 @@ export default function PosPage() {
         total: finalTotal,
         discountTotal: loyaltyDiscount,
         customerId: selectedCustomer?.id || null,
+        cashReceived: isCashMethod && cashReceived !== null ? cashReceived : null,
+        change: isCashMethod && change !== null ? change : null,
       };
 
       const res = await fetch('/api/sales', {
@@ -448,53 +495,127 @@ export default function PosPage() {
 
   return (
     <div className="-m-4 flex min-h-[calc(100vh-4rem)] flex-col gap-0 lg:-m-6 lg:h-[calc(100vh-4rem)] lg:flex-row">
-      {/* Left Panel — Product Search & Grid (2/3) */}
+      {/* Left Panel — Product Search & List (2/3) */}
       <div className="flex h-[65vh] w-full flex-col overflow-hidden lg:h-auto lg:w-2/3">
-        {/* Search bar with count */}
-        <div className="relative px-4 pt-4 pb-3 lg:px-6">
-          <Search className="absolute left-7 lg:left-9 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <Input
-            ref={searchRef}
-            placeholder="Buscar productos por nombre o código de barras..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="bg-slate-800 border-slate-600 pl-10 pr-36 text-slate-100 placeholder:text-slate-500 focus-visible:ring-emerald-500"
-          />
-          <span className="absolute right-7 lg:right-9 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
-            <Button
-              type="button"
-              variant="outline"
-              size="icon"
-              className="h-7 w-7"
-              title="Leer código de barras con la cámara"
-              onClick={() => setScannerOpen(true)}
-            >
-              <ScanLine className="h-3.5 w-3.5" />
-            </Button>
-            <span className="text-xs text-slate-500">
-              {total > 0 ? `${products.length}/${total}` : ''}
-            </span>
-            <span className="rounded bg-slate-700 px-2 py-0.5 text-xs text-slate-400">
-              F2
-            </span>
-          </span>
+        {/* Search bar with mode tabs */}
+        <div className="px-4 pt-4 pb-2 lg:px-6">
+          <div className="flex items-stretch gap-2">
+            {/* Mode tabs */}
+            <div className="flex shrink-0 flex-col overflow-hidden rounded-lg border border-slate-600">
+              <button
+                type="button"
+                onClick={() => setSearchMode('name')}
+                className={cn(
+                  'flex-1 px-3 py-1.5 text-xs font-semibold transition-colors',
+                  searchMode === 'name'
+                    ? 'bg-emerald-600 text-emerald-950'
+                    : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                )}
+              >
+                Nombre
+              </button>
+              <button
+                type="button"
+                onClick={() => setSearchMode('code')}
+                className={cn(
+                  'flex-1 border-t border-slate-600 px-3 py-1.5 text-xs font-semibold transition-colors',
+                  searchMode === 'code'
+                    ? 'bg-emerald-600 text-emerald-950'
+                    : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                )}
+              >
+                Código
+              </button>
+            </div>
+            {/* Search input */}
+            <div className="relative flex-1">
+              <Search className="absolute left-7 lg:left-9 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <Input
+                ref={searchRef}
+                placeholder={searchMode === 'code' ? 'Buscar por código de barras...' : 'Buscar productos por nombre...'}
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="h-full bg-slate-800 border-slate-600 pl-10 pr-36 text-slate-100 placeholder:text-slate-500 focus-visible:ring-emerald-500"
+              />
+              <span className="absolute right-7 lg:right-9 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
+                {searchTerm && (
+                  <button
+                    type="button"
+                    onClick={() => { setSearchTerm(''); searchRef.current?.focus(); }}
+                    className="rounded-full bg-slate-700 px-1.5 py-0.5 text-xs text-slate-300 hover:bg-slate-600 hover:text-slate-100 transition-colors"
+                    title="Limpiar búsqueda"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="h-7 w-7"
+                  title="Leer código de barras con la cámara"
+                  onClick={() => setScannerOpen(true)}
+                >
+                  <ScanLine className="h-3.5 w-3.5" />
+                </Button>
+                <span className="text-xs text-slate-500">
+                  {total > 0 ? `${products.length}/${total}` : ''}
+                </span>
+                <span className="rounded bg-slate-700 px-2 py-0.5 text-xs text-slate-400">
+                  F2
+                </span>
+              </span>
+            </div>
+          </div>
         </div>
 
-        {/* Product Grid with infinite scroll */}
+        {/* Department chips */}
+        {departments.length > 0 && (
+          <div className="flex gap-2 overflow-x-auto px-4 pb-2 lg:px-6 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <button
+              type="button"
+              onClick={() => setSelectedDepartmentId(null)}
+              className={cn(
+                'shrink-0 rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+                selectedDepartmentId === null
+                  ? 'border-emerald-600 bg-emerald-600 text-emerald-950'
+                  : 'border-slate-600 bg-slate-800 text-slate-300 hover:bg-slate-700'
+              )}
+            >
+              Todos
+            </button>
+            {departments.map((d) => (
+              <button
+                key={d.id}
+                type="button"
+                onClick={() => setSelectedDepartmentId(d.id)}
+                className={cn(
+                  'shrink-0 rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+                  selectedDepartmentId === d.id
+                    ? 'border-emerald-600 bg-emerald-600 text-emerald-950'
+                    : 'border-slate-600 bg-slate-800 text-slate-300 hover:bg-slate-700'
+                )}
+              >
+                {d.name}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Product List with infinite scroll */}
         <div
           ref={gridRef}
           className="flex-1 overflow-y-auto px-4 pb-4 lg:px-6"
         >
           {loading ? (
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4">
+            <div className="space-y-2">
               {Array.from({ length: 12 }).map((_, i) => (
-                <Card key={i} className="border-slate-700 bg-slate-800">
-                  <CardContent className="p-4">
-                    <Skeleton className="mb-2 h-4 w-3/4 bg-slate-700" />
-                    <Skeleton className="mb-2 h-5 w-1/2 bg-slate-700" />
-                    <Skeleton className="h-4 w-1/3 bg-slate-700" />
-                  </CardContent>
-                </Card>
+                <div key={i} className="flex items-center gap-3 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2.5">
+                  <Skeleton className="h-4 w-1/3 bg-slate-700" />
+                  <Skeleton className="h-5 w-1/6 bg-slate-700" />
+                  <Skeleton className="h-6 w-16 bg-slate-700" />
+                  <Skeleton className="h-8 w-20 bg-slate-700" />
+                </div>
               ))}
             </div>
           ) : products.length === 0 ? (
@@ -508,31 +629,53 @@ export default function PosPage() {
             </div>
           ) : (
             <>
-              <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4">
-                {products.map((product) => (
-                  <Card
-                    key={product.id}
-                    onClick={() => handleAddItem(product)}
-                    className="cursor-pointer border-slate-700 bg-slate-800 transition-colors hover:bg-slate-700"
-                  >
-                    <CardContent className="flex flex-col gap-1 p-4">
-                      <span className="truncate text-sm font-medium text-slate-100">
-                        {product.name}
-                      </span>
-                      <span className="text-lg font-bold text-emerald-400">
+              <div className="space-y-2">
+                {products.map((product) => {
+                  const soldOut = product.stock <= 0;
+                  return (
+                    <div
+                      key={product.id}
+                      className={cn(
+                        'flex items-center gap-3 rounded-lg border px-3 py-2 transition-colors',
+                        soldOut
+                          ? 'border-slate-700/40 bg-slate-800/40 opacity-45'
+                          : 'border-slate-700 bg-slate-800 hover:border-emerald-600/50 hover:bg-slate-700'
+                      )}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-semibold leading-snug text-slate-100">
+                          {product.name}
+                        </p>
+                        {searchMode === 'code' && (
+                          <p className="mt-0.5 truncate font-mono text-[11px] text-slate-500">
+                            {product.barcode}
+                          </p>
+                        )}
+                      </div>
+                      <span className="shrink-0 text-sm font-bold text-emerald-400">
                         {formatCurrency(tx(product.price))}
                       </span>
                       <Badge
-                        variant={product.stock <= 0 ? 'destructive' : product.stock <= (product.minStock || 5) ? 'secondary' : 'outline'}
-                        className="w-fit text-xs"
+                        variant={soldOut ? 'destructive' : product.stock <= (product.minStock || 5) ? 'secondary' : 'outline'}
+                        className="w-[74px] shrink-0 justify-center text-xs"
                       >
-                        {product.stock <= 0
+                        {soldOut
                           ? 'Sin stock'
                           : `${product.stock} uds.`}
                       </Badge>
-                    </CardContent>
-                  </Card>
-                ))}
+                      {!soldOut && (
+                        <Button
+                          size="sm"
+                          onClick={() => handleAddItem(product)}
+                          className="h-8 w-[84px] shrink-0 bg-emerald-600 text-xs font-bold text-emerald-950 hover:bg-emerald-500"
+                        >
+                          <Plus className="mr-1 h-3.5 w-3.5" />
+                          Agregar
+                        </Button>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
 
               {/* Loading more indicator */}
@@ -763,18 +906,21 @@ export default function PosPage() {
           <Button
             size="lg"
             disabled={count === 0}
-            onClick={() => setCheckoutOpen(true)}
+            onClick={() => { setCashReceived(null); setCheckoutOpen(true); }}
             className="mt-2 w-full bg-emerald-600 py-6 text-base font-bold text-white hover:bg-emerald-500"
           >
             Cobrar — {formatCurrency(finalTotal)}
           </Button>
+          <p className="mt-1.5 text-center text-[11px] text-slate-500">
+            <span className="rounded bg-slate-700 px-1.5 py-0.5">F2</span> escanear · <span className="rounded bg-slate-700 px-1.5 py-0.5">F3</span> cobrar
+          </p>
         </div>
       </div>
 
       {/* Checkout Dialog */}
       <Dialog open={checkoutOpen} onOpenChange={setCheckoutOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
+        <DialogContent className="flex max-h-[85vh] flex-col sm:max-w-md">
+          <DialogHeader className="shrink-0">
             <DialogTitle className="flex items-center gap-2 text-slate-100">
               🛒 Confirmar Venta
             </DialogTitle>
@@ -783,7 +929,7 @@ export default function PosPage() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4">
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
             {selectedCustomer && (
               <div className="rounded-lg border border-emerald-700 bg-emerald-900/20 p-3">
                 <div className="flex items-center gap-2 text-sm text-emerald-400">
@@ -796,6 +942,72 @@ export default function PosPage() {
                     Descuento aplicado: {formatCurrency(loyaltyDiscount)}
                   </p>
                 )}
+              </div>
+            )}
+
+            {isCashMethod && (
+              <div className="rounded-lg border border-slate-700 bg-slate-800/50 p-4">
+                <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                  Efectivo recibido
+                </h4>
+                <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCashReceived(finalTotal)}
+                    className={cn(
+                      'border-slate-600 bg-slate-900 text-xs text-slate-200 hover:bg-slate-700',
+                      cashReceived === finalTotal && 'border-emerald-500 bg-emerald-900/40 text-emerald-300'
+                    )}
+                  >
+                    Exacto
+                  </Button>
+                  {[20, 50, 100, 200, 500, 1000].map((bill) => (
+                    <Button
+                      key={bill}
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCashReceived(bill)}
+                      className={cn(
+                        'border-slate-600 bg-slate-900 text-xs font-bold text-slate-100 hover:bg-slate-700',
+                        cashReceived === bill && 'border-emerald-500 bg-emerald-900/40 text-emerald-300'
+                      )}
+                    >
+                      ${bill}
+                    </Button>
+                  ))}
+                </div>
+                <Input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  placeholder="Otro monto..."
+                  value={cashReceived ?? ''}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setCashReceived(v === '' ? null : Math.max(0, Number(v)));
+                  }}
+                  className="mt-2 h-9 border-slate-600 bg-slate-900 text-slate-100"
+                />
+                <div className="mt-3 flex items-center justify-between rounded-md bg-slate-950/60 px-3 py-2">
+                  <span className="text-sm text-slate-400">Cambio</span>
+                  <span
+                    className={cn(
+                      'text-2xl font-extrabold tabular-nums',
+                      cashReceived !== null && cashReceived < finalTotal
+                        ? 'text-red-400'
+                        : 'text-emerald-400'
+                    )}
+                  >
+                    {cashReceived === null
+                      ? '—'
+                      : cashReceived < finalTotal
+                        ? `Faltan ${formatCurrency(Math.round((finalTotal - cashReceived) * 100) / 100)}`
+                        : formatCurrency(change ?? 0)}
+                  </span>
+                </div>
               </div>
             )}
 
@@ -853,7 +1065,7 @@ export default function PosPage() {
             </div>
           </div>
 
-          <DialogFooter className="gap-2 sm:gap-0">
+          <DialogFooter className="gap-2 sm:gap-0 shrink-0">
             <DialogClose asChild>
               <Button variant="secondary" disabled={checkingOut}>
                 Cancelar
@@ -861,7 +1073,7 @@ export default function PosPage() {
             </DialogClose>
             <Button
               onClick={handleCheckout}
-              disabled={checkingOut}
+              disabled={checkingOut || (isCashMethod && !hasEnoughCash)}
               className="bg-emerald-600 hover:bg-emerald-500"
             >
               {checkingOut ? (
@@ -901,37 +1113,21 @@ export default function PosPage() {
             <DialogClose asChild>
               <Button variant="secondary">Cerrar</Button>
             </DialogClose>
-            <Button onClick={() => window.print()} className="bg-emerald-600 hover:bg-emerald-500">
+            <Button onClick={() => lastSale && printTicketHtml(lastSale)} className="bg-emerald-600 hover:bg-emerald-500">
               <Printer className="mr-2 h-4 w-4" />
               Imprimir
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      {/* Zona imprimible (solo visible al imprimir) */}
-      {lastSale && <PrintArea sale={lastSale} />}
-      <style jsx global>{`
-        @media print {
-          body * { visibility: hidden; }
-          #print-area, #print-area * { visibility: visible; }
-          #print-area {
-            display: block !important;
-            position: absolute;
-            left: 0;
-            top: 0;
-            width: 100%;
-            padding: 24px;
-            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-          }
-        }
-      `}</style>
     </div>
   );
 }
 
 function TicketReceipt({ sale }: { sale: SaleTicket }) {
-  const date = new Date().toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' });
+  const date = sale.createdAt
+    ? new Date(sale.createdAt).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' })
+    : new Date().toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' });
   return (
     <div className="rounded-lg border border-slate-700 bg-slate-800/50 p-4 text-sm">
       <div className="mb-3 text-center">
@@ -976,6 +1172,18 @@ function TicketReceipt({ sale }: { sale: SaleTicket }) {
             <span>-{formatCurrency(sale.discountTotal)}</span>
           </div>
         )}
+        {sale.cashReceived != null && sale.change != null && (
+          <>
+            <div className="flex justify-between">
+              <span>Efectivo recibido</span>
+              <span>{formatCurrency(sale.cashReceived)}</span>
+            </div>
+            <div className="flex justify-between text-base font-bold text-emerald-400">
+              <span>Cambio</span>
+              <span>{formatCurrency(sale.change)}</span>
+            </div>
+          </>
+        )}
         <div className="flex justify-between text-base font-bold text-emerald-400">
           <span>Total</span>
           <span>{formatCurrency(sale.total)}</span>
@@ -995,65 +1203,125 @@ function TicketReceipt({ sale }: { sale: SaleTicket }) {
   );
 }
 
-function PrintArea({ sale }: { sale: SaleTicket }) {
-  const date = new Date().toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' });
-  return (
-    <div id="print-area" className="hidden text-sm text-black">
-      <div className="mb-3 text-center">
-        <p className="font-bold">TICKET DE VENTA</p>
-        <p>Venta #{sale.id}</p>
-        <p>{date}</p>
-      </div>
-      <div className="mb-2 border-t border-dashed border-black pt-2">
-        {sale.items.map((item, i) => (
-          <div key={i} className="flex justify-between gap-2">
-            <span className="flex-1">
-              <span className="block">{item.product.name}</span>
-              <span className="text-xs">
-                {item.quantity} x {formatCurrency(item.price)}
-              </span>
-            </span>
-            <span>{formatCurrency(item.price * item.quantity)}</span>
-          </div>
-        ))}
-      </div>
-      {sale.taxAmount && sale.taxAmount > 0 && (
-        <p className="mb-1 text-[10px]">Precios con impuesto incluido</p>
-      )}
-      <div className="mb-2 border-t border-dashed border-black pt-2">
-        {sale.taxBase !== undefined && sale.taxAmount !== undefined && sale.taxAmount > 0 && (
-          <>
-            <div className="flex justify-between">
-              <span>Subtotal (sin impuesto)</span>
-              <span>{formatCurrency(sale.taxBase)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span>Impuesto (+{sale.taxPercentage || 0}%)</span>
-              <span>{formatCurrency(sale.taxAmount)}</span>
-            </div>
-          </>
-        )}
-        {sale.discountTotal > 0 && (
-          <div className="flex justify-between">
-            <span>Descuento</span>
-            <span>-{formatCurrency(sale.discountTotal)}</span>
-          </div>
-        )}
-        <div className="flex justify-between text-base font-bold">
-          <span>Total</span>
-          <span>{formatCurrency(sale.total)}</span>
-        </div>
-      </div>
-      <div className="flex justify-between text-xs">
-        <span>Método de pago</span>
-        <span>{sale.paymentMethod?.name || '—'}</span>
-      </div>
-      {sale.user?.name && (
-        <div className="flex justify-between text-xs">
-          <span>Cajero</span>
-          <span>{sale.user.name}</span>
-        </div>
-      )}
-    </div>
-  );
+// Imprime el ticket en un iframe oculto: funciona en el navegador y en Electron
+// sin necesidad de ocultar el resto de la pagina con CSS de impresion.
+function printTicketHtml(sale: SaleTicket) {
+  const date = sale.createdAt
+    ? new Date(sale.createdAt).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' })
+    : new Date().toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' });
+  const currency = (n: number) => formatCurrency(n);
+
+  const itemsHtml = sale.items
+    .map(
+      (item) => `
+        <div class="t-row">
+          <div class="t-name">${escapeHtml(item.product.name)}</div>
+          <div class="t-sub">${item.quantity} x ${currency(item.price)}</div>
+          <div class="t-amt">${currency(item.price * item.quantity)}</div>
+        </div>`
+    )
+    .join('');
+
+  let totalsHtml = '';
+  if (sale.taxBase !== undefined && sale.taxAmount !== undefined && sale.taxAmount > 0) {
+    totalsHtml += `
+      <div class="t-row"><span>Subtotal (sin impuesto)</span><span>${currency(sale.taxBase)}</span></div>
+      <div class="t-row"><span>Impuesto (+${sale.taxPercentage || 0}%)</span><span>${currency(sale.taxAmount)}</span></div>`;
+  }
+  if (sale.discountTotal > 0) {
+    totalsHtml += `<div class="t-row"><span>Descuento</span><span>-${currency(sale.discountTotal)}</span></div>`;
+  }
+  if (sale.cashReceived != null && sale.change != null) {
+    totalsHtml += `
+      <div class="t-row"><span>Efectivo recibido</span><span>${currency(sale.cashReceived)}</span></div>
+      <div class="t-row t-big"><span>Cambio</span><span>${currency(sale.change)}</span></div>`;
+  }
+
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Ticket #${sale.id}</title>
+<style>
+  @page { size: 80mm auto; margin: 5mm; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 12px;
+    color: #000;
+    width: 70mm;
+    margin: 0 auto;
+  }
+  .t-head { text-align: center; margin-bottom: 8px; }
+  .t-head .t-title { font-weight: bold; font-size: 14px; }
+  .t-head div { line-height: 1.4; }
+  .t-sep { border-top: 1px dashed #000; margin: 6px 0; }
+  .t-row { display: flex; justify-content: space-between; gap: 8px; line-height: 1.5; }
+  .t-row span:last-child { white-space: nowrap; }
+  .t-name { font-weight: bold; }
+  .t-sub { font-size: 11px; }
+  .t-amt { text-align: right; }
+  .t-big { font-weight: bold; font-size: 14px; margin-top: 4px; }
+</style>
+</head>
+<body>
+  <div class="t-head">
+    <div class="t-title">TICKET DE VENTA</div>
+    <div>Venta #${sale.id}</div>
+    <div>${escapeHtml(date)}</div>
+  </div>
+  <div class="t-sep"></div>
+  ${itemsHtml}
+  <div class="t-sep"></div>
+  ${totalsHtml}
+  <div class="t-row t-big"><span>Total</span><span>${currency(sale.total)}</span></div>
+  <div class="t-sep"></div>
+  <div class="t-row"><span>Metodo de pago</span><span>${escapeHtml(sale.paymentMethod?.name || '—')}</span></div>
+  ${sale.user?.name ? `<div class="t-row"><span>Cajero</span><span>${escapeHtml(sale.user.name)}</span></div>` : ''}
+  <div class="t-sep"></div>
+  <div class="t-head">¡Gracias por su compra!</div>
+</body>
+</html>`;
+
+  const iframe = document.createElement('iframe');
+  iframe.style.position = 'fixed';
+  iframe.style.right = '0';
+  iframe.style.bottom = '0';
+  iframe.style.width = '0';
+  iframe.style.height = '0';
+  iframe.style.border = '0';
+  iframe.style.opacity = '0';
+  document.body.appendChild(iframe);
+
+  const cleanup = () => setTimeout(() => iframe.remove(), 2000);
+
+  const doc = iframe.contentDocument;
+  if (!doc) {
+    window.print();
+    cleanup();
+    return;
+  }
+  doc.open();
+  doc.write(html);
+  doc.close();
+
+  // Espera a que el iframe renderice el HTML antes de imprimir
+  setTimeout(() => {
+    try {
+      iframe.contentWindow?.focus();
+      iframe.contentWindow?.print();
+    } catch {
+      window.print();
+    }
+    cleanup();
+  }, 150);
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }

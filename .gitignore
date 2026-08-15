@@ -24,3 +24,5 @@ tsconfig.tsbuildinfo
 # Tailscale TLS certs (generados localmente, no subir)
 *.ts.net.crt
 *.ts.net.key
+
+propuestas-pos/

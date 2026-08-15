@@ -164,14 +164,16 @@ export async function POST(request: Request) {
     const netAmount = totalAmount - refundAmount;
 
     // Desglose por método de pago
-    const pmMap: Record<string, { count: number; total: number }> = {};
+    const pmMap: Record<string, { count: number; total: number; cashReceived: number; change: number }> = {};
     for (const sale of sales) {
       const name = sale.paymentMethod?.name || "Sin método";
       if (!pmMap[name]) {
-        pmMap[name] = { count: 0, total: 0 };
+        pmMap[name] = { count: 0, total: 0, cashReceived: 0, change: 0 };
       }
       pmMap[name].count++;
       pmMap[name].total += sale.total;
+      pmMap[name].cashReceived += sale.cashReceived || 0;
+      pmMap[name].change += sale.change || 0;
     }
 
     const byPaymentMethod = JSON.stringify(pmMap);

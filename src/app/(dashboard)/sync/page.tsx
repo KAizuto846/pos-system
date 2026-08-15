@@ -948,8 +948,8 @@ SYNC_SECRET="tu-secreto" PORT=8099 node server.js`}
 
       {/* Asistente de conexion remota (solo app de escritorio) */}
       <Dialog open={tsDialogOpen} onOpenChange={(o) => { if (!tsBusy) setTsDialogOpen(o); }}>
-        <DialogContent className="border-slate-700 bg-slate-800 sm:max-w-md">
-          <DialogHeader>
+        <DialogContent className="flex max-h-[85vh] flex-col border-slate-700 bg-slate-800 sm:max-w-md">
+          <DialogHeader className="shrink-0">
             <DialogTitle className="text-slate-100 flex items-center gap-2">
               <Globe className="h-5 w-5 text-sky-500" />
               Conexion remota (Tailscale)
@@ -958,7 +958,7 @@ SYNC_SECRET="tu-secreto" PORT=8099 node server.js`}
               Configura o repara la conexion remota. Si ya configuraste antes, usa &quot;Reparar automaticamente&quot;: reinicia el servicio de Tailscale y restaura la conexion sin pedir la authkey (acepta el permiso de administrador si aparece).
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
             <div className="space-y-2">
               <Label htmlFor="ts-authkey">Authkey de Tailscale (opcional)</Label>
               <Input
@@ -994,7 +994,7 @@ SYNC_SECRET="tu-secreto" PORT=8099 node server.js`}
               <p className={cn('text-sm', tsDone.startsWith('Error') ? 'text-red-400' : 'text-emerald-400')}>{tsDone}</p>
             )}
           </div>
-          <DialogFooter className="flex gap-2">
+          <DialogFooter className="flex shrink-0 flex-wrap gap-2">
             <Button type="button" variant="outline" onClick={() => setTsDialogOpen(false)} disabled={tsBusy !== null}>
               Cerrar
             </Button>

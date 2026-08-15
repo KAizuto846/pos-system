@@ -218,6 +218,8 @@ model Sale {
   id              Int           @id @default(autoincrement())
   total           Float
   discountTotal   Float         @default(0) @map("discount_total")
+  cashReceived    Float?        @map("cash_received")
+  change          Float?        @map("change")
   paymentMethodId Int?          @map("payment_method_id")
   paymentMethod   PaymentMethod? @relation(fields: [paymentMethodId], references: [id])
   userId          Int           @map("user_id")

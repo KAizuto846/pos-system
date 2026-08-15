@@ -16,6 +16,7 @@ export async function GET(request: Request) {
 
     const { searchParams } = new URL(request.url);
     const q = searchParams.get("q");
+    const field = searchParams.get("field");
     const page = Math.max(1, parseInt(searchParams.get("page") || "1"));
     const limit = Math.min(200, Math.max(1, parseInt(searchParams.get("limit") || "50")));
     const skip = (page - 1) * limit;
@@ -35,10 +36,16 @@ export async function GET(request: Request) {
     const where: Prisma.ProductWhereInput = {};
 
     if (q) {
-      where.OR = [
-        { barcode: { contains: q } },
-        { name: { contains: q } },
-      ];
+      if (field === "name") {
+        where.OR = [{ name: { contains: q } }];
+      } else if (field === "barcode") {
+        where.OR = [{ barcode: { contains: q } }];
+      } else {
+        where.OR = [
+          { barcode: { contains: q } },
+          { name: { contains: q } },
+        ];
+      }
     }
 
     if (departmentId) {
