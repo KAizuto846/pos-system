@@ -230,7 +230,7 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
           {extraLinks
             .filter((link) => link.href !== '/importar' || isAdmin)
             .map(renderLink)}
-          {syncLinks.map(renderLink)}
+          {isAdmin && syncLinks.map(renderLink)}
         </nav>
 
         {/* Bottom Actions */}

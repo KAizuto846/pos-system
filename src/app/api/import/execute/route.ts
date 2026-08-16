@@ -382,6 +382,23 @@ async function flushProductBatch(
             ...(data.supplierId !== undefined && data.supplierId !== null ? { supplierId: data.supplierId } : {}),
           },
         });
+
+        // Sincronizar productLines: el proveedor importado queda como línea primaria
+        if (data.supplierId) {
+          await prisma.$transaction([
+            prisma.productLine.updateMany({
+              where: { productId: existingRow.id, isPrimary: true },
+              data: { isPrimary: false },
+            }),
+            prisma.productLine.upsert({
+              where: {
+                productId_supplierId: { productId: existingRow.id, supplierId: data.supplierId },
+              },
+              create: { productId: existingRow.id, supplierId: data.supplierId, isPrimary: true },
+              update: { isPrimary: true },
+            }),
+          ]);
+        }
         results.updated++;
       } catch (error) {
         results.errors++;
@@ -413,6 +430,30 @@ async function flushCreateBatch(
   try {
     const inserted = await prisma.product.createMany({ data: batch });
     results.imported += inserted.count;
+
+    // Crear productLines primarias para los productos nuevos con proveedor
+    const withSupplier = batch.filter(b => b.supplierId);
+    if (withSupplier.length > 0) {
+      const created = await prisma.product.findMany({
+        where: {
+          OR: withSupplier.map(b => ({
+            ...(b.barcode ? { barcode: b.barcode } : { name: b.name }),
+          })),
+        },
+        select: { id: true, barcode: true, name: true, supplierId: true },
+      });
+      for (const p of created) {
+        if (p.supplierId) {
+          await prisma.productLine.upsert({
+            where: {
+              productId_supplierId: { productId: p.id, supplierId: p.supplierId },
+            },
+            create: { productId: p.id, supplierId: p.supplierId, isPrimary: true },
+            update: {},
+          });
+        }
+      }
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Error al insertar lote';
     results.errors += batch.length;
