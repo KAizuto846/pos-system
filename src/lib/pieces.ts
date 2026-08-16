@@ -5,8 +5,8 @@ export interface PiecesDetected {
   baseName: string;
 }
 
-const BOX_PATTERN = /C\/\((\d+)\)\s*$/i;
-const BOX_PATTERN_FLAT = /C\/(\d+)\s*$/i;
+const BOX_PATTERN = /CT\/\((\d+)\)\s*$/i;
+const BOX_PATTERN_FLAT = /CT\/(\d+)\s*$/i;
 
 export function detectPiecesFromName(name: string): PiecesDetected | null {
   const trimmed = (name || "").trim();

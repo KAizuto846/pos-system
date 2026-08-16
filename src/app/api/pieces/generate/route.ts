@@ -42,7 +42,7 @@ export async function POST(request: Request) {
       return Response.json(
         {
           error:
-            "No se pudo determinar la cantidad de piezas por caja. Termina el nombre con C/(N) (ej. 'Paracetamol C/10') o especifica la cantidad.",
+            "No se pudo determinar la cantidad de piezas por caja. Termina el nombre con CT/(N) (ej. 'Paracetamol CT/10') o especifica la cantidad.",
         },
         { status: 400 }
       );

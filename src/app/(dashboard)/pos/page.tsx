@@ -383,6 +383,11 @@ export default function PosPage() {
         icon: '⚠️',
       });
     }
+    if (!product.supplierId) {
+      toast(`Sin proveedor: ${product.name}. No podrá generarse la orden de compra.`, {
+        icon: '🏷️',
+      });
+    }
     addItem({
       productId: product.id,
       name: product.name,

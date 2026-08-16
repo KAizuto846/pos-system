@@ -131,7 +131,7 @@ model Product {
   supplierId     Int?       @map("supplier_id")
   supplier       Supplier?  @relation(fields: [supplierId], references: [id])
 
-  // Gestión de piezas: un producto caja ("Paracetamol C/10") tiene piecesPerUnit;
+  // Gestión de piezas: un producto caja ("Paracetamol CT/10") tiene piecesPerUnit;
   // el producto "Pieza de..." apunta a su caja vía pieceOfProductId.
   piecesPerUnit    Int?     @map("pieces_per_unit")
   piecesTracked    Boolean  @default(false) @map("pieces_tracked")

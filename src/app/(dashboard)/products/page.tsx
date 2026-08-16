@@ -1067,7 +1067,7 @@ export default function ProductsPage() {
           </button>
           {piecesOpen && (
             <p className="text-xs text-slate-500">
-              Los productos cuyo nombre termina en <span className="font-mono text-slate-400">C/(N)</span> (ej. "Paracetamol C/10")
+              Los productos cuyo nombre termina en <span className="font-mono text-slate-400">CT/(N)</span> (ej. "Paracetamol CT/10")
               se consideran cajas. Abrir una caja consume 1 de stock y genera "Pieza de ..." con código <span className="font-mono text-slate-400">S+</span>.
               Al vender piezas sin stock se abre una caja automáticamente.
             </p>

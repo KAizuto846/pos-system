@@ -93,7 +93,7 @@ export async function POST(request: Request) {
 
         const existing = barcode
           ? await prisma.product.findFirst({ where: { barcode } })
-          : await prisma.product.findFirst({ where: { name } });
+          : null;
 
         if (existing) {
           await prisma.product.update({
