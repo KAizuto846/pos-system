@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Eye, RotateCcw, Search } from 'lucide-react';
+import { Eye, RotateCcw, Search, Printer, FileDown } from 'lucide-react';
+import toast from 'react-hot-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -63,6 +64,9 @@ interface RefundInfo {
 interface Sale {
   id: number;
   total: number;
+  discountTotal?: number;
+  cashReceived?: number | null;
+  change?: number | null;
   createdAt: string;
   items: SaleItem[];
   paymentMethod: PaymentMethod;
@@ -109,6 +113,174 @@ export default function SalesPage() {
   const [refundReason, setRefundReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState('');
+
+  // Ticket (impresión / guardado)
+  const [printing, setPrinting] = useState(false);
+  const [printerName, setPrinterName] = useState('');
+  const [ticketWidth, setTicketWidth] = useState(32);
+
+  // Cargar impresora de tickets configurada (Electron)
+  useEffect(() => {
+    const win = window as unknown as { electronAPI?: { getConfig?: () => Promise<{ ticketPrinter?: string; ticketWidth?: number }> } };
+    if (win.electronAPI?.getConfig) {
+      win.electronAPI.getConfig()
+        .then((cfg) => {
+          if (cfg.ticketPrinter) setPrinterName(cfg.ticketPrinter);
+          if (cfg.ticketWidth) setTicketWidth(cfg.ticketWidth);
+        })
+        .catch(() => {});
+    }
+  }, []);
+
+  const currency = (n: number) => `$${n.toFixed(2)}`;
+
+  // Genera el ticket de una venta pasada como texto plano (para impresora de tickets)
+  const buildTicketText = (sale: Sale): string => {
+    const W = Math.max(24, Math.min(48, ticketWidth));
+    const line = (ch: string) => ch.repeat(W);
+    const center = (s: string) => {
+      const t = s.slice(0, W);
+      const pad = Math.max(0, Math.floor((W - t.length) / 2));
+      return ' '.repeat(pad) + t;
+    };
+    const lr = (l: string, r: string) => {
+      const rtrunc = r.slice(0, Math.max(8, Math.floor(W * 0.4)));
+      const ltrunc = l.slice(0, Math.max(8, W - rtrunc.length - 2));
+      return ltrunc + ' '.repeat(Math.max(1, W - ltrunc.length - rtrunc.length)) + rtrunc;
+    };
+
+    const date = new Date(sale.createdAt).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' });
+
+    const out: string[] = [];
+    out.push(center('TICKET DE VENTA'));
+    out.push(center('Venta #' + sale.id));
+    out.push(center(date));
+    out.push(line('='));
+    out.push(lr('Artículo', 'Importe'));
+    out.push(line('-'));
+
+    for (const item of sale.items) {
+      out.push(item.product.name.slice(0, W));
+      out.push(lr(`  ${item.quantity} x ${currency(item.price)}`, currency(item.price * item.quantity)));
+    }
+
+    out.push(line('='));
+    if ((sale.discountTotal || 0) > 0) out.push(lr('Descuento', '-' + currency(sale.discountTotal || 0)));
+    if (sale.cashReceived != null && sale.change != null) {
+      out.push(lr('Efectivo recibido', currency(sale.cashReceived)));
+      out.push(lr('Cambio', currency(sale.change)));
+    }
+    out.push(lr('TOTAL', currency(sale.total)));
+    out.push(line('-'));
+    out.push(lr('Método de pago', sale.paymentMethod?.name || '—'));
+    if (sale.user?.name) out.push(lr('Cajero', sale.user.name));
+    out.push('');
+    out.push(center('¡Gracias por su compra!'));
+    out.push('');
+    return out.join('\n');
+  };
+
+  // HTML imprimible del ticket (para navegador)
+  const buildTicketHtml = (sale: Sale): string => {
+    const text = buildTicketText(sale);
+    const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const lines = text.split('\n').map((l) => `<div>${esc(l)}</div>`).join('');
+    return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Ticket #${sale.id}</title>
+<style>
+  @page { size: 80mm auto; margin: 4mm; }
+  * { box-sizing: border-box; }
+  body { font-family: 'Courier New', Courier, monospace; font-size: 12px; color: #000; width: 72mm; margin: 0 auto; white-space: pre-wrap; word-break: break-all; }
+</style>
+</head>
+<body>${lines}</body>
+</html>`;
+  };
+
+  // Imprime el ticket: servidor → Electron → navegador
+  const handlePrintTicket = async (sale: Sale) => {
+    setPrinting(true);
+    try {
+      const text = buildTicketText(sale);
+
+      // 1) Servidor (impresora pegada al host)
+      try {
+        const res = await fetch('/api/print/ticket', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text }),
+        });
+        if (res.ok) {
+          toast.success('Ticket impreso');
+          return;
+        }
+      } catch {
+        // seguir con los otros métodos
+      }
+
+      // 2) Electron (impresora instalada en la misma máquina)
+      const win = window as unknown as {
+        electronAPI?: { printPlainText?: (text: string, printer: string) => Promise<{ ok: boolean; error?: string }> };
+      };
+      if (printerName && win.electronAPI?.printPlainText) {
+        const res = await win.electronAPI.printPlainText(text, printerName);
+        if (res?.ok) toast.success('Ticket impreso');
+        else toast.error(res?.error || 'No se pudo imprimir el ticket');
+        return;
+      }
+
+      // 3) Navegador: iframe oculto + window.print
+      const html = buildTicketHtml(sale);
+      const iframe = document.createElement('iframe');
+      iframe.style.position = 'fixed';
+      iframe.style.right = '0';
+      iframe.style.bottom = '0';
+      iframe.style.width = '0';
+      iframe.style.height = '0';
+      iframe.style.border = '0';
+      iframe.style.opacity = '0';
+      document.body.appendChild(iframe);
+      const doc = iframe.contentDocument;
+      if (!doc) {
+        window.print();
+        setTimeout(() => iframe.remove(), 2000);
+        return;
+      }
+      doc.open();
+      doc.write(html);
+      doc.close();
+      setTimeout(() => {
+        try {
+          iframe.contentWindow?.focus();
+          iframe.contentWindow?.print();
+        } catch {
+          window.print();
+        }
+        setTimeout(() => iframe.remove(), 2000);
+      }, 150);
+    } finally {
+      setPrinting(false);
+    }
+  };
+
+  // Guarda el ticket como archivo .txt
+  const handleSaveTicket = (sale: Sale) => {
+    const text = buildTicketText(sale);
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `ticket-${sale.id}-${stamp}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    toast.success('Ticket guardado como archivo');
+  };
 
   useEffect(() => {
     const controller = new AbortController();
@@ -374,6 +546,23 @@ export default function SalesPage() {
                           </Button>
                           <Button
                             variant="ghost"
+                            size="icon"
+                            onClick={() => handlePrintTicket(sale)}
+                            disabled={printing}
+                            title="Imprimir ticket de esta venta"
+                          >
+                            <Printer className="h-4 w-4 text-slate-400" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleSaveTicket(sale)}
+                            title="Guardar ticket como archivo"
+                          >
+                            <FileDown className="h-4 w-4 text-slate-400" />
+                          </Button>
+                          <Button
+                            variant="ghost"
                             size="sm"
                             onClick={() => openRefundDialog(sale)}
                             title="Reembolsar producto de esta venta"
@@ -491,10 +680,26 @@ export default function SalesPage() {
               )}
             </div>
           )}
-          <DialogFooter>
+          <DialogFooter className="gap-2 sm:gap-0">
             <DialogClose asChild>
               <Button variant="secondary">Close</Button>
             </DialogClose>
+            <Button
+              variant="outline"
+              onClick={() => selectedSale && handleSaveTicket(selectedSale)}
+              className="border-slate-600 text-slate-300"
+            >
+              <FileDown className="mr-2 h-4 w-4" />
+              Guardar .txt
+            </Button>
+            <Button
+              onClick={() => selectedSale && handlePrintTicket(selectedSale)}
+              disabled={printing}
+              className="bg-emerald-600 hover:bg-emerald-500"
+            >
+              <Printer className="mr-2 h-4 w-4" />
+              {printing ? 'Imprimiendo...' : 'Imprimir ticket'}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

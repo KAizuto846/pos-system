@@ -25,12 +25,83 @@ interface BarcodeDetectorLike {
   };
 }
 
+// Decodificador por software (@zxing): funciona en CUALQUIER navegador y sin
+// HTTPS (IP local), a diferencia de la API nativa BarcodeDetector.
+// Importación de tipos en runtime: Next.js puede usar @zxing/library en el
+// cliente (lib = ESM compatible con browsers).
+import type { MultiFormatReader } from '@zxing/library';
+
+let zxingMultiReader: MultiFormatReader | null = null;
+async function getZxingReader(): Promise<MultiFormatReader> {
+  if (zxingMultiReader) return zxingMultiReader;
+  const { MultiFormatReader: Zx, BarcodeFormat, DecodeHintType } = await import('@zxing/library');
+  const hints = new Map();
+  hints.set(
+    DecodeHintType.POSSIBLE_FORMATS,
+    [
+      BarcodeFormat.EAN_13, BarcodeFormat.EAN_8, BarcodeFormat.UPC_A,
+      BarcodeFormat.UPC_E, BarcodeFormat.CODE_128, BarcodeFormat.CODE_39,
+      BarcodeFormat.ITF, BarcodeFormat.QR_CODE,
+    ]
+  );
+  hints.set(DecodeHintType.TRY_HARDER, true);
+  const reader = new Zx();
+  reader.setHints(hints);
+  zxingMultiReader = reader;
+  return reader;
+}
+
+// Decodifica un ImageData (de un <video> o de un archivo de imagen) usando
+// zxing. Devuelve el código o null.
+async function decodeImageData(imageData: ImageData): Promise<string | null> {
+  try {
+    const reader = await getZxingReader();
+    const { RGBLuminanceSource, BinaryBitmap, HybridBinarizer } = await import('@zxing/library');
+    const luminanceSource = new RGBLuminanceSource(
+      Uint8ClampedArray.from(imageData.data),
+      imageData.width,
+      imageData.height
+    );
+    const binaryBitmap = new BinaryBitmap(new HybridBinarizer(luminanceSource));
+    const result = reader.decode(binaryBitmap);
+    return result?.getText?.() || null;
+  } catch {
+    return null;
+  }
+}
+
+// Lee el frame actual del video a un canvas y lo decodifica.
+async function decodeVideoFrame(video: HTMLVideoElement): Promise<string | null> {
+  if (!video.videoWidth || !video.videoHeight) return null;
+  const canvas = document.createElement('canvas');
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) return null;
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  return decodeImageData(ctx.getImageData(0, 0, canvas.width, canvas.height));
+}
+
+// Decodifica un archivo de imagen (foto) usando zxing.
+async function decodePhotoFile(file: File): Promise<string | null> {
+  const bitmap = await createImageBitmap(file);
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return null;
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    return decodeImageData(ctx.getImageData(0, 0, canvas.width, canvas.height));
+  } finally {
+    bitmap.close();
+  }
+}
+
 // Lector de códigos con la cámara del dispositivo.
-// Usa la API nativa BarcodeDetector (Chrome/Edge/Android). En iOS Safari no
-// existe; ahí se ofrece escritura manual. La cámara en vivo requiere un
-// contexto seguro (HTTPS). En sitios no seguros (IP local en el teléfono) se
-// ofrece el modo foto: abre la cámara nativa y decodifica la captura, sin
-// necesidad del túnel de internet.
+// Usa la API nativa BarcodeDetector si existe (más rápido), y si no (o si el
+// sitio no es HTTPS), cae al decodificador por software @zxing, que funciona en
+// cualquier navegador. El modo foto funciona siempre, incluso sin HTTPS.
 export function BarcodeScanner({ open, onOpenChange, onDetected }: BarcodeScannerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -45,8 +116,13 @@ export function BarcodeScanner({ open, onOpenChange, onDetected }: BarcodeScanne
   const [photoWorking, setPhotoWorking] = useState(false);
   const [attempt, setAttempt] = useState(0);
 
+  const hasBarcodeDetector =
+    typeof window !== 'undefined' && 'BarcodeDetector' in window;
+
+  // El modo foto siempre está disponible: decodifica con zxing (software),
+  // funciona en cualquier navegador y sin HTTPS.
   const hasPhotoMode =
-    typeof window !== 'undefined' && !window.isSecureContext && 'BarcodeDetector' in window;
+    typeof window !== 'undefined' && !window.isSecureContext;
 
   const stop = useCallback(() => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
@@ -57,22 +133,11 @@ export function BarcodeScanner({ open, onOpenChange, onDetected }: BarcodeScanne
   const start = useCallback(async () => {
     if (typeof window === 'undefined' || canceledRef.current) return;
 
+    // La cámara EN VIVO siempre requiere HTTPS. Sin HTTPS solo funciona el
+    // modo foto (cámara nativa del navegador) o la escritura manual.
     if (!window.isSecureContext) {
-      if ('BarcodeDetector' in window) {
-        setError(
-          'Este sitio no es seguro (HTTP), por lo que la cámara en vivo no está disponible. Usa el botón "Escanear con foto": se abre la cámara del celular, tomas la foto y se lee el código automáticamente.'
-        );
-      } else {
-        setError(
-          'La cámara solo funciona en un sitio seguro (HTTPS). Desde este dispositivo usa el buscador o el lector de código del escritorio. En el celular, entra por el túnel de internet (Cloudflare) para activar la cámara.'
-        );
-      }
-      setStatus('error');
-      return;
-    }
-    if (!('BarcodeDetector' in window)) {
       setError(
-        'Este navegador no tiene lector integrado (disponible en Chrome/Edge/Android). Escribe el código a mano abajo.'
+        'Este sitio no es seguro (HTTP): la cámara en vivo no está disponible en el navegador. Usa "Escanear con foto" (abre la cámara del celular) o escribe el código a mano.'
       );
       setStatus('error');
       return;
@@ -113,24 +178,34 @@ export function BarcodeScanner({ open, onOpenChange, onDetected }: BarcodeScanne
       setStatus('running');
       setError('');
 
-      const Detector = (window as unknown as { BarcodeDetector: BarcodeDetectorLike }).BarcodeDetector;
-      const detector = new Detector({ formats: BARCODE_FORMATS });
+      let detector: { detect: (v: HTMLVideoElement) => Promise<{ rawValue: string }[]> } | null = null;
+      if (hasBarcodeDetector) {
+        const Detector = (window as unknown as { BarcodeDetector: BarcodeDetectorLike }).BarcodeDetector;
+        detector = new Detector({ formats: BARCODE_FORMATS });
+      }
 
       const loop = async () => {
         if (!video || video.readyState < 2 || video.ended) {
           rafRef.current = requestAnimationFrame(loop);
           return;
         }
+        let code: string | null = null;
         try {
-          const codes = await detector.detect(video);
-          const code = codes[0]?.rawValue;
-          if (code && code !== lastCodeRef.current) {
-            lastCodeRef.current = code;
-            setLastCode(code);
-            onDetected(code);
+          if (detector) {
+            const codes = await detector.detect(video);
+            code = codes[0]?.rawValue || null;
+          }
+          if (!code) {
+            // Fallback por software (funciona aunque BarcodeDetector falle)
+            code = await decodeVideoFrame(video);
           }
         } catch {
-          // Frame ilegible: se sigue intentando
+          code = await decodeVideoFrame(video).catch(() => null);
+        }
+        if (code && code !== lastCodeRef.current) {
+          lastCodeRef.current = code;
+          setLastCode(code);
+          onDetected(code);
         }
         rafRef.current = requestAnimationFrame(loop);
       };
@@ -148,7 +223,7 @@ export function BarcodeScanner({ open, onOpenChange, onDetected }: BarcodeScanne
       }
       setStatus('error');
     }
-  }, [onDetected]);
+  }, [onDetected, hasBarcodeDetector]);
 
   useEffect(() => {
     if (!open) return;
@@ -185,22 +260,34 @@ export function BarcodeScanner({ open, onOpenChange, onDetected }: BarcodeScanne
   const handlePhoto = async (file: File) => {
     setPhotoWorking(true);
     try {
-      const Detector = (window as unknown as { BarcodeDetector: BarcodeDetectorLike }).BarcodeDetector;
-      const detector = new Detector({ formats: BARCODE_FORMATS });
-      const bitmap = await createImageBitmap(file);
-      try {
-        const codes = await detector.detect(bitmap);
-        const code = codes[0]?.rawValue;
-        if (code) {
-          lastCodeRef.current = code;
-          setLastCode(code);
-          onDetected(code);
-          toast.success('Código leído: ' + code);
-        } else {
-          toast.error('No se encontró un código en la foto, intenta de nuevo');
+      let code: string | null = null;
+      // Primero intentar con la API nativa (más precisa)
+      if (hasBarcodeDetector) {
+        try {
+          const Detector = (window as unknown as { BarcodeDetector: BarcodeDetectorLike }).BarcodeDetector;
+          const detector = new Detector({ formats: BARCODE_FORMATS });
+          const bitmap = await createImageBitmap(file);
+          try {
+            const codes = await detector.detect(bitmap);
+            code = codes[0]?.rawValue || null;
+          } finally {
+            bitmap.close();
+          }
+        } catch {
+          code = null;
         }
-      } finally {
-        bitmap.close();
+      }
+      // Si falló o no hay API nativa, usar zxing
+      if (!code) {
+        code = await decodePhotoFile(file);
+      }
+      if (code) {
+        lastCodeRef.current = code;
+        setLastCode(code);
+        onDetected(code);
+        toast.success('Código leído: ' + code);
+      } else {
+        toast.error('No se encontró un código en la foto, intenta de nuevo');
       }
     } catch (e) {
       const err = e as Error;
@@ -298,6 +385,37 @@ export function BarcodeScanner({ open, onOpenChange, onDetected }: BarcodeScanne
               Último código leído: <span className="font-mono">{lastCode}</span>
             </p>
           )}
+
+          {/* Modo foto: disponible siempre (funciona sin HTTPS y en cualquier navegador) */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) handlePhoto(file);
+            }}
+          />
+          <Button
+            variant="outline"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={photoWorking}
+            className="w-full border-emerald-600 text-emerald-400 hover:bg-emerald-950"
+          >
+            {photoWorking ? (
+              <span className="flex items-center gap-2">
+                <span className="h-4 w-4 animate-spin rounded-full border-2 border-emerald-400 border-t-transparent" />
+                Leyendo foto...
+              </span>
+            ) : (
+              <span className="flex items-center gap-2">
+                <Camera className="h-4 w-4" />
+                Escanear con foto (funciona sin HTTPS)
+              </span>
+            )}
+          </Button>
 
           <div className="space-y-1.5">
             <Label htmlFor="manual-code" className="text-xs text-slate-400">

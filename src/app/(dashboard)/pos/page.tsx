@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Search, ShoppingCart, Plus, Minus, X, Trash2, Loader2, User, Percent, Fingerprint, ScanLine, Printer } from 'lucide-react';
+import { Search, ShoppingCart, Plus, Minus, X, Trash2, Loader2, User, Percent, Fingerprint, ScanLine, Printer, FileDown } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -518,6 +518,36 @@ export default function PosPage() {
     } finally {
       setCheckingOut(false);
     }
+  };
+
+  // Guarda el ticket como archivo de texto plano (.txt) listo para imprimir
+  // en la impresora de tickets, o como HTML para imprimir desde el navegador.
+  const handleSaveTicket = (sale: SaleTicket, format: 'txt' | 'html' = 'txt') => {
+    const text = buildPlainTextTicket(sale, ticketWidth);
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    if (format === 'html') {
+      const html = buildTicketHtml(sale, text);
+      const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `ticket-${sale.id}-${stamp}.html`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } else {
+      const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `ticket-${sale.id}-${stamp}.txt`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+    toast.success('Ticket guardado como archivo');
   };
 
   // Imprime el ticket. Estrategia en orden:
@@ -1192,6 +1222,15 @@ export default function PosPage() {
             <DialogClose asChild>
               <Button variant="secondary">Cerrar</Button>
             </DialogClose>
+            <Button
+              variant="outline"
+              onClick={() => lastSale && handleSaveTicket(lastSale, 'txt')}
+              className="border-slate-600 text-slate-300"
+              title="Descarga el ticket como texto plano (.txt) para imprimir en la impresora de tickets"
+            >
+              <FileDown className="mr-2 h-4 w-4" />
+              Guardar .txt
+            </Button>
             <Button onClick={() => lastSale && handlePrintSale(lastSale)} className="bg-emerald-600 hover:bg-emerald-500">
               <Printer className="mr-2 h-4 w-4" />
               {printingTicket ? 'Imprimiendo...' : 'Imprimir'}
@@ -1341,6 +1380,34 @@ function buildPlainTextTicket(sale: SaleTicket, width = 32): string {
   out.push(center('¡Gracias por su compra!'));
   out.push('');
   return out.join('\n');
+}
+
+// Convierte el ticket de texto plano en un HTML de ancho fijo (80mm) listo
+// para imprimir desde el navegador.
+function buildTicketHtml(sale: SaleTicket, text: string): string {
+  const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const lines = text.split('\n').map((l) => `<div>${esc(l)}</div>`).join('');
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Ticket #${sale.id}</title>
+<style>
+  @page { size: 80mm auto; margin: 4mm; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 12px;
+    color: #000;
+    width: 72mm;
+    margin: 0 auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+</style>
+</head>
+<body>${lines}</body>
+</html>`;
 }
 
 // Imprime el ticket en un iframe oculto: funciona en el navegador y en Electron

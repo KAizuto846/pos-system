@@ -54,12 +54,26 @@ export async function GET(request: Request) {
     }
 
     if (supplierId) {
-      const sid = parseInt(supplierId);
-      where.OR = [
-        ...(where.OR || []),
-        { supplierId: sid },
-        { productLines: { some: { supplierId: sid } } },
-      ];
+      if (supplierId === "none") {
+        // Productos sin proveedor: ni supplierId directo ni línea de proveedor.
+        const existingAnd = Array.isArray(where.AND)
+          ? where.AND
+          : where.AND
+            ? [where.AND]
+            : [];
+        where.AND = [
+          ...existingAnd,
+          { supplierId: null },
+          { productLines: { none: {} } },
+        ];
+      } else {
+        const sid = parseInt(supplierId);
+        where.OR = [
+          ...(where.OR || []),
+          { supplierId: sid },
+          { productLines: { some: { supplierId: sid } } },
+        ];
+      }
     }
 
     if (priceMin || priceMax) {

@@ -17,6 +17,7 @@ interface RuleData {
   name: string;
   percentage: number;
   applyTime: string;
+  endTime: string;
   scope: string;
   scopeValue: number | null;
   active: boolean;
@@ -58,6 +59,7 @@ export default function TaxesPage() {
 
   const [percentage, setPercentage] = useState('10');
   const [applyTime, setApplyTime] = useState('20:00');
+  const [endTime, setEndTime] = useState('');
   const [scope, setScope] = useState('ALL');
   const [scopeValue, setScopeValue] = useState('');
   const [active, setActive] = useState(true);
@@ -78,6 +80,7 @@ export default function TaxesPage() {
       if (data.rule) {
         setPercentage(String(data.rule.percentage ?? ''));
         setApplyTime(data.rule.applyTime || '20:00');
+        setEndTime(data.rule.endTime || '');
         setScope(data.rule.scope || 'ALL');
         setScopeValue(data.rule.scopeValue != null ? String(data.rule.scopeValue) : '');
         setActive(Boolean(data.rule.active));
@@ -112,6 +115,7 @@ export default function TaxesPage() {
       const payload = {
         percentage: Number(percentage) || 0,
         applyTime,
+        endTime,
         scope,
         scopeValue: scope === 'MIN_PRICE' ? Number(scopeValue) || 0 : scopeValue ? Number(scopeValue) : null,
         active,
@@ -207,7 +211,7 @@ export default function TaxesPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid gap-4 md:grid-cols-4">
             <div className="space-y-2">
               <Label htmlFor="tax-pct">Aumento (%)</Label>
               <Input id="tax-pct" type="number" min="0" max="1000" step="0.5" value={percentage} onChange={(e) => setPercentage(e.target.value)} className="w-full" />
@@ -218,6 +222,16 @@ export default function TaxesPage() {
                 <Clock className="h-4 w-4 text-slate-500" />
                 <Input id="tax-time" type="time" value={applyTime} onChange={(e) => setApplyTime(e.target.value)} className="w-full" />
               </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="tax-end-time">Dejar de aplicar a las (opcional)</Label>
+              <div className="flex items-center gap-2">
+                <Clock className="h-4 w-4 text-slate-500" />
+                <Input id="tax-end-time" type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} className="w-full" />
+              </div>
+              {!endTime && (
+                <p className="text-[11px] text-slate-500">Vacío = aplica sin hora de fin</p>
+              )}
             </div>
             <div className="space-y-2">
               <Label>Estado</Label>

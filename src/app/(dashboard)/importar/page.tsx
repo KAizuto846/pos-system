@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
-import { Upload, FileSpreadsheet, Database, Check, AlertCircle, Loader2, ArrowLeft, Table2, Settings2, Play, Download, Trash2 } from 'lucide-react';
+import { Upload, FileSpreadsheet, Database, Check, AlertCircle, Loader2, ArrowLeft, Table2, Settings2, Play, Download, Trash2, Archive, Clock, FolderOpen } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -124,6 +124,91 @@ export default function ImportPage() {
   const [deletePassword, setDeletePassword] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [exporting, setExporting] = useState(false);
+
+  // ── Respaldo de datos ──
+  const [backupConfig, setBackupConfig] = useState<{
+    enabled: boolean;
+    intervalHours: number;
+    retentionDays: number;
+    folder: string;
+    lastRunAt?: string | null;
+    lastResult?: string | null;
+  }>({ enabled: false, intervalHours: 24, retentionDays: 30, folder: '' });
+  const [backupFiles, setBackupFiles] = useState<Array<{ name: string; size: number; mtime: string }>>([]);
+  const [backupLoading, setBackupLoading] = useState(true);
+  const [backupRunning, setBackupRunning] = useState(false);
+  const [backupSaving, setBackupSaving] = useState(false);
+
+  const loadBackupState = useCallback(async () => {
+    try {
+      const res = await fetch('/api/backup');
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.config) setBackupConfig(data.config);
+      if (Array.isArray(data.files)) setBackupFiles(data.files);
+    } catch {
+      // sin conexión o sin permisos
+    } finally {
+      setBackupLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    queueMicrotask(() => { loadBackupState(); });
+  }, [loadBackupState]);
+
+  const handleRunBackup = useCallback(async () => {
+    setBackupRunning(true);
+    try {
+      const res = await fetch('/api/backup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'run' }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Error al crear respaldo');
+      toast.success('Respaldo creado correctamente');
+      setBackupFiles(data.files || []);
+      loadBackupState();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al crear respaldo');
+    } finally {
+      setBackupRunning(false);
+    }
+  }, [loadBackupState]);
+
+  const handleSaveBackupConfig = useCallback(async () => {
+    setBackupSaving(true);
+    try {
+      const res = await fetch('/api/backup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'save',
+          config: {
+            enabled: backupConfig.enabled,
+            intervalHours: Number(backupConfig.intervalHours) || 24,
+            retentionDays: Number(backupConfig.retentionDays) || 30,
+            folder: backupConfig.folder,
+          },
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Error al guardar');
+      setBackupConfig(data.config);
+      toast.success(backupConfig.enabled ? 'Respaldos automáticos activados' : 'Respaldos automáticos desactivados');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al guardar');
+    } finally {
+      setBackupSaving(false);
+    }
+  }, [backupConfig]);
+
+  const formatBytes = (n: number) => {
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    return `${(n / (1024 * 1024)).toFixed(2)} MB`;
+  };
 
   const handleFileSelect = useCallback(async (selectedFile: File | null) => {
     if (!selectedFile) return;
@@ -347,6 +432,115 @@ export default function ImportPage() {
           )}
         </div>
       </div>
+
+      {/* Respaldo de datos */}
+      <Card className="border-slate-700 bg-slate-800/50">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-lg text-slate-100">
+            <Archive className="h-5 w-5 text-amber-400" />
+            Respaldos de datos
+          </CardTitle>
+          <CardDescription className="text-slate-400">
+            Exporta TODA la base de datos (productos, ventas, clientes, proveedores, etc.) a un archivo JSON.
+            Puedes programarlo cada cierto tiempo, elegir cuántos días conservar y dónde guardarlo.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Configuración */}
+          <div className="grid gap-4 md:grid-cols-3">
+            <div className="space-y-2">
+              <Label className="flex items-center gap-1 text-xs text-slate-400">
+                <Clock className="h-3.5 w-3.5" /> Cada cuántas horas
+              </Label>
+              <Input
+                type="number"
+                min={1}
+                max={8760}
+                value={backupConfig.intervalHours}
+                onChange={(e) => setBackupConfig(c => ({ ...c, intervalHours: parseInt(e.target.value) || 0 }))}
+                className="border-slate-600 bg-slate-900 text-slate-100"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="flex items-center gap-1 text-xs text-slate-400">
+                <Clock className="h-3.5 w-3.5" /> Conservar (días)
+              </Label>
+              <Input
+                type="number"
+                min={1}
+                max={3650}
+                value={backupConfig.retentionDays}
+                onChange={(e) => setBackupConfig(c => ({ ...c, retentionDays: parseInt(e.target.value) || 0 }))}
+                className="border-slate-600 bg-slate-900 text-slate-100"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="flex items-center gap-1 text-xs text-slate-400">
+                <FolderOpen className="h-3.5 w-3.5" /> Carpeta de destino
+              </Label>
+              <Input
+                value={backupConfig.folder}
+                onChange={(e) => setBackupConfig(c => ({ ...c, folder: e.target.value }))}
+                placeholder="(dejar vacío usa la carpeta por defecto del sistema)"
+                className="border-slate-600 bg-slate-900 text-slate-100"
+              />
+            </div>
+          </div>
+
+          {/* Controles */}
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" onClick={handleRunBackup} disabled={backupRunning} className="border-slate-700 text-slate-300">
+              <Download className="mr-2 h-4 w-4" />
+              {backupRunning ? 'Creando...' : 'Crear respaldo ahora'}
+            </Button>
+            <Button variant="outline" onClick={handleSaveBackupConfig} disabled={backupSaving} className="border-slate-700 text-slate-300">
+              <Settings2 className="mr-2 h-4 w-4" />
+              {backupSaving ? 'Guardando...' : 'Guardar configuración'}
+            </Button>
+            <Badge variant={backupConfig.enabled ? 'default' : 'outline'} className={backupConfig.enabled ? 'bg-emerald-900/40 text-emerald-400 border-emerald-700' : 'border-slate-600 text-slate-500'}>
+              {backupConfig.enabled ? 'Automático activado' : 'Automático desactivado'}
+            </Badge>
+          </div>
+
+          {backupConfig.lastResult && (
+            <div className="rounded-md border border-slate-700 bg-slate-900/50 px-3 py-2 text-xs text-slate-400">
+              <span className="text-slate-300 font-medium">Último respaldo:</span> {backupConfig.lastResult}
+            </div>
+          )}
+
+          {/* Lista de archivos */}
+          <div>
+            <p className="mb-2 text-xs font-medium text-slate-400">Archivos de respaldo ({backupFiles.length})</p>
+            {backupLoading ? (
+              <p className="text-sm text-slate-500">Cargando...</p>
+            ) : backupFiles.length === 0 ? (
+              <p className="rounded-md border border-dashed border-slate-700 px-3 py-4 text-center text-sm text-slate-500">
+                No hay respaldos todavía. Crea uno con el botón &quot;Crear respaldo ahora&quot;.
+              </p>
+            ) : (
+              <div className="max-h-48 space-y-1.5 overflow-y-auto pr-1">
+                {backupFiles.map((f) => (
+                  <div key={f.name} className="flex items-center justify-between rounded-md border border-slate-700 bg-slate-900/40 px-3 py-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-slate-200">{f.name}</p>
+                      <p className="text-[11px] text-slate-500">
+                        {formatBytes(f.size)} · {new Date(f.mtime).toLocaleString('es-MX')}
+                      </p>
+                    </div>
+                    <a
+                      href={`/api/backup?download=${encodeURIComponent(f.name)}`}
+                      className="flex h-8 w-8 items-center justify-center rounded-md border border-slate-600 text-slate-400 transition-colors hover:bg-slate-700 hover:text-slate-100"
+                      title="Descargar respaldo"
+                    >
+                      <Download className="h-4 w-4" />
+                    </a>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
       {!importResult ? (
         <>

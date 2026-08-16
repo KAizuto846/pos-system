@@ -9,6 +9,9 @@ export async function register() {
   const { startRelayLoop } = await import('@/lib/relay-loop');
   startRelayLoop();
 
+  const { startBackupLoop } = await import('@/lib/backup-loop');
+  startBackupLoop();
+
   if (!process.env.ELECTRON_RUN_AS_NODE) {
     const { startLanDiscovery, announceLanServer } = await import('@/lib/lan-discovery');
     const { startLanSyncLoop } = await import('@/lib/lan-sync');

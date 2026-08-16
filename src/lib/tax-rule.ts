@@ -20,6 +20,7 @@ export interface TaxRuleData {
   name: string;
   percentage: number;
   applyTime: string;
+  endTime: string;
   scope: string;
   scopeValue: number | null;
   active: boolean;
@@ -33,6 +34,7 @@ export function toRuleData(row: TaxRule | null): TaxRuleData | null {
     name: row.name,
     percentage: row.percentage,
     applyTime: row.applyTime,
+    endTime: row.endTime || "",
     scope: row.scope,
     scopeValue: row.scopeValue,
     active: row.active,
@@ -45,20 +47,45 @@ export interface TaxState {
   active: boolean;
   percentage: number;
   applyTime: string;
+  endTime: string;
   scope: string;
   scopeValue: number | null;
   status: string;
   nextChange: string | null;
 }
 
-export function isTaxActive(rule: { status?: string; active?: boolean; applyTime?: string }, now = new Date()): boolean {
+// Convierte "HH:MM" a minutos del día. Devuelve -1 si es inválido.
+function timeToMinutes(t: string): number {
+  const [h, m] = t.split(":").map((n) => parseInt(n, 10) || 0);
+  return h * 60 + m;
+}
+
+// El impuesto aplica dentro de la ventana [applyTime, endTime) (en minutos).
+// Si endTime está vacío, aplica desde applyTime en adelante. Soporta ventanas
+// que cruzan la medianoche (ej. 20:00 → 06:00).
+export function isTaxActive(
+  rule: { status?: string; active?: boolean; applyTime?: string; endTime?: string },
+  now = new Date()
+): boolean {
   if (!rule?.active) return false;
   if (rule.status === "forced_on") return true;
   if (rule.status === "forced_off") return false;
-  const t = rule.applyTime || "20:00";
-  const [h, m] = t.split(":").map((n) => parseInt(n, 10) || 0);
+
+  const start = timeToMinutes(rule.applyTime || "20:00");
+  const endRaw = rule.endTime || "";
+  const end = endRaw ? timeToMinutes(endRaw) : -1;
   const nowMin = now.getHours() * 60 + now.getMinutes();
-  return nowMin >= h * 60 + m;
+
+  if (end < 0) {
+    // Sin hora de fin: aplica desde start en adelante
+    return nowMin >= start;
+  }
+  if (end > start) {
+    // Ventana normal dentro del día: start <= now < end
+    return nowMin >= start && nowMin < end;
+  }
+  // Cruza medianoche: [start, 1440) ∪ [0, end)
+  return nowMin >= start || nowMin < end;
 }
 
 export function applyTaxToPrice(rule: { active: boolean; percentage: number }, base: number): number {
@@ -108,6 +135,7 @@ export function computeTaxState(rule: TaxRuleData | null, now = new Date()): Tax
       active: false,
       percentage: 0,
       applyTime: "20:00",
+      endTime: "",
       scope: "ALL",
       scopeValue: null,
       status: "schedule",
@@ -117,10 +145,38 @@ export function computeTaxState(rule: TaxRuleData | null, now = new Date()): Tax
   const active = isTaxActive(rule, now);
   let nextChange: string | null = null;
   if (rule.status === "schedule" && rule.active) {
-    const [h, m] = rule.applyTime.split(":").map((n) => parseInt(n, 10) || 0);
+    const start = timeToMinutes(rule.applyTime || "20:00");
+    const end = rule.endTime ? timeToMinutes(rule.endTime) : -1;
+    const nowMin = now.getHours() * 60 + now.getMinutes();
+
+    // Buscar la próxima transición (inicio o fin) más cercana.
+    let nextMin = -1;
+    if (end < 0) {
+      // Sin fin: próxima transición es el próximo inicio (si aún no empezó hoy,
+      // hoy; si ya empezó, mañana)
+      const nextStart = nowMin < start ? start : start + 24 * 60;
+      nextMin = nextStart;
+    } else if (end > start) {
+      // Ventana normal: transición a fin o a inicio, lo que venga primero
+      if (nowMin < start) nextMin = start;
+      else if (nowMin < end) nextMin = end;
+      else nextMin = start + 24 * 60;
+    } else {
+      // Cruza medianoche: activo si nowMin >= start o nowMin < end
+      if (nowMin < end) {
+        nextMin = end; // dentro del tramo [0, end): fin a las end
+      } else if (nowMin >= start) {
+        nextMin = start + 24 * 60; // dentro de [start, 1440): fin mañana a las end
+      } else {
+        nextMin = start; // entre end y start: próximo inicio hoy
+      }
+    }
+
     const target = new Date(now);
-    target.setHours(h, m, 0, 0);
-    if (now >= target) target.setDate(target.getDate() + 1);
+    const dayOffset = Math.floor(nextMin / (24 * 60));
+    const minutesOfDay = nextMin % (24 * 60);
+    target.setDate(target.getDate() + dayOffset);
+    target.setHours(Math.floor(minutesOfDay / 60), minutesOfDay % 60, 0, 0);
     nextChange = target.toISOString();
   }
   return {
@@ -128,6 +184,7 @@ export function computeTaxState(rule: TaxRuleData | null, now = new Date()): Tax
     active,
     percentage: rule.percentage,
     applyTime: rule.applyTime,
+    endTime: rule.endTime,
     scope: rule.scope,
     scopeValue: rule.scopeValue,
     status: rule.status,

@@ -74,6 +74,11 @@ export async function PUT(request: Request) {
       ? String(body.applyTime)
       : "20:00";
 
+    // Hora de fin opcional: vacío significa "sin hora de fin"
+    const endTimeRaw = String(body.endTime || "").trim();
+    const endTime =
+      endTimeRaw && /^([01]\d|2[0-3]):[0-5]\d$/.test(endTimeRaw) ? endTimeRaw : "";
+
     const scope = ["ALL", "SUPPLIER", "DEPARTMENT", "MIN_PRICE"].includes(String(body.scope))
       ? String(body.scope)
       : "ALL";
@@ -90,6 +95,7 @@ export async function PUT(request: Request) {
       name: String(body.name || ""),
       percentage,
       applyTime,
+      endTime,
       scope,
       scopeValue,
       active: Boolean(body.active),
@@ -107,7 +113,7 @@ export async function PUT(request: Request) {
         ruleId: saved.id,
         action: "config",
         userName: session.user.name || session.user.email || "Admin",
-        note: `Config: +${percentage}% desde ${applyTime} (${scope}${scopeValue != null ? `:${scopeValue}` : ""})`,
+        note: `Config: +${percentage}% desde ${applyTime}${endTime ? ` hasta ${endTime}` : ""} (${scope}${scopeValue != null ? `:${scopeValue}` : ""})`,
       },
     });
 
@@ -118,8 +124,8 @@ export async function PUT(request: Request) {
       action: "update",
       entity: "tax",
       entityId: saved.id,
-      description: `Impuesto configurado: +${percentage}% desde ${applyTime}`,
-      details: { percentage, applyTime, scope, scopeValue },
+      description: `Impuesto configurado: +${percentage}% desde ${applyTime}${endTime ? ` hasta ${endTime}` : ""}`,
+      details: { percentage, applyTime, endTime, scope, scopeValue },
       ip: getClientIp(request),
     });
 

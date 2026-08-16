@@ -988,6 +988,7 @@ export default function ProductsPage() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Todos los prov.</SelectItem>
+                <SelectItem value="none">Sin proveedor</SelectItem>
                 {suppliers.map((s) => (
                   <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
                 ))}

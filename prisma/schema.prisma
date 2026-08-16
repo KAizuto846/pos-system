@@ -394,15 +394,17 @@ model AppSetting {
 }
 
 // Impuesto / recargo por horario: un aumento porcentual que se cobra
-// automaticamente cuando la hora actual >= applyTime ("HH:MM"), sin tocar
-// el precio base de los productos. El precio publico siempre se redondea
-// hacia arriba (ceil) al entero mas cercano.
+// automaticamente cuando la hora actual esta dentro de la ventana
+// [applyTime, endTime) ("HH:MM"), sin tocar el precio base de los productos.
+// El precio publico siempre se redondea hacia arriba (ceil) al entero mas
+// cercano. Si endTime esta vacio, aplica desde applyTime en adelante (sin fin).
 // status: "schedule" (por horario) | "forced_on" (manual) | "forced_off" (manual)
 model TaxRule {
   id         Int      @id @default(autoincrement())
   name       String   @default("")
   percentage Float
   applyTime  String   @default("20:00") @map("apply_time")
+  endTime    String   @default("") @map("end_time") // vacio = sin hora de fin
   scope      String   @default("ALL") // ALL | SUPPLIER | DEPARTMENT | MIN_PRICE
   scopeValue Int?     @map("scope_value")
   active     Boolean  @default(true)
