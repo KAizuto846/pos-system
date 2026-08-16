@@ -5,6 +5,7 @@ import { hash } from "bcrypt-ts";
 import { broadcast } from "@/lib/broadcast";
 import { logChange } from "@/lib/sync-engine";
 import { getDeviceId } from "@/lib/sync-utils";
+import { logAudit, getClientIp } from "@/lib/audit";
 
 export async function GET() {
   try {
@@ -96,6 +97,17 @@ export async function POST(request: Request) {
       name: user.name,
       role: user.role,
       active: user.active,
+    });
+    void logAudit({
+      userId: parseInt(session.user.id, 10),
+      userName: session.user.name,
+      userRole: session.user.role,
+      action: "create",
+      entity: "user",
+      entityId: user.id,
+      description: `Usuario creado: ${user.name || user.username} (${user.role})`,
+      details: { username: user.username, name: user.name, role: user.role },
+      ip: getClientIp(request),
     });
     return Response.json(user, { status: 201 });
   } catch (error) {

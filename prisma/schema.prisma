@@ -478,6 +478,29 @@ model PiecesLog {
   @@map("pieces_log")
 }
 
+// Registro de auditoría: quién entró y qué modificaciones hizo cada usuario.
+// Solo los administradores pueden verlo. Incluye logins, creación/edición/
+// eliminación de registros (productos, ventas, usuarios, etc.).
+model AuditLog {
+  id         Int      @id @default(autoincrement())
+  userId     Int      @map("user_id")
+  userName   String   @default("") @map("user_name")
+  userRole   String   @default("") @map("user_role")
+  action     String   // login | create | update | delete | stock | receive | auth
+  entity     String   // product | sale | user | supplier | ...
+  entityId   Int?     @map("entity_id")
+  description String  @default("")
+  details    String   @default("{}")
+  ip         String   @default("") // IP desde la que se conectó
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([createdAt])
+  @@index([action])
+  @@index([entity])
+  @@map("audit_logs")
+}
+
 // Aviso de cobro sin existencia: se permite la venta pero se registra que el
 // producto se cobro sin el stock suficiente (o sin stock). No desaparece hasta
 // que alguien lo reconozca (status: pending | acked).

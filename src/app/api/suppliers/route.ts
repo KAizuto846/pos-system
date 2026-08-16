@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { supplierSchema } from "@/lib/validations";
 import { broadcast } from "@/lib/broadcast";
 import { logChange } from "@/lib/sync-engine";
+import { logAudit, getClientIp } from "@/lib/audit";
 import { getDeviceId } from "@/lib/sync-utils";
 
 export async function GET() {
@@ -62,6 +63,17 @@ export async function POST(request: Request) {
       email: supplier.email,
       address: supplier.address,
       active: supplier.active,
+    });
+    void logAudit({
+      userId: parseInt(session.user.id, 10),
+      userName: session.user.name,
+      userRole: session.user.role,
+      action: "create",
+      entity: "supplier",
+      entityId: supplier.id,
+      description: `Proveedor creado: ${supplier.name}`,
+      details: { name: supplier.name, phone: supplier.phone },
+      ip: getClientIp(request),
     });
     return Response.json(supplier, { status: 201 });
   } catch (error) {

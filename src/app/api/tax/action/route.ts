@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getTaxRule, invalidateTaxRuleCache } from "@/lib/tax-rule";
+import { logAudit, getClientIp } from "@/lib/audit";
 
 // POST /api/tax/action - acciones manuales (solo admin)
 // body: { action: "apply" | "revert" | "schedule" }
@@ -44,6 +45,18 @@ export async function POST(request: Request) {
 
     await prisma.taxLog.create({
       data: { ruleId: rule.id, action, userName, note },
+    });
+
+    void logAudit({
+      userId: parseInt(session.user.id, 10),
+      userName: session.user.name,
+      userRole: session.user.role,
+      action: "update",
+      entity: "tax",
+      entityId: rule.id,
+      description: `Impuesto: ${note} (${action})`,
+      details: { action, status: nextStatus },
+      ip: getClientIp(request),
     });
 
     return NextResponse.json({ ok: true, status: saved.status });

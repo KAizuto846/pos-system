@@ -91,6 +91,16 @@ export const orderSchema = z.object({
       })
     )
     .min(1),
+  // Rango de fechas/horas usado para calcular el pedido. Se guarda por
+  // proveedor para que el siguiente pedido continúe donde terminó este.
+  range: z
+    .object({
+      dateFrom: z.string().optional(),
+      timeFrom: z.string().optional(),
+      dateTo: z.string().optional(),
+      timeTo: z.string().optional(),
+    })
+    .optional(),
 });
 
 export type LoginInput = z.infer<typeof loginSchema>;

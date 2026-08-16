@@ -3,6 +3,7 @@ import { initializePrisma, prisma } from "@/lib/db";
 import { broadcast } from "@/lib/broadcast";
 import { logChange } from "@/lib/sync-engine";
 import { getDeviceId } from "@/lib/sync-utils";
+import { logAudit, getClientIp } from "@/lib/audit";
 
 export async function POST(
   request: Request,
@@ -91,6 +92,17 @@ export async function POST(
 
     broadcast("product:stock", { id: productId, stock: result.updated.stock });
     void logChange(getDeviceId(), "UPDATE", "product", productId, { stock: result.updated.stock });
+    void logAudit({
+      userId: parseInt(session.user.id, 10),
+      userName: session.user.name,
+      userRole: session.user.role,
+      action: "stock",
+      entity: "product",
+      entityId: productId,
+      description: `Ajuste de stock: ${quantity >= 0 ? '+' : ''}${quantity} (${result.updated.name || '#' + productId})`,
+      details: { quantity, stock: result.updated.stock },
+      ip: getClientIp(request),
+    });
     return Response.json(result.updated);
   } catch (error) {
     console.error("Error adjusting stock:", error);

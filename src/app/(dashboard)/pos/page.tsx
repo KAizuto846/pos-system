@@ -131,6 +131,8 @@ export default function PosPage() {
   const [printingTicket, setPrintingTicket] = useState(false);
   const [printerName, setPrinterName] = useState('');
   const [ticketWidth, setTicketWidth] = useState(32);
+  const [printServerUrl, setPrintServerUrl] = useState('');
+  const [printToken, setPrintToken] = useState('');
 
   // Loyalty/customer
   const [customerSearch, setCustomerSearch] = useState('');
@@ -250,12 +252,14 @@ export default function PosPage() {
 
   // Cargar impresora de tickets configurada (Electron)
   useEffect(() => {
-    const win = window as unknown as { electronAPI?: { getConfig?: () => Promise<{ ticketPrinter?: string; ticketWidth?: number }> } };
+    const win = window as unknown as { electronAPI?: { getConfig?: () => Promise<{ ticketPrinter?: string; ticketWidth?: number; printServerUrl?: string; printToken?: string }> } };
     if (win.electronAPI?.getConfig) {
       win.electronAPI.getConfig()
         .then((cfg) => {
           if (cfg.ticketPrinter) setPrinterName(cfg.ticketPrinter);
           if (cfg.ticketWidth) setTicketWidth(cfg.ticketWidth);
+          if (cfg.printServerUrl) setPrintServerUrl(cfg.printServerUrl);
+          if (cfg.printToken) setPrintToken(cfg.printToken);
         })
         .catch(() => {});
     }
@@ -517,16 +521,43 @@ export default function PosPage() {
   };
 
   // Imprime el ticket. Estrategia en orden:
-  // 1) Servidor (POST /api/print/ticket): el server escribe ESC/POS directo a
-  //    la impresora USB. Funciona desde CUALQUIER navegador (Windows, celular,
-  //    LAN, Tailscale) porque la impresora esta pegada al host del server.
-  // 2) Electron (printPlainText): cuando la app desktop corre en la misma
-  //    maquina que la impresora.
-  // 3) window.print(): ultimo recurso (dialogo del navegador).
+  // 1) Servidor remoto configurado (printServerUrl, app Electron en otra
+  //    maquina / Windows): POST con token al server del HOST (la impresora
+  //    USB esta pegada ahi). Funciona via Funnel desde cualquier red.
+  // 2) Servidor local (POST /api/print/ticket): mismo host, cualquier navegador.
+  // 3) Electron (printPlainText): impresora instalada en la misma maquina.
+  // 4) window.print(): ultimo recurso (dialogo del navegador).
   const handlePrintSale = async (sale: SaleTicket) => {
     setPrintingTicket(true);
     try {
       const text = buildPlainTextTicket(sale, ticketWidth);
+
+      // 1) Server remoto (Electron configurado con printServerUrl)
+      if (printServerUrl) {
+        try {
+          const url = printServerUrl.replace(/\/+$/, '') + '/api/print/ticket';
+          const res = await fetch(url, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(printToken ? { 'x-print-token': printToken } : {}),
+            },
+            body: JSON.stringify({ text }),
+          });
+          if (res.ok) {
+            toast.success('Ticket impreso');
+            return;
+          }
+          const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+          toast.error(`Impresora remota: ${err.error || 'error'}`);
+          return;
+        } catch (e) {
+          toast.error(`No se pudo conectar con el servidor de impresión (${printServerUrl})`);
+          return;
+        }
+      }
+
+      // 2) Server local (misma maquina)
       try {
         const res = await fetch('/api/print/ticket', {
           method: 'POST',
@@ -541,6 +572,7 @@ export default function PosPage() {
         // Sin conexion con el server: seguir con los otros metodos.
       }
 
+      // 3) Electron
       const win = window as unknown as {
         electronAPI?: { printPlainText?: (text: string, printer: string) => Promise<{ ok: boolean; error?: string }> };
       };
@@ -550,6 +582,7 @@ export default function PosPage() {
         else toast.error(res?.error || 'No se pudo imprimir el ticket');
         return;
       }
+      // 4) Navegador
       printTicketHtml(sale);
     } finally {
       setPrintingTicket(false);

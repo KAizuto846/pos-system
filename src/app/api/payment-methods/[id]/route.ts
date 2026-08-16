@@ -4,6 +4,7 @@ import { paymentMethodSchema } from "@/lib/validations";
 import { broadcast } from "@/lib/broadcast";
 import { logChange } from "@/lib/sync-engine";
 import { getDeviceId } from "@/lib/sync-utils";
+import { logAudit, getClientIp } from "@/lib/audit";
 
 export async function PUT(
   request: Request,
@@ -46,6 +47,17 @@ export async function PUT(
 
     broadcast("payment:change", { id: paymentMethodId });
     void logChange(getDeviceId(), "UPDATE", "paymentmethod", paymentMethodId, updateData);
+    void logAudit({
+      userId: parseInt(session.user.id, 10),
+      userName: session.user.name,
+      userRole: session.user.role,
+      action: "update",
+      entity: "payment-method",
+      entityId: paymentMethodId,
+      description: `Método de pago modificado: ${paymentMethod.name || '#' + paymentMethodId}`,
+      details: updateData,
+      ip: getClientIp(request),
+    });
     return Response.json(paymentMethod);
   } catch (error) {
     console.error("Error updating payment method:", error);
@@ -54,7 +66,7 @@ export async function PUT(
 }
 
 export async function DELETE(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
@@ -70,12 +82,28 @@ export async function DELETE(
       return Response.json({ error: "ID inválido" }, { status: 400 });
     }
 
+    const existing = await prisma.paymentMethod.findUnique({
+      where: { id: paymentMethodId },
+      select: { name: true },
+    });
+
     await prisma.paymentMethod.delete({
       where: { id: paymentMethodId },
     });
 
     broadcast("payment:change", { id: paymentMethodId });
     void logChange(getDeviceId(), "DELETE", "paymentmethod", paymentMethodId, {});
+    void logAudit({
+      userId: parseInt(session.user.id, 10),
+      userName: session.user.name,
+      userRole: session.user.role,
+      action: "delete",
+      entity: "payment-method",
+      entityId: paymentMethodId,
+      description: `Método de pago eliminado: ${existing?.name || '#' + paymentMethodId}`,
+      details: { name: existing?.name },
+      ip: getClientIp(request),
+    });
     return Response.json({ success: true });
   } catch (error) {
     console.error("Error deleting payment method:", error);

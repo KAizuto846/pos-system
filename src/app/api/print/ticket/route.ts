@@ -6,9 +6,31 @@ import * as fs from "node:fs";
 // PRINTER_DEVICE: dispositivo USB directo (usblp). PRINTER_QUEUE: cola CUPS raw.
 const PRINTER_DEVICE = process.env.PRINTER_DEVICE || "/dev/usb/lp0";
 const PRINTER_QUEUE = process.env.PRINTER_QUEUE || "mini";
+const PRINT_TOKEN = process.env.PRINT_TOKEN || "";
 
 const ESC = "\x1b";
 const GS = "\x1d";
+
+const CORS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, x-print-token",
+};
+
+function withCors(res: Response): Response {
+  const headers = new Headers(res.headers);
+  for (const [k, v] of Object.entries(CORS)) headers.set(k, v);
+  return new Response(res.body, { status: res.status, headers });
+}
+
+// Auth: sesión válida (navegador mismo-origen) O token de impresión
+// (app Electron remota / impresión cruzada vía Funnel).
+function isAuthorized(request: Request, session: { user?: unknown } | null): boolean {
+  if (session?.user) return true;
+  if (!PRINT_TOKEN) return false;
+  const token = request.headers.get("x-print-token") || "";
+  return token === PRINT_TOKEN;
+}
 
 // Envuelve texto plano en comandos ESC/POS: init, texto, avance y corte.
 // Se codifica a latin1: las impresoras térmicas usan CP437 por defecto y los
@@ -61,23 +83,32 @@ function printViaLp(buf: Buffer): Promise<void> {
   });
 }
 
+// Preflight CORS (la app Electron remota hace fetch cross-origin).
+export async function OPTIONS() {
+  return withCors(new Response(null, { status: 204 }));
+}
+
 // Estado de la impresora para diagnóstico (GET).
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const session = await auth();
-    if (!session?.user) {
-      return Response.json({ error: "No autorizado" }, { status: 401 });
+    if (!isAuthorized(request, session)) {
+      return withCors(Response.json({ error: "No autorizado" }, { status: 401 }));
     }
-    return Response.json({
-      ok: true,
-      device: PRINTER_DEVICE,
-      deviceAvailable: deviceAvailable(),
-      queue: PRINTER_QUEUE,
-    });
+    return withCors(
+      Response.json({
+        ok: true,
+        device: PRINTER_DEVICE,
+        deviceAvailable: deviceAvailable(),
+        queue: PRINTER_QUEUE,
+      })
+    );
   } catch (e) {
-    return Response.json(
-      { ok: false, error: e instanceof Error ? e.message : "Error interno" },
-      { status: 500 }
+    return withCors(
+      Response.json(
+        { ok: false, error: e instanceof Error ? e.message : "Error interno" },
+        { status: 500 }
+      )
     );
   }
 }
@@ -88,14 +119,14 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const session = await auth();
-    if (!session?.user) {
-      return Response.json({ error: "No autorizado" }, { status: 401 });
+    if (!isAuthorized(request, session)) {
+      return withCors(Response.json({ error: "No autorizado" }, { status: 401 }));
     }
 
     const body = await request.json().catch(() => null);
     const text = typeof body?.text === "string" ? body.text : "";
     if (!text.trim()) {
-      return Response.json({ error: "text vacío" }, { status: 400 });
+      return withCors(Response.json({ error: "text vacío" }, { status: 400 }));
     }
 
     const buf = wrapEscPos(text);
@@ -103,7 +134,7 @@ export async function POST(request: Request) {
     if (deviceAvailable()) {
       try {
         fs.writeFileSync(PRINTER_DEVICE, buf);
-        return Response.json({ ok: true, method: "device" });
+        return withCors(Response.json({ ok: true, method: "device" }));
       } catch {
         // Sin permiso o dispositivo ocupado: probar por CUPS.
       }
@@ -111,17 +142,21 @@ export async function POST(request: Request) {
 
     try {
       await printViaLp(buf);
-      return Response.json({ ok: true, method: "lp" });
+      return withCors(Response.json({ ok: true, method: "lp" }));
     } catch (e) {
-      return Response.json(
-        { ok: false, error: e instanceof Error ? e.message : "Error al imprimir" },
-        { status: 500 }
+      return withCors(
+        Response.json(
+          { ok: false, error: e instanceof Error ? e.message : "Error al imprimir" },
+          { status: 500 }
+        )
       );
     }
   } catch (e) {
-    return Response.json(
-      { ok: false, error: e instanceof Error ? e.message : "Error interno" },
-      { status: 500 }
+    return withCors(
+      Response.json(
+        { ok: false, error: e instanceof Error ? e.message : "Error interno" },
+        { status: 500 }
+      )
     );
   }
 }

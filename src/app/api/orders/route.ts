@@ -3,6 +3,7 @@ import { initializePrisma, prisma } from "@/lib/db";
 import { orderSchema } from "@/lib/validations";
 import { logChange } from "@/lib/sync-engine";
 import { getDeviceId } from "@/lib/sync-utils";
+import { logAudit, getClientIp } from "@/lib/audit";
 import type { Prisma } from "@prisma/client";
 
 function positiveInt(value: string | null, fallback: number) {
@@ -164,6 +165,30 @@ export async function POST(request: Request) {
       notes: order.notes,
       items: data.items,
     });
+    void logAudit({
+      userId: parseInt(session.user.id, 10),
+      userName: session.user.name,
+      userRole: session.user.role,
+      action: "create",
+      entity: "order",
+      entityId: order.id,
+      description: `Pedido creado a ${order.supplier?.name || 'proveedor'} (${data.items.length} productos)`,
+      details: { supplierId: order.supplierId, items: data.items.length },
+      ip: getClientIp(request),
+    });
+
+    // Guardar el rango de fechas/horas usado para que el siguiente pedido a este
+    // proveedor continúe donde terminó el anterior (el "hasta" de este pedido
+    // pasa a ser el "desde" del próximo).
+    if (data.range && (data.range.dateFrom || data.range.dateTo || data.range.timeFrom || data.range.timeTo)) {
+      const key = `lastOrderRange_${data.supplierId}`;
+      await prisma.appSetting.upsert({
+        where: { key },
+        create: { key, value: JSON.stringify(data.range) },
+        update: { value: JSON.stringify(data.range) },
+      });
+    }
+
     return Response.json(order, { status: 201 });
   } catch (error) {
     console.error("Error creating order:", error);

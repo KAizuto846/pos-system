@@ -2,6 +2,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { logChange } from "@/lib/sync-engine";
 import { getDeviceId } from "@/lib/sync-utils";
+import { logAudit, getClientIp } from "@/lib/audit";
 
 export async function GET(request: Request) {
   try {
@@ -453,6 +454,17 @@ export async function POST(request: Request) {
       paymentMethodId: entry.paymentMethodId,
       userId: entry.userId,
       recordedAt: entry.recordedAt,
+    });
+    void logAudit({
+      userId: parseInt(session.user.id, 10),
+      userName: session.user.name,
+      userRole: session.user.role,
+      action: "create",
+      entity: "finance",
+      entityId: entry.id,
+      description: `Entrada de caja ${entry.type}: ${entry.amount} (${finalCategory})`,
+      details: { type: entry.type, category: finalCategory, amount: entry.amount, description: entry.description },
+      ip: getClientIp(request),
     });
     return Response.json(entry, { status: 201 });
   } catch (error) {

@@ -5,6 +5,7 @@ import { detectPiecesFromName } from "@/lib/pieces";
 import { broadcast } from "@/lib/broadcast";
 import { logChange } from "@/lib/sync-engine";
 import { getDeviceId } from "@/lib/sync-utils";
+import { logAudit, getClientIp } from "@/lib/audit";
 import type { Prisma } from "@prisma/client";
 
 export async function GET(request: Request) {
@@ -212,6 +213,17 @@ export async function POST(request: Request) {
       supplierId: product.supplierId,
       piecesPerUnit: product.piecesPerUnit,
       piecesTracked: product.piecesTracked,
+    });
+    void logAudit({
+      userId: parseInt(session.user.id, 10),
+      userName: session.user.name,
+      userRole: session.user.role,
+      action: "create",
+      entity: "product",
+      entityId: product.id,
+      description: `Producto creado: ${product.name}`,
+      details: { name: product.name, price: product.price, stock: product.stock, barcode: product.barcode },
+      ip: getClientIp(request),
     });
     return Response.json(product, { status: 201 });
   } catch (error) {

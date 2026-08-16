@@ -5,6 +5,7 @@ import { broadcast } from "@/lib/broadcast";
 import { logChange } from "@/lib/sync-engine";
 import { getDeviceId } from "@/lib/sync-utils";
 import { consumeBatch } from "@/lib/stock";
+import { logAudit, getClientIp } from "@/lib/audit";
 import type { Prisma } from "@prisma/client";
 
 function positiveInt(value: string | null, fallback: number) {
@@ -350,6 +351,17 @@ export async function POST(request: Request) {
     });
 
     broadcast("sale:create", { id: sale.id, total: sale.total });
+    void logAudit({
+      userId,
+      userName: session.user.name,
+      userRole: session.user.role,
+      action: "create",
+      entity: "sale",
+      entityId: sale.id,
+      description: `Venta registrada #${sale.id} por ${sale.total}`,
+      details: { total: sale.total, items: data.items.length, discount: data.discountTotal || 0 },
+      ip: getClientIp(request),
+    });
     void logChange(getDeviceId(), "CREATE", "sale", sale.id, {
       id: sale.id,
       total: sale.total,

@@ -2,6 +2,7 @@ import { auth } from "@/lib/auth";
 import { initializePrisma, prisma } from "@/lib/db";
 import { broadcast } from "@/lib/broadcast";
 import { logChange } from "@/lib/sync-engine";
+import { logAudit, getClientIp } from "@/lib/audit";
 import { getDeviceId } from "@/lib/sync-utils";
 import { addStock, monthYearToEndOfMonth } from "@/lib/stock";
 import type { Prisma } from "@prisma/client";
@@ -465,6 +466,17 @@ export async function POST(
       paymentMethodId,
       totalNote,
       status: updatedOrder.status,
+    });
+    void logAudit({
+      userId: parseInt(session.user.id, 10),
+      userName: session.user.name,
+      userRole: session.user.role,
+      action: "receive",
+      entity: "order",
+      entityId: orderId,
+      description: `Pedido #${orderId} recibido (${updatedOrder.supplier?.name || 'proveedor'})`,
+      details: { items: items?.length || 0, extras: extras?.length || 0, status: updatedOrder.status },
+      ip: getClientIp(request),
     });
     return Response.json(updatedOrder);
   } catch (error) {

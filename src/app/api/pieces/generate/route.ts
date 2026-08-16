@@ -9,6 +9,7 @@ import {
 import { broadcast } from "@/lib/broadcast";
 import { logChange } from "@/lib/sync-engine";
 import { getDeviceId } from "@/lib/sync-utils";
+import { logAudit, getClientIp } from "@/lib/audit";
 import type { Prisma } from "@prisma/client";
 
 export async function POST(request: Request) {
@@ -158,6 +159,18 @@ export async function POST(request: Request) {
         createdAt: dt.toISOString(),
       });
     }
+
+    void logAudit({
+      userId: parseInt(session.user.id, 10),
+      userName: session.user.name,
+      userRole: session.user.role,
+      action: "create",
+      entity: "pieces",
+      entityId: box.id,
+      description: `Piezas generadas: ${pieces} de ${freshBox?.name || 'caja #' + box.id}`,
+      details: { boxId: box.id, pieces, pieceId: freshPiece?.id },
+      ip: getClientIp(request),
+    });
 
     return Response.json({
       box: freshBox,

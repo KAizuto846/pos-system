@@ -302,6 +302,30 @@ export default function OrdersPage() {
     setSalesInfo(null); setFormError(''); setExtraColumns([]); setPendingItems(null);
     setManualColumns({}); setCustomColumnName('');
     setGhostName(''); setGhostBarcode(''); setGhostPrice('0'); setGhostCost('0'); setGhostQty('1');
+    setLastRangeNote(null);
+  };
+
+  // ── Recordar último rango por proveedor ──
+  // Al elegir un proveedor, busca el rango de fechas/horas usado en su último
+  // pedido y prellenar el "desde" del nuevo pedido con el "hasta" del anterior.
+  const [lastRangeNote, setLastRangeNote] = useState<string | null>(null);
+  const loadLastRange = async (supplierId: string) => {
+    setLastRangeNote(null);
+    if (!supplierId) return;
+    try {
+      const res = await fetch(`/api/orders/last-range?supplierId=${encodeURIComponent(supplierId)}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const r = data?.range;
+      if (r?.dateTo && r?.timeTo) {
+        setDateFrom(r.dateTo);
+        setTimeFrom(r.timeTo);
+        setDateTo(todayStr());
+        setTimeTo('22:00');
+        const f = `${r.dateTo} ${r.timeTo}`;
+        setLastRangeNote(`El último pedido a este proveedor terminó el ${f}. El nuevo pedido empieza desde ahí.`);
+      }
+    } catch { /* Sin conexión: se mantienen las fechas actuales */ }
   };
 
   // ── Calculate sales ──
@@ -495,7 +519,13 @@ export default function OrdersPage() {
     const res = await fetch('/api/orders', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ supplierId: parseInt(formSupplierId), notes: formNotes, status, items }),
+      body: JSON.stringify({
+        supplierId: parseInt(formSupplierId),
+        notes: formNotes,
+        status,
+        items,
+        range: { dateFrom, timeFrom, dateTo, timeTo },
+      }),
     });
     const data = await res.json();
     setFormLoading(false);
@@ -1086,7 +1116,7 @@ export default function OrdersPage() {
                 {/* Proveedor */}
                 <div className="space-y-2">
                   <Label>Proveedor *</Label>
-                  <Select value={formSupplierId} onValueChange={v => { setFormSupplierId(v); setPendingItems(null); }}>
+                  <Select value={formSupplierId} onValueChange={v => { setFormSupplierId(v); setPendingItems(null); loadLastRange(v); }}>
                     <SelectTrigger><SelectValue placeholder="Seleccionar proveedor" /></SelectTrigger>
                     <SelectContent>
                       {suppliers.length === 0 && <SelectItem value="all" disabled>No hay proveedores</SelectItem>}
@@ -1114,6 +1144,13 @@ export default function OrdersPage() {
                     <Input type="time" value={timeTo} onChange={e => setTimeTo(e.target.value)} />
                   </div>
                 </div>
+
+                {lastRangeNote && (
+                  <div className="rounded-md border border-emerald-700/50 bg-emerald-900/20 px-3 py-2 text-xs text-emerald-400 flex items-center gap-2">
+                    <History className="h-3.5 w-3.5 shrink-0" />
+                    {lastRangeNote}
+                  </div>
+                )}
 
                 {/* Botones: Calcular + Pendientes + Notas */}
                 <div className="flex items-end gap-2 flex-wrap">

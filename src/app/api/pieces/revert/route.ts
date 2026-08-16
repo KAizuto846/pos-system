@@ -4,6 +4,7 @@ import { broadcast } from "@/lib/broadcast";
 import { logChange } from "@/lib/sync-engine";
 import { getDeviceId } from "@/lib/sync-utils";
 import { initializePrisma } from "@/lib/db";
+import { logAudit, getClientIp } from "@/lib/audit";
 import type { Prisma } from "@prisma/client";
 
 export async function POST(request: Request) {
@@ -86,6 +87,18 @@ export async function POST(request: Request) {
     for (const log of logsToDelete) {
       void logChange(getDeviceId(), "DELETE", "pieceslog", log.id, { id: log.id });
     }
+
+    void logAudit({
+      userId: parseInt(session.user.id, 10),
+      userName: session.user.name,
+      userRole: session.user.role,
+      action: "delete",
+      entity: "pieces",
+      entityId: boxId,
+      description: `Piezas revertidas de ${freshBox?.name || 'caja #' + boxId}`,
+      details: { boxId, logsDeleted: logsToDelete.length },
+      ip: getClientIp(request),
+    });
 
     return Response.json({ ok: true, box: freshBox, piece: freshPiece });
   } catch (error) {

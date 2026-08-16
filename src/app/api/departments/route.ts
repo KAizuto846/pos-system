@@ -4,6 +4,7 @@ import { departmentSchema } from "@/lib/validations";
 import { broadcast } from "@/lib/broadcast";
 import { logChange } from "@/lib/sync-engine";
 import { getDeviceId } from "@/lib/sync-utils";
+import { logAudit, getClientIp } from "@/lib/audit";
 
 export async function GET() {
   try {
@@ -56,6 +57,17 @@ export async function POST(request: Request) {
       name: department.name,
       description: department.description,
       active: department.active,
+    });
+    void logAudit({
+      userId: parseInt(session.user.id, 10),
+      userName: session.user.name,
+      userRole: session.user.role,
+      action: "create",
+      entity: "department",
+      entityId: department.id,
+      description: `Departamento creado: ${department.name}`,
+      details: { name: department.name },
+      ip: getClientIp(request),
     });
     return Response.json(department, { status: 201 });
   } catch (error) {

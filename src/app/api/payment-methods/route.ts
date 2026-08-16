@@ -4,6 +4,7 @@ import { paymentMethodSchema } from "@/lib/validations";
 import { broadcast } from "@/lib/broadcast";
 import { logChange } from "@/lib/sync-engine";
 import { getDeviceId } from "@/lib/sync-utils";
+import { logAudit, getClientIp } from "@/lib/audit";
 
 export async function GET() {
   try {
@@ -56,6 +57,17 @@ export async function POST(request: Request) {
       name: paymentMethod.name,
       affectsCash: paymentMethod.affectsCash,
       active: paymentMethod.active,
+    });
+    void logAudit({
+      userId: parseInt(session.user.id, 10),
+      userName: session.user.name,
+      userRole: session.user.role,
+      action: "create",
+      entity: "payment-method",
+      entityId: paymentMethod.id,
+      description: `Método de pago creado: ${paymentMethod.name}`,
+      details: { name: paymentMethod.name, affectsCash: paymentMethod.affectsCash },
+      ip: getClientIp(request),
     });
     return Response.json(paymentMethod, { status: 201 });
   } catch (error) {

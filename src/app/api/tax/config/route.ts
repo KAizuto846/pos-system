@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getTaxRule, invalidateTaxRuleCache, computeTaxState } from "@/lib/tax-rule";
+import { logAudit, getClientIp } from "@/lib/audit";
 
 // GET /api/tax/config - configuracion del impuesto + historial (solo admin)
 export async function GET() {
@@ -108,6 +109,18 @@ export async function PUT(request: Request) {
         userName: session.user.name || session.user.email || "Admin",
         note: `Config: +${percentage}% desde ${applyTime} (${scope}${scopeValue != null ? `:${scopeValue}` : ""})`,
       },
+    });
+
+    void logAudit({
+      userId: parseInt(session.user.id, 10),
+      userName: session.user.name,
+      userRole: session.user.role,
+      action: "update",
+      entity: "tax",
+      entityId: saved.id,
+      description: `Impuesto configurado: +${percentage}% desde ${applyTime}`,
+      details: { percentage, applyTime, scope, scopeValue },
+      ip: getClientIp(request),
     });
 
     return NextResponse.json({ ok: true, rule: saved });

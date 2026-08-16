@@ -1,6 +1,7 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { compare } from "bcrypt-ts";
+import { logAudit, getClientIp } from "@/lib/audit";
 
 export async function POST(request: Request) {
   try {
@@ -34,6 +35,18 @@ export async function POST(request: Request) {
       const removedSales = await tx.sale.deleteMany({});
       const removedEntries = await tx.cashEntry.deleteMany({});
       return { sales: removedSales.count, entries: removedEntries.count };
+    });
+
+    void logAudit({
+      userId: parseInt(session.user.id, 10),
+      userName: session.user.name,
+      userRole: session.user.role,
+      action: "delete",
+      entity: "finance",
+      entityId: null,
+      description: `Finanzas reiniciadas: ${result.sales} ventas y ${result.entries} registros de caja eliminados`,
+      details: { sales: result.sales, entries: result.entries },
+      ip: getClientIp(request),
     });
 
     return Response.json({

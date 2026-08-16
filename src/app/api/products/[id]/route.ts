@@ -5,6 +5,7 @@ import { productSchema } from "@/lib/validations";
 import { broadcast } from "@/lib/broadcast";
 import { logChange } from "@/lib/sync-engine";
 import { getDeviceId } from "@/lib/sync-utils";
+import { logAudit, getClientIp } from "@/lib/audit";
 import type { Prisma } from "@prisma/client";
 
 // Convierte "MM/YYYY" o "MM-YYYY" al ultimo instante de ese mes (fin del dia).
@@ -248,6 +249,17 @@ export async function PUT(
 
     broadcast("product:update", { id: productId });
     void logChange(getDeviceId(), "UPDATE", "product", productId, updateData);
+    void logAudit({
+      userId: parseInt(session.user.id, 10),
+      userName: session.user.name,
+      userRole: session.user.role,
+      action: "update",
+      entity: "product",
+      entityId: productId,
+      description: `Producto editado: ${product?.name || '#' + productId}`,
+      details: updateData,
+      ip: getClientIp(request),
+    });
     return Response.json(product);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Error al actualizar producto";
@@ -265,7 +277,7 @@ export async function PUT(
 }
 
 export async function DELETE(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
@@ -281,12 +293,28 @@ export async function DELETE(
       return Response.json({ error: "ID inválido" }, { status: 400 });
     }
 
+    const existing = await prisma.product.findUnique({
+      where: { id: productId },
+      select: { name: true },
+    });
+
     await prisma.product.delete({
       where: { id: productId },
     });
 
     broadcast("product:delete", { id: productId });
     void logChange(getDeviceId(), "DELETE", "product", productId, {});
+    void logAudit({
+      userId: parseInt(session.user.id, 10),
+      userName: session.user.name,
+      userRole: session.user.role,
+      action: "delete",
+      entity: "product",
+      entityId: productId,
+      description: `Producto eliminado: ${existing?.name || '#' + productId}`,
+      details: { name: existing?.name },
+      ip: getClientIp(request),
+    });
     return Response.json({ success: true });
   } catch (error) {
     console.error("Error deleting product:", error);

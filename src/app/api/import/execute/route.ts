@@ -5,6 +5,7 @@ import * as os from 'os';
 import { prisma } from '@/lib/prisma';
 import { auth } from '@/lib/auth';
 import { decodeTextBuffer } from '@/lib/import-decode';
+import { logAudit, getClientIp } from '@/lib/audit';
 import type { Prisma } from '@prisma/client';
 
 export const maxDuration = 300;
@@ -219,6 +220,18 @@ export async function POST(request: NextRequest) {
     if (createBatch.length > 0) {
       await flushCreateBatch(createBatch, results);
     }
+
+    void logAudit({
+      userId: parseInt(session.user.id, 10),
+      userName: session.user.name,
+      userRole: session.user.role,
+      action: "create",
+      entity: "import",
+      entityId: null,
+      description: `Importación de ${entityType}: ${results.imported} importados, ${results.updated} actualizados, ${results.errors} errores`,
+      details: { entityType, imported: results.imported, updated: results.updated, skipped: results.skipped, errors: results.errors },
+      ip: getClientIp(request),
+    });
 
     return NextResponse.json({
       success: true,

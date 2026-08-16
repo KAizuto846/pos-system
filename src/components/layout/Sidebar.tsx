@@ -25,6 +25,7 @@ import {
   RefreshCw,
   CheckCircle2,
   Loader2,
+  ShieldCheck,
 } from 'lucide-react';
 import { signOut, useSession } from 'next-auth/react';
 import { cn, formatCurrency } from '@/lib/utils';
@@ -92,6 +93,7 @@ const adminLinks = [
   { href: '/finance', label: 'Finanzas', icon: DollarSign },
   { href: '/users', label: 'Usuarios', icon: Users },
   { href: '/taxes', label: 'Impuestos', icon: Percent },
+  { href: '/audit', label: 'Registro de Auditoría', icon: ShieldCheck },
 ];
 
 const extraLinks = [

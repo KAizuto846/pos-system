@@ -2,6 +2,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { logChange } from "@/lib/sync-engine";
 import { getDeviceId } from "@/lib/sync-utils";
+import { logAudit, getClientIp } from "@/lib/audit";
 import { NextRequest } from "next/server";
 
 export async function GET(
@@ -66,6 +67,17 @@ export async function PUT(
       ...(email !== undefined && { email }),
       ...(active !== undefined && { active }),
     });
+    void logAudit({
+      userId: parseInt(session.user.id, 10),
+      userName: session.user.name,
+      userRole: session.user.role,
+      action: "update",
+      entity: "customer",
+      entityId: parseInt(id, 10),
+      description: `Cliente modificado: ${customer.name || '#' + id}`,
+      details: { name, phone, email, active },
+      ip: getClientIp(request),
+    });
     return Response.json({ success: true, customer });
   } catch (error: any) {
     return Response.json({ error: error.message }, { status: 500 });
@@ -83,12 +95,29 @@ export async function DELETE(
     }
 
     const { id } = await params;
+    const customerId = parseInt(id, 10);
+    const existing = await prisma.customer.findUnique({
+      where: { id: customerId },
+      select: { name: true },
+    });
+
     await prisma.customer.update({
-      where: { id: parseInt(id, 10) },
+      where: { id: customerId },
       data: { active: false },
     });
 
-    void logChange(getDeviceId(), "DELETE", "customer", parseInt(id, 10), { active: false });
+    void logChange(getDeviceId(), "DELETE", "customer", customerId, { active: false });
+    void logAudit({
+      userId: parseInt(session.user.id, 10),
+      userName: session.user.name,
+      userRole: session.user.role,
+      action: "delete",
+      entity: "customer",
+      entityId: customerId,
+      description: `Cliente eliminado: ${existing?.name || '#' + id}`,
+      details: { name: existing?.name },
+      ip: getClientIp(request),
+    });
     return Response.json({ success: true });
   } catch (error: any) {
     return Response.json({ error: error.message }, { status: 500 });

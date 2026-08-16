@@ -74,6 +74,8 @@ export default function SettingsPage() {
   const [printingTest, setPrintingTest] = useState(false);
   const [diagnostic, setDiagnostic] = useState<null | string>(null);
   const [runningDiag, setRunningDiag] = useState(false);
+  const [printServerUrl, setPrintServerUrl] = useState('');
+  const [printToken, setPrintToken] = useState('');
 
   useEffect(() => {
     if (!lanUrl) return;
@@ -124,6 +126,8 @@ export default function SettingsPage() {
           deviceName?: string;
           ticketPrinter?: string;
           ticketWidth?: number;
+          printServerUrl?: string;
+          printToken?: string;
         }>;
         getPrinters?: () => Promise<{ ok: boolean; printers?: { name: string; isDefault: boolean; displayName: string }[]; error?: string }>;
       };
@@ -140,6 +144,8 @@ export default function SettingsPage() {
         if (cfg.serverIP) setLanUrl(`http://${cfg.serverIP}:${cfg.serverPort || 3000}`);
         if (cfg.ticketPrinter) setPrinterName(cfg.ticketPrinter);
         if (cfg.ticketWidth) setTicketWidth(cfg.ticketWidth);
+        if (cfg.printServerUrl) setPrintServerUrl(cfg.printServerUrl);
+        if (cfg.printToken) setPrintToken(cfg.printToken);
       });
 
       if (win.electronAPI?.getPrinters) {
@@ -300,6 +306,50 @@ export default function SettingsPage() {
       toast.error('No se pudo guardar la impresora');
     }
   }, [printerName, ticketWidth]);
+
+  // Guarda URL + token del servidor de impresión remoto (Electron en otra máquina)
+  const handleSaveRemotePrinter = useCallback(async () => {
+    const win = window as unknown as { electronAPI?: { setConfig?: (k: string, v: string) => Promise<unknown> } };
+    if (!win.electronAPI?.setConfig) {
+      toast.error('Solo disponible en la app de escritorio (Electron)');
+      return;
+    }
+    try {
+      await win.electronAPI.setConfig('printServerUrl', printServerUrl.trim());
+      await win.electronAPI.setConfig('printToken', printToken.trim());
+      toast.success('Servidor de impresión remoto guardado');
+    } catch {
+      toast.error('No se pudo guardar');
+    }
+  }, [printServerUrl, printToken]);
+
+  // Prueba la impresión remota: POST al server del host con el token
+  const handlePrintRemoteTest = useCallback(async () => {
+    if (!printServerUrl) {
+      toast.error('Escribe la URL del servidor de impresión');
+      return;
+    }
+    setPrintingTest(true);
+    try {
+      const url = printServerUrl.replace(/\/+$/, '') + '/api/print/ticket';
+      const text = 'PRUEBA REMOTA OK\n' + new Date().toLocaleString('es-MX') + '\nDesde la app Electron';
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(printToken ? { 'x-print-token': printToken } : {}),
+        },
+        body: JSON.stringify({ text }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) toast.success(`Ticket remoto impreso (${data.method || 'ok'})`);
+      else toast.error(data.error || `HTTP ${res.status}`);
+    } catch (e) {
+      toast.error('No se pudo conectar: ' + (e instanceof Error ? e.message : 'error'));
+    } finally {
+      setPrintingTest(false);
+    }
+  }, [printServerUrl, printToken]);
 
   const handlePrintTest = useCallback(async () => {
     const win = window as unknown as { electronAPI?: { printPlainText?: (text: string, printer: string) => Promise<{ ok: boolean; error?: string }> } };
@@ -676,6 +726,45 @@ export default function SettingsPage() {
             <p className="text-xs text-slate-500">
               Si el ancho no cuadra con tu impresora, el texto se cortará o hará saltos de línea. Prueba el botón &quot;Imprimir prueba&quot; para calibrar.
             </p>
+
+            <div className="rounded-md border border-slate-700 bg-slate-900/40 p-3 space-y-2">
+              <p className="text-xs font-medium text-slate-300">Impresora remota (app Electron en otra máquina)</p>
+              <p className="text-xs text-slate-500">
+                Si la app de escritorio corre en otra computadora (ej. Windows) y la impresora USB está en el servidor, pon aquí la URL del servidor (ej. https://riz.tail0820b4.ts.net) y el token. El ticket se envía por internet al server, que imprime en la térmica.
+              </p>
+              <div className="space-y-1.5">
+                <Label htmlFor="print-server-url" className="text-xs text-slate-400">URL del servidor de impresión</Label>
+                <input
+                  id="print-server-url"
+                  type="text"
+                  value={printServerUrl}
+                  onChange={(e) => setPrintServerUrl(e.target.value)}
+                  placeholder="https://riz.tail0820b4.ts.net"
+                  className="w-full rounded-md border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="print-token" className="text-xs text-slate-400">Token de impresión</Label>
+                <input
+                  id="print-token"
+                  type="password"
+                  value={printToken}
+                  onChange={(e) => setPrintToken(e.target.value)}
+                  placeholder="token del servidor (PRINT_TOKEN en .env)"
+                  className="w-full rounded-md border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600"
+                />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" variant="outline" onClick={handlePrintRemoteTest} disabled={printingTest}>
+                  <FileText className="mr-2 h-3.5 w-3.5" />
+                  {printingTest ? 'Probando...' : 'Probar impresión remota'}
+                </Button>
+                <Button size="sm" variant="outline" onClick={handleSaveRemotePrinter}>
+                  <Save className="mr-2 h-3.5 w-3.5" />
+                  Guardar servidor remoto
+                </Button>
+              </div>
+            </div>
 
             <div className="flex flex-wrap items-center gap-2">
               <Button size="sm" onClick={handlePrintTest} disabled={printingTest || !printerName}>

@@ -1,6 +1,7 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { PALETTES, APP_FONTS } from "@/lib/themes";
+import { logAudit, getClientIp } from "@/lib/audit";
 
 const KEYS = ["businessName", "businessPalette", "businessFont", "businessLogo"] as const;
 
@@ -89,6 +90,18 @@ export async function PUT(request: Request) {
       where: { key: { in: [...KEYS] } },
     });
     const map = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+
+    void logAudit({
+      userId: parseInt(session.user.id, 10),
+      userName: session.user.name,
+      userRole: session.user.role,
+      action: "update",
+      entity: "settings",
+      entityId: null,
+      description: "Configuración del negocio modificada",
+      details: { businessName: body.businessName, palette: body.palette, font: body.font, logoChanged: typeof body.logo === "string" },
+      ip: getClientIp(request),
+    });
 
     return Response.json({
       ok: true,

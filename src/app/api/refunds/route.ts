@@ -4,6 +4,7 @@ import { refundSchema } from "@/lib/validations";
 import { broadcast } from "@/lib/broadcast";
 import { logChange } from "@/lib/sync-engine";
 import { getDeviceId } from "@/lib/sync-utils";
+import { logAudit, getClientIp } from "@/lib/audit";
 import type { Prisma } from "@prisma/client";
 
 export async function POST(request: Request) {
@@ -132,6 +133,17 @@ export async function POST(request: Request) {
       amount: refund.amount,
       reason: refund.reason,
       userId: refund.userId,
+    });
+    void logAudit({
+      userId,
+      userName: session.user.name,
+      userRole: session.user.role,
+      action: "create",
+      entity: "refund",
+      entityId: refund.id,
+      description: `Reembolso #${refund.id} de la venta #${refund.saleId}`,
+      details: { saleId: refund.saleId, amount: refund.amount, quantity: refund.quantity, reason: refund.reason },
+      ip: getClientIp(request),
     });
     return Response.json(refund, { status: 201 });
   } catch (error) {
