@@ -568,10 +568,19 @@ export default function ProductsPage() {
   const handleDelete = async () => {
     if (!selectedProduct) return;
     const res = await fetch(`/api/products/${selectedProduct.id}`, { method: 'DELETE' });
+    const data = await res.json().catch(() => ({}));
     if (res.ok) {
       setDeleteOpen(false);
       setSelectedProduct(null);
       fetchProducts(1);
+      fetchPieces();
+      if (data.softDelete) {
+        toast.success('Producto desactivado: tiene historial (ventas o pedidos). Se mantiene por integridad de datos.');
+      } else {
+        toast.success('Producto eliminado correctamente');
+      }
+    } else {
+      toast.error(data.error || 'Error al eliminar producto');
     }
   };
 

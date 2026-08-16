@@ -298,6 +298,39 @@ export async function DELETE(
       select: { name: true },
     });
 
+    // Un producto con historial (ventas, pedidos, reembolsos o avisos de stock)
+    // no puede eliminarse físicamente por las restricciones de llave foránea.
+    // En ese caso se desactiva (soft-delete) para preservar el historial.
+    const [hasSales, hasOrders, hasRefunds, hasStockAlerts] = await Promise.all([
+      prisma.saleItem.count({ where: { productId } }),
+      prisma.supplierOrderItem.count({ where: { productId } }),
+      prisma.refund.count({ where: { productId } }),
+      prisma.stockAlert.count({ where: { productId } }),
+    ]);
+
+    const hasHistory = hasSales > 0 || hasOrders > 0 || hasRefunds > 0 || hasStockAlerts > 0;
+
+    if (hasHistory) {
+      await prisma.product.update({
+        where: { id: productId },
+        data: { active: false },
+      });
+      broadcast("product:update", { id: productId });
+      void logChange(getDeviceId(), "UPDATE", "product", productId, { active: false });
+      void logAudit({
+        userId: parseInt(session.user.id, 10),
+        userName: session.user.name,
+        userRole: session.user.role,
+        action: "update",
+        entity: "product",
+        entityId: productId,
+        description: `Producto desactivado (tiene historial): ${existing?.name || '#' + productId}`,
+        details: { name: existing?.name, softDelete: true },
+        ip: getClientIp(request),
+      });
+      return Response.json({ success: true, softDelete: true });
+    }
+
     await prisma.product.delete({
       where: { id: productId },
     });
