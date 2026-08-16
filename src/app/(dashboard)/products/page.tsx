@@ -202,7 +202,7 @@ export default function ProductsPage() {
   // Gestión de piezas
   const [pieceBoxes, setPieceBoxes] = useState<PieceBox[]>([]);
   const [pieceBusy, setPieceBusy] = useState<number | null>(null);
-  const [piecesOpen, setPiecesOpen] = useState(true);
+  const [piecesOpen, setPiecesOpen] = useState(false);
   const [piecesFilter, setPiecesFilter] = useState('');
 
   // Camera barcode scanner

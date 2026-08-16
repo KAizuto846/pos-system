@@ -100,11 +100,35 @@ export async function POST(request: Request) {
             where: { id: existing.id },
             data: { name, barcode: barcode || existing.barcode, price, cost, stock, minStock, departmentId, supplierId },
           });
+
+          // Sincronizar productLines: el proveedor importado queda como línea primaria
+          if (supplierId) {
+            await prisma.$transaction([
+              prisma.productLine.updateMany({
+                where: { productId: existing.id, isPrimary: true },
+                data: { isPrimary: false },
+              }),
+              prisma.productLine.upsert({
+                where: {
+                  productId_supplierId: { productId: existing.id, supplierId },
+                },
+                create: { productId: existing.id, supplierId, isPrimary: true },
+                update: { isPrimary: true },
+              }),
+            ]);
+          }
           updated++;
         } else {
-          await prisma.product.create({
+          const created = await prisma.product.create({
             data: { name, barcode, price, cost, stock, minStock, departmentId, supplierId },
           });
+
+          // Crear la productLine primaria para que el proveedor se muestre en inventario
+          if (supplierId) {
+            await prisma.productLine.create({
+              data: { productId: created.id, supplierId, isPrimary: true },
+            });
+          }
           imported++;
         }
       } catch (err: any) {
