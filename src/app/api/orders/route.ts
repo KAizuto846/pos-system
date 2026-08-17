@@ -134,6 +134,9 @@ export async function POST(request: Request) {
                   productBarcode: product?.barcode ?? "",
                   quantity: item.quantity,
                   costPrice: line?.supplierPrice ?? product?.cost ?? 0,
+                  // Gestión de cajas: la cantidad va en cajas
+                  isBox: item.isBox === true ? true : undefined,
+                  unitsPerBox: item.isBox === true ? item.unitsPerBox ?? null : undefined,
                 };
               }
               // Producto fantasma: no existe en inventario, se guarda el snapshot
@@ -156,14 +159,47 @@ export async function POST(request: Request) {
         },
       });
 
-      return newOrder;
+      // Gestión de cajas: el sobrante (piezas que no completaron una caja) se
+      // acumula en el producto para tomarlo en el siguiente pedido.
+      const remainderUpdates: Array<{ productId: number; boxRemainder: number }> = [];
+      for (const item of data.items) {
+        if (
+          item.isBox === true &&
+          typeof item.productId === "number" &&
+          item.unitsPerBox &&
+          item.newRemainder !== undefined
+        ) {
+          await tx.product.update({
+            where: { id: item.productId },
+            data: { boxRemainder: item.newRemainder },
+          });
+          remainderUpdates.push({ productId: item.productId, boxRemainder: item.newRemainder });
+        }
+      }
+
+      return { newOrder, remainderUpdates };
     });
 
-    void logChange(getDeviceId(), "CREATE", "order", order.id, {
-      id: order.id,
-      supplierId: order.supplierId,
-      notes: order.notes,
-      items: data.items,
+    for (const r of order.remainderUpdates) {
+      void logChange(getDeviceId(), "UPDATE", "product", r.productId, {
+        boxRemainder: r.boxRemainder,
+      });
+    }
+
+    void logChange(getDeviceId(), "CREATE", "order", order.newOrder.id, {
+      id: order.newOrder.id,
+      supplierId: order.newOrder.supplierId,
+      notes: order.newOrder.notes,
+      items: data.items.map((i) => ({
+        productId: i.productId,
+        name: i.name,
+        barcode: i.barcode,
+        price: i.price,
+        cost: i.cost,
+        quantity: i.quantity,
+        isBox: i.isBox,
+        unitsPerBox: i.unitsPerBox,
+      })),
     });
     void logAudit({
       userId: parseInt(session.user.id, 10),
@@ -171,9 +207,9 @@ export async function POST(request: Request) {
       userRole: session.user.role,
       action: "create",
       entity: "order",
-      entityId: order.id,
-      description: `Pedido creado a ${order.supplier?.name || 'proveedor'} (${data.items.length} productos)`,
-      details: { supplierId: order.supplierId, items: data.items.length },
+      entityId: order.newOrder.id,
+      description: `Pedido creado a ${order.newOrder.supplier?.name || 'proveedor'} (${data.items.length} productos)`,
+      details: { supplierId: order.newOrder.supplierId, items: data.items.length },
       ip: getClientIp(request),
     });
 
@@ -189,7 +225,7 @@ export async function POST(request: Request) {
       });
     }
 
-    return Response.json(order, { status: 201 });
+    return Response.json(order.newOrder, { status: 201 });
   } catch (error) {
     console.error("Error creating order:", error);
     return Response.json({ error: "Error al crear orden" }, { status: 500 });

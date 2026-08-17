@@ -201,12 +201,16 @@ export async function POST(
             });
             productId = created.id;
           }
+          // Gestión de cajas: la cantidad recibida está en cajas; al stock entran
+          // las piezas reales (cajas × piezas por caja) y el costo se calcula por pieza.
+          const unitMultiplier =
+            orderItem.isBox === true && orderItem.unitsPerBox ? orderItem.unitsPerBox : 1;
           const expiresAt = item.expiresAt ? monthYearToEndOfMonth(item.expiresAt) : null;
-          await addStock(tx, productId, receivedQuantity, {
+          await addStock(tx, productId, receivedQuantity * unitMultiplier, {
             expiresAt,
             costPrice: finalCost,
           });
-          purchaseCost += receivedQuantity * finalCost;
+          purchaseCost += receivedQuantity * unitMultiplier * finalCost;
         }
       }
 

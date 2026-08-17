@@ -32,6 +32,9 @@ export const productSchema = z.object({
   active: z.boolean().default(true),
   piecesPerUnit: z.number().int().positive().nullable().optional(),
   piecesTracked: z.boolean().optional(),
+  // Gestión de cajas: el producto se pide por cajas en los pedidos a proveedores.
+  soldByBox: z.boolean().optional(),
+  unitsPerBox: z.number().int().positive().nullable().optional(),
 });
 
 export const supplierSchema = z.object({
@@ -88,6 +91,11 @@ export const orderSchema = z.object({
         price: z.number().optional(),
         cost: z.number().optional(),
         quantity: z.number().int().min(1),
+        // Gestión de cajas: el item se pidió en cajas y se indica cuántas piezas
+        // trae cada caja. newRemainder es lo que sobra de este pedido para el próximo.
+        isBox: z.boolean().optional(),
+        unitsPerBox: z.number().int().positive().optional(),
+        newRemainder: z.number().int().min(0).optional(),
       })
     )
     .min(1),

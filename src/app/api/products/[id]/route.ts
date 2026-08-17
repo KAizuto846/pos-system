@@ -81,6 +81,15 @@ export async function PUT(
     if (data.supplierId !== undefined) updateData.supplierId = data.supplierId;
     if (data.piecesPerUnit !== undefined) updateData.piecesPerUnit = data.piecesPerUnit;
     if (data.piecesTracked !== undefined) updateData.piecesTracked = data.piecesTracked;
+    if (data.soldByBox !== undefined) {
+      updateData.soldByBox = data.soldByBox;
+      if (!data.soldByBox) {
+        // Al quitar la gestión por cajas se limpian los datos asociados.
+        updateData.unitsPerBox = null;
+        updateData.boxRemainder = 0;
+      }
+    }
+    if (data.unitsPerBox !== undefined) updateData.unitsPerBox = data.unitsPerBox;
 
     const productLinesData = body.productLines;
     const batchOps = body.batchOps;

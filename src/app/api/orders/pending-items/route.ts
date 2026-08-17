@@ -44,9 +44,11 @@ export async function GET(request: Request) {
           },
         },
       },
+      orderBy: { createdAt: "desc" },
     });
 
-    // Agrupar por producto y sumar cantidades pendientes
+    // Gestión de cajas: los items en cajas se acumulan en su unidad base
+    // (piezas) para no romper la suma con productos por pieza.
     const pendingMap = new Map<
       number,
       {
@@ -59,19 +61,25 @@ export async function GET(request: Request) {
         department: { id: number; name: string } | null;
         supplierPrice: number | null;
         pendingQuantity: number;
+        soldByBox?: boolean;
+        unitsPerBox?: number | null;
+        boxRemainder?: number;
       }
     >();
 
     for (const order of orders) {
       for (const item of order.items) {
-        const pending = item.quantity - item.receivedQuantity;
-        if (pending <= 0) continue;
+        const unitPending =
+          item.isBox && item.unitsPerBox
+            ? (item.quantity - item.receivedQuantity) * item.unitsPerBox
+            : item.quantity - item.receivedQuantity;
+        if (unitPending <= 0) continue;
 
         const pid = item.productId;
         if (!pid || !item.product) continue;
         const existing = pendingMap.get(pid);
         if (existing) {
-          existing.pendingQuantity += pending;
+          existing.pendingQuantity += unitPending;
         } else {
           const lines = item.product.productLines || [];
           const line = lines.find(l => l.supplierId === sid && l.isPrimary)
@@ -85,7 +93,10 @@ export async function GET(request: Request) {
             cost: item.product.cost,
             department: item.product.department,
             supplierPrice: line?.supplierPrice ?? null,
-            pendingQuantity: pending,
+            pendingQuantity: unitPending,
+            soldByBox: item.product.soldByBox,
+            unitsPerBox: item.product.unitsPerBox,
+            boxRemainder: item.product.boxRemainder,
           });
         }
       }
@@ -102,7 +113,7 @@ export async function GET(request: Request) {
       supplierId: sid,
       supplierName,
       totalOrdersWithPending: orders.filter((o) =>
-        o.items.some((i) => i.quantity > i.receivedQuantity)
+        o.items.some((i) => (i.quantity - i.receivedQuantity) * (i.isBox && i.unitsPerBox ? i.unitsPerBox : 1) > 0)
       ).length,
       products,
     });

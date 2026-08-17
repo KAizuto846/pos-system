@@ -21,11 +21,11 @@ function DashboardLayoutContent({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    // Route protection: CASHIER cannot access /users, /importar, /taxes or /sync
+    // Route protection: CASHIER cannot access /users, /importar, /taxes, /sync o /reports
     if (
       status === 'authenticated' &&
       session?.user?.role === 'CASHIER' &&
-      (pathname.startsWith('/users') || pathname.startsWith('/importar') || pathname.startsWith('/taxes') || pathname.startsWith('/sync'))
+      (pathname.startsWith('/users') || pathname.startsWith('/importar') || pathname.startsWith('/taxes') || pathname.startsWith('/sync') || pathname.startsWith('/reports'))
     ) {
       router.push('/');
     }

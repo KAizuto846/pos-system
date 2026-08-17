@@ -228,7 +228,7 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
             </>
           )}
           {extraLinks
-            .filter((link) => link.href !== '/importar' || isAdmin)
+            .filter((link) => (link.href !== '/importar' && link.href !== '/reports') || isAdmin)
             .map(renderLink)}
           {isAdmin && syncLinks.map(renderLink)}
         </nav>
@@ -384,9 +384,11 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
                       <DialogClose asChild>
                         <Button variant="outline">Cerrar</Button>
                       </DialogClose>
-                      <Button onClick={() => router.push('/reports')} className="bg-emerald-600 hover:bg-emerald-500">
-                        Ver reportes
-                      </Button>
+                      {isAdmin && (
+                        <Button onClick={() => router.push('/reports')} className="bg-emerald-600 hover:bg-emerald-500">
+                          Ver reportes
+                        </Button>
+                      )}
                     </>
                   ) : (
                     <>

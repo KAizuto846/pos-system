@@ -118,6 +118,9 @@ export async function GET(request: Request) {
             departmentId: true,
             supplierId: true,
             loyaltyDiscount: true,
+            soldByBox: true,
+            unitsPerBox: true,
+            boxRemainder: true,
           },
           orderBy: { name: "asc" as const },
           skip,
@@ -175,6 +178,9 @@ export async function POST(request: Request) {
     const piecesPerUnit = data.piecesPerUnit ?? detected?.pieces ?? null;
     const piecesTracked = data.piecesTracked ?? Boolean(detected);
 
+    const soldByBox = data.soldByBox ?? false;
+    const unitsPerBox = soldByBox ? data.unitsPerBox ?? null : null;
+
     // Support both old supplierId and new productLines
     const productLinesData = body.productLines;
     let supplierIdValue: number | null = data.supplierId ?? null;
@@ -198,6 +204,8 @@ export async function POST(request: Request) {
         supplierId: supplierIdValue,
         piecesPerUnit,
         piecesTracked,
+        soldByBox,
+        unitsPerBox,
         ...(productLinesData && Array.isArray(productLinesData) && productLinesData.length > 0
           ? {
               productLines: {
@@ -227,6 +235,9 @@ export async function POST(request: Request) {
       supplierId: product.supplierId,
       piecesPerUnit: product.piecesPerUnit,
       piecesTracked: product.piecesTracked,
+      soldByBox: product.soldByBox,
+      unitsPerBox: product.unitsPerBox,
+      boxRemainder: product.boxRemainder,
     });
     void logAudit({
       userId: parseInt(session.user.id, 10),

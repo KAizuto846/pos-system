@@ -88,6 +88,9 @@ interface Product {
   supplier: Supplier | null;
   productLines: ProductLineItem[];
   batches: ProductBatchItem[];
+  soldByBox: boolean;
+  unitsPerBox: number | null;
+  boxRemainder: number;
 }
 
 interface FormProductLine {
@@ -131,6 +134,21 @@ interface PieceBox {
     cost: number;
     active: boolean;
   } | null;
+}
+
+interface BoxProduct {
+  id: number;
+  name: string;
+  barcode: string;
+  price: number;
+  cost: number;
+  stock: number;
+  minStock: number;
+  active: boolean;
+  soldByBox: boolean;
+  unitsPerBox: number | null;
+  boxRemainder: number;
+  leftoverUnits: number;
 }
 
 export default function ProductsPage() {
@@ -190,6 +208,8 @@ export default function ProductsPage() {
   const [formCost, setFormCost] = useState('');
   const [formStock, setFormStock] = useState('');
   const [formMinStock, setFormMinStock] = useState('5');
+  const [formSoldByBox, setFormSoldByBox] = useState(false);
+  const [formUnitsPerBox, setFormUnitsPerBox] = useState('');
   const [formDepartmentId, setFormDepartmentId] = useState('all');
   const [formProductLines, setFormProductLines] = useState<FormProductLine[]>([]);
   const [formBatches, setFormBatches] = useState<FormBatch[]>([]);
@@ -204,6 +224,11 @@ export default function ProductsPage() {
   const [pieceBusy, setPieceBusy] = useState<number | null>(null);
   const [piecesOpen, setPiecesOpen] = useState(false);
   const [piecesFilter, setPiecesFilter] = useState('');
+
+  // Gestión de cajas (pedidos por cajas, sin producto en inventario)
+  const [boxProducts, setBoxProducts] = useState<BoxProduct[]>([]);
+  const [boxesOpen, setBoxesOpen] = useState(false);
+  const [boxesFilter, setBoxesFilter] = useState('');
 
   // Camera barcode scanner
   const [scannerOpen, setScannerOpen] = useState(false);
@@ -224,6 +249,14 @@ export default function ProductsPage() {
   }, [pieceBoxes, piecesFilter]);
 
   const [editingPiece, setEditingPiece] = useState<{ id: number; name: string; barcode: string; price: string; cost: string } | null>(null);
+
+  const filteredBoxProducts = useMemo(() => {
+    const q = boxesFilter.trim().toLowerCase();
+    if (!q) return boxProducts;
+    return boxProducts.filter(
+      (b) => b.name.toLowerCase().includes(q) || b.barcode.toLowerCase().includes(q)
+    );
+  }, [boxProducts, boxesFilter]);
 
   const fetchProducts = useCallback(async (pageNum: number = 1, append: boolean = false) => {
     productsAbortRef.current?.abort();
@@ -301,6 +334,7 @@ export default function ProductsPage() {
     fetchDepartments();
     fetchSuppliers();
     fetchPieces();
+    fetchBoxes();
     return () => productsAbortRef.current?.abort();
   }, []);
 
@@ -339,6 +373,8 @@ export default function ProductsPage() {
     setFormCost('');
     setFormStock('');
     setFormMinStock('5');
+    setFormSoldByBox(false);
+    setFormUnitsPerBox('');
     setFormDepartmentId('all');
     setFormProductLines([]);
     setFormBatches([]);
@@ -424,6 +460,8 @@ export default function ProductsPage() {
       minStock: parseInt(formMinStock || '5'),
       departmentId: formDepartmentId !== 'all' ? parseInt(formDepartmentId) : null,
       active: true,
+      soldByBox: formSoldByBox,
+      unitsPerBox: formSoldByBox && formUnitsPerBox ? parseInt(formUnitsPerBox) : null,
     };
 
     if (includeProductLines && formProductLines.length > 0) {
@@ -469,6 +507,7 @@ export default function ProductsPage() {
     setCreateOpen(false);
     resetForm();
     fetchProducts(1);
+    fetchBoxes();
   };
 
   const handleEdit = async (e: React.FormEvent) => {
@@ -563,6 +602,7 @@ export default function ProductsPage() {
     setSelectedProduct(null);
     fetchProducts(1);
     fetchPieces();
+    fetchBoxes();
   };
 
   const handleDelete = async () => {
@@ -574,6 +614,7 @@ export default function ProductsPage() {
       setSelectedProduct(null);
       fetchProducts(1);
       fetchPieces();
+      fetchBoxes();
       if (data.softDelete) {
         toast.success('Producto desactivado: tiene historial (ventas o pedidos). Se mantiene por integridad de datos.');
       } else {
@@ -599,6 +640,7 @@ export default function ProductsPage() {
       setStockAdjust('');
       setSelectedProduct(null);
       fetchProducts(1);
+      fetchBoxes();
     }
   };
 
@@ -607,6 +649,15 @@ export default function ProductsPage() {
       .then((res) => res.json())
       .then((data) => {
         if (Array.isArray(data.boxes)) setPieceBoxes(data.boxes);
+      })
+      .catch(() => {});
+  }, []);
+
+  const fetchBoxes = useCallback(() => {
+    fetch('/api/boxes')
+      .then((res) => res.json())
+      .then((data) => {
+        if (Array.isArray(data.boxes)) setBoxProducts(data.boxes);
       })
       .catch(() => {});
   }, []);
@@ -702,6 +753,8 @@ export default function ProductsPage() {
     setFormCost(String(product.cost));
     setFormStock(String(product.stock));
     setFormMinStock(String(product.minStock));
+    setFormSoldByBox(product.soldByBox);
+    setFormUnitsPerBox(product.unitsPerBox ? String(product.unitsPerBox) : '');
     setFormDepartmentId(product.departmentId ? String(product.departmentId) : 'all');
 
     // Populate batches from product data
@@ -864,6 +917,42 @@ export default function ProductsPage() {
     </div>
   );
 
+  // Gestión de cajas: el producto se vende por pieza en el POS pero en los
+  // pedidos a proveedores se pide por cajas (no crea producto en inventario).
+  const renderBoxManagementSection = () => (
+    <div className="space-y-3 rounded-md border border-slate-700 bg-slate-800/40 p-3">
+      <label className="flex items-center gap-2 cursor-pointer">
+        <Checkbox
+          checked={formSoldByBox}
+          onCheckedChange={(checked) => {
+            setFormSoldByBox(checked === true);
+            if (checked !== true) setFormUnitsPerBox('');
+          }}
+        />
+        <span className="text-sm text-slate-200">Se maneja en cajas (pedido por cajas)</span>
+      </label>
+      {formSoldByBox && (
+        <>
+          <p className="text-[11px] text-slate-500">
+            Se vende al público por pieza, pero en el pedido al proveedor se pide como &quot;Caja de ...&quot;.
+            No crea ningún producto en inventario.
+          </p>
+          <div className="space-y-2">
+            <Label>Piezas por caja</Label>
+            <Input
+              type="number"
+              min="1"
+              value={formUnitsPerBox}
+              onChange={(e) => setFormUnitsPerBox(e.target.value)}
+              placeholder="ej. 12"
+              required={formSoldByBox}
+            />
+          </div>
+        </>
+      )}
+    </div>
+  );
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -942,6 +1031,7 @@ export default function ProductsPage() {
                       </Select>
                     </div>
                   </div>
+                  {renderBoxManagementSection()}
                   {renderSuppliersSection()}
                 </div>
                 <DialogFooter>
@@ -1145,6 +1235,81 @@ export default function ProductsPage() {
                               Revertir
                             </Button>
                           )}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </>
+            )}
+          </CardContent>
+        )}
+      </Card>
+
+      {/* Gestión de cajas */}
+      <Card className="border-slate-700 bg-slate-800">
+        <CardHeader className="pb-3">
+          <button
+            type="button"
+            className="w-full flex items-center justify-between gap-2 text-left"
+            onClick={() => setBoxesOpen((v) => !v)}
+          >
+            <span className="text-base font-semibold leading-none tracking-tight flex items-center gap-2">
+              <PackageOpen className="h-4 w-4 text-emerald-400" />
+              Gestión de cajas
+              <span className="inline-flex items-center rounded-md border border-slate-600 px-2 py-0.5 text-[10px] font-semibold text-slate-400 ml-1">
+                {boxProducts.length} productos
+              </span>
+            </span>
+            {boxesOpen ? (
+              <ChevronUp className="h-4 w-4 text-slate-400" />
+            ) : (
+              <ChevronDown className="h-4 w-4 text-slate-400" />
+            )}
+          </button>
+          {boxesOpen && (
+            <p className="text-xs text-slate-500">
+              Los productos marcados como <span className="text-slate-400">&quot;Se maneja en cajas&quot;</span> se venden por
+              pieza en el punto de venta, pero en el pedido al proveedor se piden como{' '}
+              <span className="text-slate-400">&quot;Caja de ...&quot;</span>. No crean ningún producto en inventario.
+              Las piezas que no completan una caja quedan como sobrante y se acumulan para el siguiente pedido.
+            </p>
+          )}
+        </CardHeader>
+        {boxesOpen && (
+          <CardContent className="p-0">
+            {boxProducts.length === 0 ? (
+              <p className="px-4 pb-4 text-xs text-slate-500 italic">
+                Sin productos gestionados por cajas. Márcalo en la edición del producto.
+              </p>
+            ) : (
+              <>
+                <div className="px-4 pt-2 pb-3">
+                  <Input
+                    placeholder="Buscar producto por nombre o código..."
+                    value={boxesFilter}
+                    onChange={(e) => setBoxesFilter(e.target.value)}
+                    className="h-8 text-xs bg-slate-900 border-slate-700"
+                  />
+                </div>
+                <div className="divide-y divide-slate-700/70">
+                  {filteredBoxProducts.length === 0 ? (
+                    <p className="px-4 py-3 text-xs text-slate-500 italic">Sin resultados para: {boxesFilter}</p>
+                  ) : (
+                    filteredBoxProducts.map((box) => (
+                      <div key={box.id} className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-slate-100 text-sm truncate">{box.name}</span>
+                            <Badge variant="outline" className="text-[10px] border-emerald-700 text-emerald-400">
+                              Caja de ...
+                            </Badge>
+                          </div>
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            Piezas por caja: <span className="text-slate-300">{box.unitsPerBox ?? '—'}</span> · Stock:{' '}
+                            <span className={box.stock < 1 ? 'text-red-400' : 'text-slate-300'}>{box.stock}</span> · Sobrante
+                            (próx. pedido): <span className="text-slate-300">{box.boxRemainder} piezas</span>
+                          </p>
                         </div>
                       </div>
                     ))
@@ -1422,6 +1587,7 @@ export default function ProductsPage() {
                   </Select>
                 </div>
               </div>
+              {renderBoxManagementSection()}
               {renderSuppliersSection()}
               {/* Batches / Expiration section */}
               <div className="space-y-3 rounded-md border border-slate-700 bg-slate-800/40 p-3">

@@ -68,6 +68,8 @@ export async function PUT(
                 productBarcode: isGhost ? String(item.barcode || "").trim() : "",
                 quantity: item.quantity ?? 1,
                 costPrice: typeof item.cost === "number" ? item.cost : null,
+                isBox: item.isBox === true ? true : undefined,
+                unitsPerBox: item.isBox === true ? item.unitsPerBox ?? null : undefined,
               },
             });
             itemChanges.push({
@@ -81,6 +83,8 @@ export async function PUT(
                 productBarcode: created.productBarcode,
                 quantity: created.quantity,
                 costPrice: created.costPrice,
+                isBox: created.isBox,
+                unitsPerBox: created.unitsPerBox,
               },
             });
           }

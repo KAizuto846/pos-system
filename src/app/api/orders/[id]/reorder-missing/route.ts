@@ -54,6 +54,8 @@ export async function POST(
               productBarcode: m.product?.barcode ?? m.productBarcode,
               quantity: m.quantity - m.receivedQuantity,
               costPrice: m.costPrice ?? m.product?.cost ?? 0,
+              isBox: m.isBox === true ? true : undefined,
+              unitsPerBox: m.isBox === true ? m.unitsPerBox ?? null : undefined,
             })),
           },
         },

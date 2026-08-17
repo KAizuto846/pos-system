@@ -85,7 +85,9 @@ export async function POST(request: Request) {
             name: pieceName,
             barcode,
             price: box.price,
-            cost: box.cost,
+            // El costo de la pieza se deriva automáticamente de la caja:
+            // costo de la caja ÷ piezas por caja.
+            cost: box.cost / pieces,
             stock: 0,
             minStock: 1,
             active: true,

@@ -56,6 +56,7 @@ interface Product {
   id: number; name: string; barcode: string; stock: number; active: boolean;
   price?: number; cost?: number;
   productLines?: Array<{ supplierId: number; supplierPrice: number | null; isPrimary: boolean }>;
+  soldByBox?: boolean; unitsPerBox?: number | null; boxRemainder?: number;
 }
 
 interface SoldProduct {
@@ -66,6 +67,8 @@ interface SoldProduct {
   source?: 'ventas' | 'pendiente';
   // Producto sin inventario (fantasma): se rellena como si existiera
   ghost?: boolean;
+  // Gestión de cajas: el producto se pide por cajas
+  soldByBox?: boolean; unitsPerBox?: number | null; boxRemainder?: number; totalSoldUnits?: number;
 }
 
 interface ProductSearchResult {
@@ -73,6 +76,7 @@ interface ProductSearchResult {
   price: number; cost: number; stock: number; minStock: number;
   department: { id: number; name: string } | null;
   productLines?: Array<{ supplierId: number; supplierPrice: number | null; isPrimary: boolean }>;
+  soldByBox?: boolean; unitsPerBox?: number | null; boxRemainder?: number;
 }
 
 interface OrderItem {
@@ -80,6 +84,8 @@ interface OrderItem {
   product: Product | null; receivedQuantity: number; notes: string;
   costPrice?: number | null; extra?: boolean;
   productName?: string; productBarcode?: string;
+  // Gestión de cajas: cantidad en cajas
+  isBox?: boolean; unitsPerBox?: number | null;
 }
 
 interface ReceiveExtra {
@@ -162,6 +168,39 @@ function fmtSold(p: SoldProduct, key: string): string {
   const v = p[key as keyof SoldProduct];
   if (v === null || v === undefined) return '—';
   return typeof v === 'number' ? v.toFixed(2) : String(v);
+}
+
+// Nombre para mostrar: los productos gestionados por cajas aparecen como "Caja de ..."
+function boxName(p: { name: string; soldByBox?: boolean }): string {
+  return p.soldByBox ? `Caja de ${p.name}` : p.name;
+}
+
+// Nombre de un item de pedido (puede estar en cajas)
+function orderItemName(item: OrderItem): string {
+  const base = item.product?.name || item.productName || `#${item.productId ?? '?'}`;
+  return item.isBox ? `Caja de ${base}` : base;
+}
+
+// Convierte un pendiente de pedidos previos a un producto del formulario. Si el
+// producto se maneja por cajas, la cantidad sugerida va en cajas y las piezas
+// que no completan caja se acumulan en el sobrante (boxRemainder).
+function pendingToSold(p: SoldProduct & { pendingQuantity: number }): SoldProduct {
+  if (p.soldByBox && p.unitsPerBox && p.unitsPerBox > 0) {
+    const available = p.pendingQuantity + (p.boxRemainder ?? 0);
+    return {
+      ...p,
+      totalSold: Math.floor(available / p.unitsPerBox),
+      totalSoldUnits: p.pendingQuantity,
+      boxRemainder: available % p.unitsPerBox,
+      source: 'pendiente' as const,
+    };
+  }
+  return { ...p, totalSold: p.pendingQuantity, source: 'pendiente' as const };
+}
+
+// Convierte la cantidad (en cajas si aplica) a unidades reales para los cálculos
+function unitsOf(p: { soldByBox?: boolean; unitsPerBox?: number | null }, qty: number): number {
+  return p.soldByBox && p.unitsPerBox ? qty * p.unitsPerBox : qty;
 }
 
 function todayStr() { return new Date().toISOString().slice(0, 10); }
@@ -352,15 +391,19 @@ export default function OrdersPage() {
           const existingIds = new Set(sales.map(p => p.productId));
           const newProds = pendProducts.filter(p => !existingIds.has(p.productId));
           if (newProds.length > 0) {
-            merged = [...sales, ...newProds.map(p => ({ ...p, totalSold: p.pendingQuantity, source: 'pendiente' as const }))];
-            newProds.forEach(p => { init[String(p.productId)] = p.pendingQuantity; });
+            const converted = newProds.map(pendingToSold);
+            merged = [...sales, ...converted];
+            converted.forEach(p => { init[String(p.productId)] = p.totalSold; });
           }
           setPendingItems(pendProducts);
         }
       } catch {}
 
       setSoldProducts(merged);
-      setSalesInfo({ totalProducts: merged.length, totalUnits: Object.values(init).reduce((s, n) => s + n, 0) });
+      setSalesInfo({
+        totalProducts: merged.length,
+        totalUnits: merged.reduce((s, p) => s + unitsOf(p, init[String(p.productId)] || 0), 0),
+      });
       setQuantities(init);
     } catch { setFormError('Error de conexión'); }
     finally { setCalculating(false); }
@@ -380,10 +423,11 @@ export default function OrdersPage() {
         const existingIds = new Set(soldProducts.map(p => p.productId));
         const newProds = pendingProducts.filter((p) => !existingIds.has(p.productId));
         if (newProds.length > 0) {
-          const merged = [...soldProducts, ...newProds];
+          const converted = newProds.map(pendingToSold);
+          const merged = [...soldProducts, ...converted];
           setSoldProducts(merged);
           const qty = { ...quantities };
-          newProds.forEach((p) => { qty[String(p.productId)] = p.pendingQuantity; });
+          converted.forEach((p) => { qty[String(p.productId)] = p.totalSold; });
           setQuantities(qty);
         }
       }
@@ -423,6 +467,9 @@ export default function OrdersPage() {
             department: p.department || null,
             supplierPrice: line?.supplierPrice ?? null,
             totalSold: 0,
+            soldByBox: p.soldByBox,
+            unitsPerBox: p.unitsPerBox,
+            boxRemainder: p.boxRemainder,
           };
         }));
       } catch (error) {
@@ -509,6 +556,20 @@ export default function OrdersPage() {
             price: ghost.price,
             cost: ghost.cost,
             quantity,
+          };
+        }
+        const prod = soldProducts.find((p) => p.productId === productId);
+        // Gestión de cajas: el sobrante (piezas que no completan una caja) se
+        // acumula para el siguiente pedido.
+        if (prod?.soldByBox && prod.unitsPerBox) {
+          const availableUnits = (prod.totalSoldUnits ?? 0) + (prod.boxRemainder ?? 0);
+          const newRemainder = Math.max(0, availableUnits - quantity * prod.unitsPerBox);
+          return {
+            productId,
+            quantity,
+            isBox: true,
+            unitsPerBox: prod.unitsPerBox,
+            newRemainder,
           };
         }
         return { productId, quantity };
@@ -757,10 +818,12 @@ export default function OrdersPage() {
           id: -Date.now(),
           productId: p.id,
           quantity: 1,
-          product: { id: p.id, name: p.name, barcode: p.barcode, price: p.price, cost: p.cost, stock: 0, active: true },
+          product: { id: p.id, name: p.name, barcode: p.barcode, price: p.price, cost: p.cost, stock: 0, active: true, soldByBox: p.soldByBox, unitsPerBox: p.unitsPerBox },
           costPrice: orderLine?.supplierPrice ?? p.cost,
           receivedQuantity: 0,
           notes: '',
+          isBox: p.soldByBox ? true : undefined,
+          unitsPerBox: p.unitsPerBox,
         }],
       });
     }
@@ -830,6 +893,8 @@ export default function OrdersPage() {
               receivedQuantity: i.receivedQuantity,
               notes: i.notes,
               cost: i.productId === null ? (i.costPrice ?? undefined) : undefined,
+              isBox: i.isBox,
+              unitsPerBox: i.unitsPerBox,
             };
             if (base.id === undefined) {
               const { id, ...rest } = base;
@@ -900,8 +965,8 @@ export default function OrdersPage() {
           switch (c.key) {
             case 'index': return cell({ textAlign: 'center', fontFamily: 'monospace', fontSize: '12px', color: '#94a3b8', content: String(idx + 1) });
             case 'barcode': return cell({ fontFamily: 'monospace', fontSize: '12px', color: '#94a3b8', content: item.product?.barcode || item.productBarcode || '—' });
-            case 'name': return cell({ content: item.product?.name || item.productName || `#${item.productId ?? '?'}` });
-            case 'quantity': return cell({ textAlign: 'center', content: String(item.quantity) });
+            case 'name': return cell({ content: orderItemName(item) });
+            case 'quantity': return cell({ textAlign: 'center', content: String(item.quantity) + (item.isBox && item.unitsPerBox ? ' cja' : '') });
             case 'received': return cell({ textAlign: 'center', fontSize: '14px', color: '#94a3b8', content: String(item.receivedQuantity) });
             case 'pending': return cell({ textAlign: 'center', fontSize: '14px', color: pending > 0 ? '#fbbf24' : '#34d399', content: pending > 0 ? String(pending) : '✓' });
             case 'price': return cell({ textAlign: 'right', fontFamily: 'monospace', fontSize: '12px', color: '#94a3b8', content: (item.product?.price ?? 0) > 0 ? '$' + (item.product?.price ?? 0).toFixed(2) : '—' });
@@ -987,8 +1052,8 @@ export default function OrdersPage() {
             switch (c.key) {
               case 'index': return String(idx + 1);
               case 'barcode': return item.product?.barcode || item.productBarcode || '—';
-              case 'name': return item.product?.name || item.productName || `#${item.productId ?? '?'}`;
-              case 'quantity': return String(item.quantity);
+              case 'name': return orderItemName(item);
+              case 'quantity': return item.isBox && item.unitsPerBox ? `${item.quantity} cajas` : String(item.quantity);
               case 'received': return String(item.receivedQuantity);
               case 'pending': return pending > 0 ? String(pending) : '0';
               case 'price': return (item.product?.price ?? 0) > 0 ? (item.product?.price ?? 0).toFixed(2) : '';
@@ -1020,7 +1085,10 @@ export default function OrdersPage() {
     .filter(([pid, q]) => q > 0 && !hiddenRows.has(parseInt(pid))).length;
   const totalUnits = Object.entries(quantities)
     .filter(([pid]) => !hiddenRows.has(parseInt(pid)))
-    .reduce((s, [, q]) => s + q, 0);
+    .reduce((s, [pid, q]) => {
+      const prod = soldProducts.find((p) => p.productId === parseInt(pid));
+      return s + unitsOf(prod || {}, q);
+    }, 0);
 
   // Pérdida estimada: costo de las piezas extra (por encima de las ventas reales).
   // Si esas piezas no se venden, esa cantidad se pierde de la ganancia actual.
@@ -1039,7 +1107,7 @@ export default function OrdersPage() {
   // Ganancia neta proyectada del pedido y resultado tras restar las pérdidas
   const projectedProfit = visibleProducts
     .filter((p) => (quantities[String(p.productId)] || 0) > 0)
-    .reduce((s, p) => s + (quantities[String(p.productId)] || 0) * (p.price - unitCostOf(p)), 0);
+    .reduce((s, p) => s + unitsOf(p, quantities[String(p.productId)] || 0) * (p.price - unitCostOf(p)), 0);
   const netAfterLoss = projectedProfit - estimatedLoss;
 
   return (
@@ -1251,18 +1319,43 @@ export default function OrdersPage() {
                                 <TableCell className="text-center text-xs text-slate-500 font-mono">{idx + 1}</TableCell>
                                 <TableCell className="font-mono text-xs text-slate-400">{product.barcode || '—'}</TableCell>
                                 <TableCell className="text-sm text-slate-200">
-                                  {product.name}
+                                  {boxName(product)}
+                                  {product.soldByBox && product.unitsPerBox && (
+                                    <Badge variant="outline" className="ml-2 text-emerald-400 border-emerald-700 text-[10px]">x{product.unitsPerBox} por caja</Badge>
+                                  )}
                                   {product.ghost && (
                                     <Badge variant="outline" className="ml-2 text-sky-400 border-sky-700 text-[10px]">sin inventario</Badge>
                                   )}
                                   {product.source === 'pendiente' && (
                                     <Badge variant="outline" className="ml-2 text-amber-400 border-amber-600 text-[10px]">pendiente</Badge>
                                   )}
+                                  {product.soldByBox && product.unitsPerBox && (
+                                    <div className="text-[11px] text-slate-500 mt-0.5">
+                                      {(() => {
+                                        const qty = quantities[String(product.productId)] || 0;
+                                        const base = (product.totalSoldUnits ?? 0) + (product.boxRemainder ?? 0);
+                                        const projected = Math.max(0, base - qty * product.unitsPerBox);
+                                        return (
+                                          <>
+                                            Vendidas: {product.totalSoldUnits ?? 0} + sobrante {product.boxRemainder ?? 0}{' '}
+                                            · Sobrante para el próximo pedido: <span className="text-amber-400/90">{projected} piezas</span>
+                                          </>
+                                        );
+                                      })()}
+                                    </div>
+                                  )}
                                 </TableCell>
                                 <TableCell className="text-center">
-                                  <Input type="number" min="0" value={quantities[String(product.productId)] || 0}
-                                    onChange={e => { const v = parseInt(e.target.value) || 0; setQuantities(prev => ({ ...prev, [String(product.productId)]: Math.max(0, v) })); }}
-                                    className="w-20 h-8 text-center text-sm" />
+                                  <div className="flex items-center justify-center gap-1">
+                                    <Input type="number" min="0" value={quantities[String(product.productId)] || 0}
+                                      onChange={e => { const v = parseInt(e.target.value) || 0; setQuantities(prev => ({ ...prev, [String(product.productId)]: Math.max(0, v) })); }}
+                                      className="w-20 h-8 text-center text-sm" />
+                                    {product.soldByBox && product.unitsPerBox && (
+                                      <span className="text-[10px] text-slate-500 whitespace-nowrap">
+                                        caja{quantities[String(product.productId)] !== 1 ? 's' : ''}
+                                      </span>
+                                    )}
+                                  </div>
                                 </TableCell>
                                 {extraColumns.map(col => (
                                   <TableCell key={col.id} className="text-right text-sm text-slate-300">
@@ -1354,7 +1447,12 @@ export default function OrdersPage() {
                             className="w-full text-left px-3 py-2 rounded-md hover:bg-slate-700/60 transition-colors flex items-center justify-between"
                           >
                             <span className="flex-1 min-w-0">
-                              <span className="block text-sm text-slate-200">{p.name}</span>
+                              <span className="block text-sm text-slate-200">
+                                {boxName(p)}
+                                {p.soldByBox && p.unitsPerBox && (
+                                  <span className="ml-2 text-[10px] text-emerald-400">x{p.unitsPerBox} por caja</span>
+                                )}
+                              </span>
                               <span className="block text-xs text-slate-500 font-mono">{p.barcode || '—'} · Stock: {p.stock} · ${p.price.toFixed(2)}</span>
                             </span>
                             <PlusCircle className="h-4 w-4 text-emerald-400 flex-shrink-0" />
@@ -1543,17 +1641,27 @@ export default function OrdersPage() {
                     {selectedOrder.items.filter(i => !i.extra).map(item => {
                       const received = receiveQuantities[item.id] ?? item.receivedQuantity;
                       const pending = Math.max(0, item.quantity - received);
-                      const itemName = item.product?.name || item.productName || `#${item.productId ?? '?'}`;
+                      const isBox = item.isBox === true;
+                      const unit = item.unitsPerBox ?? 0;
+                      const itemName = (isBox ? 'Caja de ' : '') + (item.product?.name || item.productName || `#${item.productId ?? '?'}`);
                       return (
                         <TableRow key={item.id}>
                           <TableCell>
-                            <div className="text-sm font-medium text-slate-200">{itemName}</div>
+                            <div className="text-sm font-medium text-slate-200">
+                              {itemName}
+                              {isBox && unit > 0 && (
+                                <span className="ml-2 rounded border border-emerald-700/60 px-1.5 py-0.5 text-[10px] text-emerald-400">x{unit} por caja</span>
+                              )}
+                            </div>
                             <div className="font-mono text-xs text-slate-500">
                               {item.product?.barcode || item.productBarcode || '—'}
                               {!item.product && <span className="ml-2 rounded bg-sky-950/60 px-1.5 py-0.5 text-[10px] text-sky-400 border border-sky-700/50">se creará al recibir</span>}
+                              {isBox && unit > 0 && <span className="ml-2 text-slate-500">= {received * unit} piezas</span>}
                             </div>
                           </TableCell>
-                          <TableCell className="text-center text-slate-300">{item.quantity}</TableCell>
+                          <TableCell className="text-center text-slate-300">
+                            {item.quantity}{isBox && unit > 0 && <div className="text-[10px] text-slate-500">{item.quantity * unit} pzas</div>}
+                          </TableCell>
                           <TableCell className="text-center">
                             <Input
                               type="number" min="0" max={item.quantity}
@@ -1561,7 +1669,7 @@ export default function OrdersPage() {
                               onChange={e => setReceiveQuantities(prev => ({ ...prev, [item.id]: Math.min(item.quantity, Math.max(0, parseInt(e.target.value) || 0)) }))}
                               className="w-20 h-8 text-center mx-auto"
                             />
-                            {pending > 0 && <div className="text-[10px] text-amber-400 mt-0.5">{pending} faltan</div>}
+                            {pending > 0 && <div className="text-[10px] text-amber-400 mt-0.5">{pending} cajas faltan</div>}
                           </TableCell>
                           <TableCell className="text-center">
                             <Input
@@ -1852,7 +1960,10 @@ export default function OrdersPage() {
                           </TableCell>
                           <TableCell className="text-xs text-slate-400 font-mono">{item.product?.barcode || item.productBarcode || '—'}</TableCell>
                           <TableCell className={`text-sm ${isExtra ? 'text-red-300' : 'text-slate-200'}`}>
-                            {item.product?.name || item.productName || `#${item.productId ?? '?'}`}
+                            {orderItemName(item)}
+                            {item.isBox && item.unitsPerBox && (
+                              <span className="ml-2 text-[10px] text-emerald-400">x{item.unitsPerBox} por caja</span>
+                            )}
                             {isExtra && <span className="ml-2 text-[10px] font-bold text-red-400 uppercase">Extra</span>}
                             {!item.product && !isExtra && <span className="ml-2 text-[10px] font-bold text-sky-400 uppercase">Sin inventario</span>}
                           </TableCell>
@@ -1900,7 +2011,10 @@ export default function OrdersPage() {
                         <TableRow key={item.id}>
                           <TableCell className="font-mono text-xs text-slate-400">{item.product?.barcode || item.productBarcode || '—'}</TableCell>
                           <TableCell className="text-sm font-medium text-slate-200">
-                            {item.product?.name || item.productName || `#${item.productId ?? '?'}`}
+                            {orderItemName(item)}
+                            {item.isBox && item.unitsPerBox && (
+                              <span className="ml-2 rounded border border-emerald-700/60 px-1.5 py-0.5 text-[10px] text-emerald-400">x{item.unitsPerBox} por caja</span>
+                            )}
                             {!item.product && <span className="ml-2 rounded bg-sky-950/60 px-1.5 py-0.5 text-[10px] text-sky-400 border border-sky-700/50">sin inventario</span>}
                           </TableCell>
                           <TableCell className="text-center">

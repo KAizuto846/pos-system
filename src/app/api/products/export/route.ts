@@ -86,6 +86,7 @@ export async function GET(request: Request) {
       const header = [
         "id", "nombre", "codigo_barras", "precio_venta", "costo",
         "stock", "stock_minimo", "activo", "departamento", "proveedor",
+        "maneja_cajas", "piezas_por_caja", "sobrante_cajas",
       ];
       const rows = products.map((p) => [
         p.id,
@@ -98,6 +99,9 @@ export async function GET(request: Request) {
         p.active ? "si" : "no",
         escapeCsv(p.department?.name || ""),
         escapeCsv(p.supplier?.name || ""),
+        p.soldByBox ? "si" : "no",
+        p.unitsPerBox ?? "",
+        p.boxRemainder ?? "",
       ].join(","));
 
       const csv = "\uFEFF" + [header.join(","), ...rows].join("\n");
@@ -125,6 +129,9 @@ export async function GET(request: Request) {
         active: p.active,
         department: p.department?.name || null,
         supplier: p.supplier?.name || null,
+        soldByBox: p.soldByBox,
+        unitsPerBox: p.unitsPerBox,
+        boxRemainder: p.boxRemainder,
       })),
     };
 

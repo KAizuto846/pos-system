@@ -77,6 +77,12 @@ export async function GET(request: Request) {
         department: { id: number; name: string } | null;
         supplierPrice: number | null;
         totalSold: number;
+        // Gestión de cajas: totalSold queda en número de cajas cuando el
+        // producto se pide por cajas; estos campos guardan el detalle.
+        soldByBox?: boolean;
+        unitsPerBox?: number | null;
+        boxRemainder?: number;
+        totalSoldUnits?: number;
       }
     >();
 
@@ -173,6 +179,12 @@ export async function GET(request: Request) {
       ...pieceSalesByBox.keys(),
     ]);
 
+    // Datos de gestión por cajas por producto (para convertir unidades a cajas)
+    const boxInfo = new Map<
+      number,
+      { soldByBox: boolean; unitsPerBox: number | null; boxRemainder: number }
+    >();
+
     if (boxIds.size > 0) {
       const boxes = await prisma.product.findMany({
         where: { id: { in: [...boxIds] } },
@@ -186,6 +198,9 @@ export async function GET(request: Request) {
           minStock: true,
           active: true,
           piecesPerUnit: true,
+          soldByBox: true,
+          unitsPerBox: true,
+          boxRemainder: true,
           department: true,
           productLines: {
             select: { supplierId: true, supplierPrice: true, isPrimary: true },
@@ -194,6 +209,11 @@ export async function GET(request: Request) {
       });
 
       for (const box of boxes) {
+        boxInfo.set(box.id, {
+          soldByBox: box.soldByBox,
+          unitsPerBox: box.unitsPerBox,
+          boxRemainder: box.boxRemainder,
+        });
         if (!box.active) continue;
         const own = grouped.get(box.id)?.totalSold ?? 0;
         const opened = openedByBox.get(box.id) ?? 0;
@@ -222,6 +242,10 @@ export async function GET(request: Request) {
           department: box.department,
           supplierPrice: line?.supplierPrice ?? null,
           totalSold,
+          soldByBox: box.soldByBox,
+          unitsPerBox: box.unitsPerBox,
+          boxRemainder: box.boxRemainder,
+          totalSoldUnits: totalSold,
         });
       }
     }
@@ -243,12 +267,30 @@ export async function GET(request: Request) {
       (a, b) => b.totalSold - a.totalSold
     );
 
+    // Gestión de cajas: si el producto se pide por cajas, las unidades vendidas
+    // se convierten a cajas completas. Las que no completan una caja quedan
+    // acumuladas en boxRemainder del producto y se toman en el siguiente pedido.
+    for (const p of result) {
+      const info = boxInfo.get(p.productId);
+      if (info && info.soldByBox && info.unitsPerBox && info.unitsPerBox > 0) {
+        const totalSoldUnits = p.totalSold;
+        const availableUnits = totalSoldUnits + (info.boxRemainder ?? 0);
+        p.totalSoldUnits = totalSoldUnits;
+        p.soldByBox = true;
+        p.unitsPerBox = info.unitsPerBox;
+        p.boxRemainder = info.boxRemainder ?? 0;
+        p.totalSold = Math.floor(availableUnits / info.unitsPerBox);
+      } else {
+        p.totalSoldUnits = p.totalSold;
+      }
+    }
+
     return Response.json({
       supplierId: sid,
       dateFrom: fromDate.toISOString(),
       dateTo: toDate.toISOString(),
       totalProducts: result.length,
-      totalUnits: result.reduce((s, p) => s + p.totalSold, 0),
+      totalUnits: result.reduce((s, p) => s + (p.totalSoldUnits ?? p.totalSold), 0),
       products: result,
     });
   } catch (error) {

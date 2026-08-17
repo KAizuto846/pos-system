@@ -139,6 +139,15 @@ model Product {
   pieceOfProduct   Product? @relation("PiecesRelation", fields: [pieceOfProductId], references: [id], onDelete: SetNull)
   pieceChildren    Product[] @relation("PiecesRelation")
 
+  // Gestión de cajas: el producto se vende por pieza en el POS pero en los
+  // pedidos a proveedores se pide por cajas. No crea ningún producto en
+  // inventario (las cajas no se venden al público). boxRemainder guarda las
+  // unidades que no completaron una caja en el último pedido y se acumulan
+  // para el siguiente.
+  soldByBox     Boolean @default(false) @map("sold_by_box")
+  unitsPerBox   Int?    @map("units_per_box")
+  boxRemainder  Int     @default(0) @map("box_remainder")
+
   productLines   ProductLine[]
   saleItems      SaleItem[]
   orderItems     SupplierOrderItem[]
@@ -293,6 +302,11 @@ model SupplierOrderItem {
   notes              String        @default("")
   createdAt          DateTime      @default(now()) @map("created_at")
   updatedAt          DateTime      @updatedAt @map("updated_at")
+
+  // Gestión de cajas: cuando el producto se pide por cajas, quantity/receivedQuantity
+  // están en número de cajas y unitsPerBox indica cuántas piezas trae cada una.
+  isBox       Boolean @default(false) @map("is_box")
+  unitsPerBox Int?    @map("units_per_box")
 
   @@index([supplierOrderId])
   @@index([productId])
