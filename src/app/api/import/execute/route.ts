@@ -45,7 +45,17 @@ export async function POST(request: NextRequest) {
     const file = formData.get('file') as File | null;
     const entityType = formData.get('entityType') as string || 'products';
     let fieldMappings: FieldMapping[] = [];
-    let options = { updateExisting: true, createMissingSuppliers: true, createMissingDepartments: true };
+    let options: {
+      updateExisting: boolean;
+      createMissingSuppliers: boolean;
+      createMissingDepartments: boolean;
+      matchBy: 'barcode' | 'name';
+    } = {
+      updateExisting: true,
+      createMissingSuppliers: true,
+      createMissingDepartments: true,
+      matchBy: 'barcode',
+    };
 
     try {
       const mappingsRaw = formData.get('fieldMappings') as string;
@@ -215,7 +225,7 @@ export async function POST(request: NextRequest) {
 
     // Flush remaining batch
     if (seenProducts.size > 0) {
-      await flushProductBatch(seenProducts, results);
+      await flushProductBatch(seenProducts, results, options.matchBy);
     }
     if (createBatch.length > 0) {
       await flushCreateBatch(createBatch, results);
@@ -252,7 +262,12 @@ export async function POST(request: NextRequest) {
 
 async function processProductBatch(
   mapped: Record<string, unknown>,
-  opts: { updateExisting: boolean; createMissingSuppliers: boolean; createMissingDepartments: boolean },
+  opts: {
+    updateExisting: boolean;
+    createMissingSuppliers: boolean;
+    createMissingDepartments: boolean;
+    matchBy: 'barcode' | 'name';
+  },
   results: ImportResults,
   deptCache: Map<string, number>,
   suppCache: Map<string, number>,
@@ -312,9 +327,13 @@ async function processProductBatch(
     supplierId: supplierId || null,
   };
 
-  // Upsert por código de barras (o nombre exacto si no hay código):
-  // si el producto ya existe en la base NO se duplica, se reemplaza.
-  const key = barcode || `name:${name.toLowerCase()}`;
+  // Upsert: el criterio de coincidencia lo elige el usuario (código de barras o
+  // nombre exacto). Si se elige código de barras y la fila no trae código,
+  // se cae al nombre exacto.
+  const matchByName = opts.matchBy === 'name';
+  const key = matchByName
+    ? `name:${name.toLowerCase()}`
+    : barcode || `name:${name.toLowerCase()}`;
   if (opts.updateExisting) {
     if (seenKeys.has(key)) {
       seenProducts.set(key, data);
@@ -324,7 +343,7 @@ async function processProductBatch(
     seenKeys.add(key);
     seenProducts.set(key, data);
     if (seenProducts.size >= batchSize) {
-      await flushProductBatch(seenProducts, results);
+      await flushProductBatch(seenProducts, results, opts.matchBy);
     }
     return;
   }
@@ -342,13 +361,17 @@ async function processProductBatch(
 
 async function flushProductBatch(
   seenProducts: Map<string, Prisma.ProductCreateManyInput>,
-  results: ImportResults
+  results: ImportResults,
+  matchBy: 'barcode' | 'name'
 ) {
   if (seenProducts.size === 0) return;
   const batch = Array.from(seenProducts.values());
   seenProducts.clear();
 
-  const barcodes = batch.filter(b => b.barcode).map(b => b.barcode as string);
+  const matchByName = matchBy === 'name';
+  const barcodes = matchByName
+    ? []
+    : batch.filter(b => b.barcode).map(b => b.barcode as string);
   const names = batch.map(b => b.name);
 
   const existing = await prisma.product.findMany({
@@ -360,12 +383,16 @@ async function flushProductBatch(
     },
     select: { id: true, barcode: true, name: true },
   });
-  const byBarcode = new Map(existing.filter(e => e.barcode).map(e => [e.barcode, e]));
+  const byBarcode = matchByName
+    ? new Map<string, typeof existing[number]>()
+    : new Map(existing.filter(e => e.barcode).map(e => [e.barcode, e]));
   const byName = new Map(existing.map(e => [e.name, e]));
 
   const toCreate: Prisma.ProductCreateManyInput[] = [];
   for (const data of batch) {
-    const existingRow = (data.barcode && byBarcode.get(data.barcode)) || byName.get(data.name);
+    const existingRow = matchByName
+      ? byName.get(data.name)
+      : (data.barcode && byBarcode.get(data.barcode)) || byName.get(data.name);
     if (existingRow) {
       try {
         await prisma.product.update({

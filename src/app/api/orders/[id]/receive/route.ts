@@ -13,6 +13,9 @@ interface ReceiveItem {
   expiresAt?: string | null;
   costPrice?: number | null;
   price?: number | null;
+  // Stock total deseado tras recibir (piezas). Si se omite, se incrementa
+  // normalmente con las piezas recibidas.
+  finalStock?: number | null;
 }
 
 interface ExtraItem {
@@ -205,12 +208,23 @@ export async function POST(
           // las piezas reales (cajas × piezas por caja) y el costo se calcula por pieza.
           const unitMultiplier =
             orderItem.isBox === true && orderItem.unitsPerBox ? orderItem.unitsPerBox : 1;
+          const receivedPieces = receivedQuantity * unitMultiplier;
+          // Solo entran al inventario las piezas NUEVAS de esta confirmación:
+          // lo ya recibido en confirmaciones anteriores ya está sumado al stock.
+          const alreadyReceivedPieces = orderItem.receivedQuantity * unitMultiplier;
+          const deltaPieces = receivedPieces - alreadyReceivedPieces;
           const expiresAt = item.expiresAt ? monthYearToEndOfMonth(item.expiresAt) : null;
-          await addStock(tx, productId, receivedQuantity * unitMultiplier, {
-            expiresAt,
-            costPrice: finalCost,
-          });
-          purchaseCost += receivedQuantity * unitMultiplier * finalCost;
+          const finalStock =
+            typeof item.finalStock === "number" && Number.isInteger(item.finalStock) && item.finalStock >= 0
+              ? item.finalStock
+              : undefined;
+          if (deltaPieces > 0) {
+            await addStock(tx, productId, deltaPieces, {
+              expiresAt,
+              costPrice: finalCost,
+            }, finalStock);
+          }
+          purchaseCost += Math.max(0, deltaPieces) * finalCost;
         }
       }
 

@@ -109,6 +109,7 @@ export default function ImportPage() {
     updateExisting: true,
     createMissingSuppliers: true,
     createMissingDepartments: true,
+    matchBy: 'barcode',
   });
   const [importing, setImporting] = useState(false);
   const [importProgress, setImportProgress] = useState(0);
@@ -644,6 +645,28 @@ export default function ImportPage() {
                         onCheckedChange={(v) => setOptions(o => ({ ...o, updateExisting: v }))}
                       />
                     </div>
+                    {entityType === 'products' && (
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="space-y-0.5">
+                          <Label className="text-sm text-slate-400">Actualizar por</Label>
+                          <p className="text-[11px] text-slate-500">
+                            Criterio para reemplazar un producto del inventario: mismo código de barras o mismo nombre.
+                          </p>
+                        </div>
+                        <Select
+                          value={options.matchBy}
+                          onValueChange={(v) => setOptions(o => ({ ...o, matchBy: v }))}
+                        >
+                          <SelectTrigger className="w-44 border-slate-600 bg-slate-800 text-slate-200">
+                            <SelectValue placeholder="Criterio" />
+                          </SelectTrigger>
+                          <SelectContent className="border-slate-600 bg-slate-800 text-slate-200">
+                            <SelectItem value="barcode">Código de barras</SelectItem>
+                            <SelectItem value="name">Nombre del producto</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
                     <div className="flex items-center justify-between">
                       <Label className="text-sm text-slate-400">Crear proveedores faltantes automáticamente</Label>
                       <Switch

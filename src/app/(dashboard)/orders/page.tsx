@@ -233,6 +233,7 @@ export default function OrdersPage() {
   const [exportOpen, setExportOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [receiveQuantities, setReceiveQuantities] = useState<Record<number, number>>({});
+  const [receiveFinalStocks, setReceiveFinalStocks] = useState<Record<number, string>>({});
   const [receiveLoading, setReceiveLoading] = useState(false);
   const [receiveBatches, setReceiveBatches] = useState<Record<number, string>>({});
   const [receiveCosts, setReceiveCosts] = useState<Record<number, string>>({});
@@ -635,6 +636,7 @@ export default function OrdersPage() {
       initBatch[i.id] = '';
     });
     setReceiveQuantities(init);
+    setReceiveFinalStocks({});
     setReceiveCosts(initCost);
     setReceivePrices(initPrice);
     setReceiveBatches(initBatch);
@@ -714,13 +716,26 @@ export default function OrdersPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          items: selectedOrder.items.map(i => ({
-            orderItemId: i.id,
-            receivedQuantity: receiveQuantities[i.id] ?? i.receivedQuantity,
-            expiresAt: (receiveBatches[i.id] || '').trim() || null,
-            costPrice: receiveCosts[i.id] !== undefined ? parseFloat(receiveCosts[i.id]) : null,
-            price: receivePrices[i.id] !== undefined ? parseFloat(receivePrices[i.id]) : null,
-          })),
+          items: selectedOrder.items.map(i => {
+            const isBox = i.isBox === true;
+            const unit = i.unitsPerBox ?? 0;
+            const received = receiveQuantities[i.id] ?? i.receivedQuantity;
+            const receivedPieces = received * (isBox && unit > 0 ? unit : 1);
+            const alreadyReceivedPieces = i.receivedQuantity * (isBox && unit > 0 ? unit : 1);
+            const deltaPieces = Math.max(0, receivedPieces - alreadyReceivedPieces);
+            const finalStockStr = (receiveFinalStocks[i.id] ?? '').trim();
+            const finalStock = finalStockStr !== ''
+              ? Math.max(deltaPieces, parseInt(finalStockStr) || deltaPieces)
+              : undefined;
+            return {
+              orderItemId: i.id,
+              receivedQuantity: received,
+              expiresAt: (receiveBatches[i.id] || '').trim() || null,
+              costPrice: receiveCosts[i.id] !== undefined ? parseFloat(receiveCosts[i.id]) : null,
+              price: receivePrices[i.id] !== undefined ? parseFloat(receivePrices[i.id]) : null,
+              finalStock,
+            };
+          }),
           extras: receiveExtras.map(e => ({
             productId: e.productId,
             name: e.productId === null ? e.name : undefined,
@@ -1617,7 +1632,7 @@ export default function OrdersPage() {
               Recibir Pedido #{selectedOrder?.id}
             </DialogTitle>
             <DialogDescription>
-              Ingresa cantidades recibidas, caducidad (opcional), y ajusta precios si es necesario. Las piezas no recibidas quedan como pendientes.
+              Ingresa cantidades recibidas, caducidad (opcional), y ajusta precios si es necesario. El stock final se calcula automáticamente (stock actual + piezas recibidas) y puedes corregirlo; nunca puede quedar por debajo de las piezas recibidas.
             </DialogDescription>
           </DialogHeader>
           {selectedOrder && (
@@ -1632,6 +1647,7 @@ export default function OrdersPage() {
                       <TableHead>Producto</TableHead>
                       <TableHead className="text-center">Pedido</TableHead>
                       <TableHead className="text-center w-20">Recibido</TableHead>
+                      <TableHead className="text-center w-28">Stock final</TableHead>
                       <TableHead className="text-center w-24">Caduca (MM/AAAA)</TableHead>
                       <TableHead className="text-center w-28">P. Proveedor</TableHead>
                       <TableHead className="text-center w-24">P. Venta</TableHead>
@@ -1644,6 +1660,14 @@ export default function OrdersPage() {
                       const isBox = item.isBox === true;
                       const unit = item.unitsPerBox ?? 0;
                       const itemName = (isBox ? 'Caja de ' : '') + (item.product?.name || item.productName || `#${item.productId ?? '?'}`);
+                      const receivedPieces = received * (isBox && unit > 0 ? unit : 1);
+                      const alreadyReceivedPieces = item.receivedQuantity * (isBox && unit > 0 ? unit : 1);
+                      const deltaPieces = Math.max(0, receivedPieces - alreadyReceivedPieces);
+                      const currentStock = item.product?.stock ?? 0;
+                      const defaultFinalStock = currentStock + deltaPieces;
+                      const finalStockVal = receiveFinalStocks[item.id] !== undefined
+                        ? receiveFinalStocks[item.id]
+                        : String(defaultFinalStock);
                       return (
                         <TableRow key={item.id}>
                           <TableCell>
@@ -1656,7 +1680,8 @@ export default function OrdersPage() {
                             <div className="font-mono text-xs text-slate-500">
                               {item.product?.barcode || item.productBarcode || '—'}
                               {!item.product && <span className="ml-2 rounded bg-sky-950/60 px-1.5 py-0.5 text-[10px] text-sky-400 border border-sky-700/50">se creará al recibir</span>}
-                              {isBox && unit > 0 && <span className="ml-2 text-slate-500">= {received * unit} piezas</span>}
+                              <span className="ml-2 text-slate-400">Stock actual: {currentStock}</span>
+                              {isBox && unit > 0 && <span className="ml-2 text-slate-500">= {receivedPieces} piezas</span>}
                             </div>
                           </TableCell>
                           <TableCell className="text-center text-slate-300">
@@ -1670,6 +1695,15 @@ export default function OrdersPage() {
                               className="w-20 h-8 text-center mx-auto"
                             />
                             {pending > 0 && <div className="text-[10px] text-amber-400 mt-0.5">{pending} cajas faltan</div>}
+                          </TableCell>
+                          <TableCell className="text-center">
+                            <Input
+                              type="number" step="1" min={deltaPieces}
+                              value={finalStockVal}
+                              onChange={e => setReceiveFinalStocks(prev => ({ ...prev, [item.id]: e.target.value }))}
+                              className="w-24 h-8 text-center mx-auto text-xs"
+                            />
+                            <div className="text-[10px] text-slate-500 mt-0.5">mín {deltaPieces} pzas</div>
                           </TableCell>
                           <TableCell className="text-center">
                             <Input

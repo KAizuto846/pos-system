@@ -1,5 +1,6 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { getCurrentShiftRange } from "@/lib/shift";
 import { Prisma } from "@prisma/client";
 
 export async function GET(request: Request) {
@@ -98,13 +99,6 @@ export async function POST(request: Request) {
     const body = await request.json();
     const { startDate, endDate, preview } = body;
 
-    if (!startDate || !endDate) {
-      return Response.json(
-        { error: "startDate y endDate son requeridos" },
-        { status: 400 }
-      );
-    }
-
     // Fechas tipo "YYYY-MM-DD" se interpretan como día local completo;
     // si vienen con hora (ISO), se usan tal cual
     const parseDate = (value: string, endOfDay: boolean): Date => {
@@ -117,8 +111,20 @@ export async function POST(request: Request) {
       return new Date(value);
     };
 
-    const start = parseDate(startDate, false);
-    const end = parseDate(endDate, true);
+    // Si no se envian fechas (flujo "Cerrar Turno" desde la barra lateral),
+    // el rango se calcula en el servidor: el turno empieza donde termino el
+    // ultimo corte y NO se reinicia a las 00:00. Si se envian fechas (p.ej.
+    // el boton "Nuevo Turno" de reportes), se respetan tal cual.
+    let start: Date;
+    let end: Date;
+    if (startDate && endDate) {
+      start = parseDate(startDate, false);
+      end = parseDate(endDate, true);
+    } else {
+      const range = await getCurrentShiftRange(userId);
+      start = range.start;
+      end = range.end;
+    }
 
     if (isNaN(start.getTime()) || isNaN(end.getTime())) {
       return Response.json(

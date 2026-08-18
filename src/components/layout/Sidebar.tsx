@@ -78,6 +78,15 @@ function parsePm(json: string): Record<string, PmBreakdown> {
   }
 }
 
+function formatShiftDate(dateStr: string) {
+  return new Date(dateStr).toLocaleString('es-MX', {
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 const navLinks = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/pos', label: 'POS (Punto de Venta)', icon: ShoppingCart },
@@ -120,13 +129,9 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
   const [loadingPreview, setLoadingPreview] = useState(false);
 
   const buildShiftPayload = () => {
-    const now = new Date();
-    const startOfDay = new Date(now);
-    startOfDay.setHours(0, 0, 0, 0);
-    return {
-      startDate: startOfDay.toISOString(),
-      endDate: now.toISOString(),
-    };
+    // Sin fechas: el servidor calcula el rango del turno (inicia donde termino
+    // el ultimo corte). Asi las ventas NO se reinician a las 00:00.
+    return {};
   };
 
   const loadShiftPreview = useCallback(async () => {
@@ -292,12 +297,18 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
                       ? 'Resumen de las ventas de tu turno.'
                       : shiftPreview
                         ? 'Revisa los datos de tu turno antes de confirmar el corte.'
-                        : 'Se generará un reporte con las ventas de tu turno (desde las 00:00 hrs hasta ahora).'}
+                        : 'Se generará un reporte con las ventas de tu turno hasta ahora.'}
                   </DialogDescription>
                 </DialogHeader>
 
                 {shiftResult || shiftPreview ? (
                   <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
+                    <div className="flex items-center justify-between rounded-lg border border-slate-700 bg-slate-800/50 px-4 py-2.5">
+                      <span className="text-sm text-slate-400">Turno</span>
+                      <span className="text-sm font-medium text-slate-200">
+                        {formatShiftDate((shiftResult ?? shiftPreview)!.startDate)} — {formatShiftDate((shiftResult ?? shiftPreview)!.endDate)}
+                      </span>
+                    </div>
                     <div className="flex items-center justify-between rounded-lg border border-slate-700 bg-slate-800/50 px-4 py-2.5">
                       <span className="text-sm text-slate-400">Ventas totales</span>
                       <span className="text-lg font-bold text-slate-100">{(shiftResult ?? shiftPreview)!.totalSales}</span>
@@ -373,7 +384,7 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
                   <div className="space-y-4">
                     <div className="flex items-center gap-3 rounded-lg border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-slate-300">
                       <Loader2 className="h-4 w-4 shrink-0 text-slate-500" />
-                      El reporte incluye el total de ventas y el desglose por método de pago de hoy.
+                      El reporte incluye el total de ventas y el desglose por método de pago de tu turno.
                     </div>
                   </div>
                 )}

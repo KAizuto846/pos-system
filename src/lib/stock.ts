@@ -43,17 +43,49 @@ export async function consumeBatch(
 
 // Agrega `qty` piezas al stock total y, si `batch` trae datos, las registra en
 // un lote nuevo (caducidad y costo opcionales). Sin lote quedan como stock libre.
+//
+// Si se pasa `finalStock`, el stock total queda fijado a ese valor en lugar de
+// incrementarse (permite corregir el conteo real al recibir: las piezas que
+// llegan siempre cuentan, pero el cajero puede ajustar el total hacia arriba o
+// hacia abajo). El lote siempre registra las `qty` piezas recibidas.
 export async function addStock(
   tx: Prisma.TransactionClient,
   productId: number,
   qty: number,
-  batch?: { expiresAt?: Date | null; costPrice?: number }
+  batch?: { expiresAt?: Date | null; costPrice?: number },
+  finalStock?: number
 ) {
   if (qty <= 0) return;
-  await tx.product.update({
-    where: { id: productId },
-    data: { stock: { increment: qty } },
-  });
+
+  if (finalStock !== undefined) {
+    if (!Number.isInteger(finalStock) || finalStock < 0) {
+      throw new Error("Stock final inválido");
+    }
+    if (finalStock < qty) {
+      throw new Error("Stock final inválido: no puede ser menor a las piezas recibidas");
+    }
+    const product = await tx.product.findUnique({
+      where: { id: productId },
+      select: { stock: true, batches: { select: { quantity: true } } },
+    });
+    if (!product) throw new Error("Producto no encontrado");
+    const batchTotal = product.batches.reduce((s, b) => s + b.quantity, 0) + qty;
+    if (finalStock < batchTotal) {
+      throw new Error(
+        `Stock final inválido: no puede quedar por debajo de las ${batchTotal} piezas asignadas a lotes`
+      );
+    }
+    await tx.product.update({
+      where: { id: productId },
+      data: { stock: finalStock },
+    });
+  } else {
+    await tx.product.update({
+      where: { id: productId },
+      data: { stock: { increment: qty } },
+    });
+  }
+
   if (batch && qty > 0) {
     await tx.productBatch.create({
       data: {
