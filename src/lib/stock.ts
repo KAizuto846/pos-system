@@ -45,12 +45,11 @@ export async function consumeBatch(
 // un lote nuevo (caducidad y costo opcionales). Sin lote quedan como stock libre.
 //
 // Si se pasa `finalStock`, el stock total queda fijado a ese valor en lugar de
-// incrementarse (permite corregir el conteo real al recibir: las piezas que
-// llegan siempre cuentan, pero el cajero puede ajustar el total hacia arriba o
-// hacia abajo). El lote siempre registra las `qty` piezas recibidas; si el
-// stock final es menor que las piezas ya asignadas a lotes (de recepciones
-// anteriores), esas piezas excedentes se cancelan de los lotes previos
-// (primero los que caducan antes), sin tocar el lote recién creado.
+// incrementarse (permite corregir el conteo real al recibir: el cajero decide
+// el total sin restricciones). El lote nuevo registra las piezas recibidas que
+// quepan en el stock final; si el stock final es menor que las piezas ya
+// asignadas a lotes (de recepciones anteriores), esas piezas excedentes se
+// cancelan de los lotes previos (primero los que caducan antes).
 export async function addStock(
   tx: Prisma.TransactionClient,
   productId: number,
@@ -60,12 +59,10 @@ export async function addStock(
 ) {
   if (qty <= 0) return;
 
+  let batchQty = qty;
   if (finalStock !== undefined) {
     if (!Number.isInteger(finalStock) || finalStock < 0) {
       throw new Error("Stock final inválido");
-    }
-    if (finalStock < qty) {
-      throw new Error("Stock final inválido: no puede ser menor a las piezas recibidas");
     }
     const product = await tx.product.findUnique({
       where: { id: productId },
@@ -73,10 +70,12 @@ export async function addStock(
     });
     if (!product) throw new Error("Producto no encontrado");
     const existingBatchSum = product.batches.reduce((s, b) => s + b.quantity, 0);
-    const newBatchTotal = existingBatchSum + qty;
-    // Cancelar de los lotes previos las piezas que no caben en el stock final.
-    if (newBatchTotal > finalStock) {
-      await consumeBatch(tx, productId, newBatchTotal - finalStock);
+    // El lote nuevo solo registra las piezas que quepan en el stock final.
+    batchQty = Math.min(qty, finalStock);
+    // Cancelar de los lotes previos las piezas que no caben junto al lote nuevo.
+    const totalAfter = existingBatchSum + batchQty;
+    if (totalAfter > finalStock) {
+      await consumeBatch(tx, productId, totalAfter - finalStock);
     }
     await tx.product.update({
       where: { id: productId },
@@ -89,11 +88,11 @@ export async function addStock(
     });
   }
 
-  if (batch && qty > 0) {
+  if (batch && batchQty > 0) {
     await tx.productBatch.create({
       data: {
         productId,
-        quantity: qty,
+        quantity: batchQty,
         expiresAt: batch.expiresAt ?? null,
         costPrice: batch.costPrice ?? 0,
       },

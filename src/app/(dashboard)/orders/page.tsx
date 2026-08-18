@@ -209,6 +209,7 @@ function unitsOf(p: { soldByBox?: boolean; unitsPerBox?: number | null }, qty: n
 
 function todayStr() { return new Date().toISOString().slice(0, 10); }
 function weekAgoStr() { const d = new Date(); d.setDate(d.getDate() - 7); return d.toISOString().slice(0, 10); }
+function nowTimeStr() { const d = new Date(); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; }
 
 // ─── Component ───
 export default function OrdersPage() {
@@ -265,7 +266,7 @@ export default function OrdersPage() {
     setDateTo(todayStr());
   }, []);
   const [timeFrom, setTimeFrom] = useState('06:00');
-  const [timeTo, setTimeTo] = useState('22:00');
+  const [timeTo, setTimeTo] = useState(() => nowTimeStr());
   const [soldProducts, setSoldProducts] = useState<SoldProduct[]>([]);
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [hiddenRows, setHiddenRows] = useState<Set<number>>(new Set());
@@ -342,7 +343,7 @@ export default function OrdersPage() {
 
   const resetForm = () => {
     setFormSupplierId(''); setFormNotes(''); setDateFrom(weekAgoStr());
-    setDateTo(todayStr()); setTimeFrom('06:00'); setTimeTo('22:00');
+    setDateTo(todayStr()); setTimeFrom('06:00'); setTimeTo(nowTimeStr());
     setSoldProducts([]); setQuantities({}); setHiddenRows(new Set());
     setSalesInfo(null); setFormError(''); setExtraColumns([]); setPendingItems(null);
     setManualColumns({}); setCustomColumnName('');
@@ -366,7 +367,7 @@ export default function OrdersPage() {
         setDateFrom(r.dateTo);
         setTimeFrom(r.timeTo);
         setDateTo(todayStr());
-        setTimeTo('22:00');
+        setTimeTo(nowTimeStr());
         const f = `${r.dateTo} ${r.timeTo}`;
         setLastRangeNote(`El último pedido a este proveedor terminó el ${f}. El nuevo pedido empieza desde ahí.`);
       }
@@ -783,9 +784,8 @@ export default function OrdersPage() {
             const alreadyReceivedPieces = i.receivedQuantity * (isBox && unit > 0 ? unit : 1);
             const deltaPieces = Math.max(0, receivedPieces - alreadyReceivedPieces);
             const finalStockStr = (receiveFinalStocks[i.id] ?? '').trim();
-            const finalStock = finalStockStr !== ''
-              ? Math.max(deltaPieces, parseInt(finalStockStr) || deltaPieces)
-              : undefined;
+            const parsedFinal = parseInt(finalStockStr, 10);
+            const finalStock = finalStockStr !== '' && Number.isInteger(parsedFinal) ? parsedFinal : undefined;
             return {
               orderItemId: i.id,
               receivedQuantity: received,
@@ -1197,7 +1197,7 @@ export default function OrdersPage() {
         </div>
         <Dialog open={createOpen} onOpenChange={o => { setCreateOpen(o); if (!o) resetForm(); }}>
           <DialogTrigger asChild>
-            <Button><Plus className="mr-2 h-4 w-4" />Nuevo Pedido</Button>
+            <Button onClick={() => setTimeTo(nowTimeStr())}><Plus className="mr-2 h-4 w-4" />Nuevo Pedido</Button>
           </DialogTrigger>
           <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
@@ -1699,7 +1699,7 @@ export default function OrdersPage() {
               Recibir Pedido #{selectedOrder?.id}
             </DialogTitle>
             <DialogDescription>
-              Ingresa cantidades recibidas, caducidad (opcional), y ajusta precios si es necesario. El stock final se calcula automáticamente (stock actual + piezas recibidas) y puedes corregirlo; nunca puede quedar por debajo de las piezas recibidas. Tu avance se guarda automáticamente por si tienes que atender otra cosa.
+              Ingresa cantidades recibidas, caducidad (opcional), y ajusta precios si es necesario. El stock final se calcula automáticamente (stock actual + piezas recibidas) y puedes corregirlo libremente. Tu avance se guarda automáticamente por si tienes que atender otra cosa.
             </DialogDescription>
           </DialogHeader>
           {draftRestored && selectedOrder && (
@@ -1780,12 +1780,12 @@ export default function OrdersPage() {
                           </TableCell>
                           <TableCell className="text-center">
                             <Input
-                              type="number" step="1" min={deltaPieces}
+                              type="number" step="1" min="0"
                               value={finalStockVal}
                               onChange={e => setReceiveFinalStocks(prev => ({ ...prev, [item.id]: e.target.value }))}
                               className="w-24 h-8 text-center mx-auto text-xs"
                             />
-                            <div className="text-[10px] text-slate-500 mt-0.5">mín {deltaPieces} pzas</div>
+                            <div className="text-[10px] text-slate-500 mt-0.5">piezas finales</div>
                           </TableCell>
                           <TableCell className="text-center">
                             <Input
