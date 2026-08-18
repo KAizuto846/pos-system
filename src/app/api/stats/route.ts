@@ -57,6 +57,10 @@ export async function GET() {
           stock: { lte: prisma.product.fields.minStock },
         },
         orderBy: { stock: "asc" },
+        include: {
+          supplier: { select: { id: true, name: true } },
+          department: { select: { id: true, name: true } },
+        },
       }),
       prisma.sale.groupBy({
         by: ["userId"],
@@ -71,7 +75,17 @@ export async function GET() {
           quantity: { gt: 0 },
           expiresAt: { gte: todayStart, lte: new Date(todayStart.getTime() + 60 * 24 * 60 * 60 * 1000) },
         },
-        include: { product: { select: { id: true, name: true, stock: true } } },
+        include: {
+          product: {
+            select: {
+              id: true,
+              name: true,
+              stock: true,
+              supplier: { select: { id: true, name: true } },
+              department: { select: { id: true, name: true } },
+            },
+          },
+        },
         orderBy: { expiresAt: "asc" },
       }),
     ]);
@@ -104,6 +118,10 @@ export async function GET() {
         name: p.name,
         stock: p.stock,
         minStock: p.minStock,
+        supplierId: p.supplier?.id ?? null,
+        supplierName: p.supplier?.name ?? null,
+        departmentId: p.department?.id ?? null,
+        departmentName: p.department?.name ?? null,
       })),
       salesByCashier,
       expiringProducts: expiringBatches.map((b) => ({
@@ -112,6 +130,10 @@ export async function GET() {
         stock: b.product.stock,
         quantity: b.quantity,
         expiresAt: b.expiresAt,
+        supplierId: b.product.supplier?.id ?? null,
+        supplierName: b.product.supplier?.name ?? null,
+        departmentId: b.product.department?.id ?? null,
+        departmentName: b.product.department?.name ?? null,
       })),
     };
 

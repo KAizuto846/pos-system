@@ -47,7 +47,10 @@ export async function consumeBatch(
 // Si se pasa `finalStock`, el stock total queda fijado a ese valor en lugar de
 // incrementarse (permite corregir el conteo real al recibir: las piezas que
 // llegan siempre cuentan, pero el cajero puede ajustar el total hacia arriba o
-// hacia abajo). El lote siempre registra las `qty` piezas recibidas.
+// hacia abajo). El lote siempre registra las `qty` piezas recibidas; si el
+// stock final es menor que las piezas ya asignadas a lotes (de recepciones
+// anteriores), esas piezas excedentes se cancelan de los lotes previos
+// (primero los que caducan antes), sin tocar el lote recién creado.
 export async function addStock(
   tx: Prisma.TransactionClient,
   productId: number,
@@ -69,11 +72,11 @@ export async function addStock(
       select: { stock: true, batches: { select: { quantity: true } } },
     });
     if (!product) throw new Error("Producto no encontrado");
-    const batchTotal = product.batches.reduce((s, b) => s + b.quantity, 0) + qty;
-    if (finalStock < batchTotal) {
-      throw new Error(
-        `Stock final inválido: no puede quedar por debajo de las ${batchTotal} piezas asignadas a lotes`
-      );
+    const existingBatchSum = product.batches.reduce((s, b) => s + b.quantity, 0);
+    const newBatchTotal = existingBatchSum + qty;
+    // Cancelar de los lotes previos las piezas que no caben en el stock final.
+    if (newBatchTotal > finalStock) {
+      await consumeBatch(tx, productId, newBatchTotal - finalStock);
     }
     await tx.product.update({
       where: { id: productId },

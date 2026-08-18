@@ -33,6 +33,8 @@ export async function GET(request: Request) {
           createdAt: true,
           updatedAt: true,
           sentAt: true,
+          createdBy: { select: { id: true, name: true } },
+          receivedBy: { select: { id: true, name: true } },
           supplier: { select: { id: true, name: true, active: true } },
           items: {
             select: {
@@ -123,6 +125,7 @@ export async function POST(request: Request) {
           supplierId: data.supplierId,
           notes: data.notes,
           status: data.status ?? "pending",
+          createdById: parseInt(session.user.id, 10),
           items: {
             create: data.items.map((item) => {
               if (typeof item.productId === "number") {
@@ -190,6 +193,7 @@ export async function POST(request: Request) {
       id: order.newOrder.id,
       supplierId: order.newOrder.supplierId,
       notes: order.newOrder.notes,
+      createdById: parseInt(session.user.id, 10),
       items: data.items.map((i) => ({
         productId: i.productId,
         name: i.name,

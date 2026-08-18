@@ -349,9 +349,11 @@ export async function POST(
 
       const updatedOrder = await tx.supplierOrder.update({
         where: { id: orderId },
-        data: { status: newStatus },
+        data: { status: newStatus, receivedById: parseInt(session.user.id, 10) },
         include: {
           supplier: true,
+          createdBy: { select: { id: true, name: true } },
+          receivedBy: { select: { id: true, name: true } },
           items: {
             include: { product: true },
           },
@@ -484,6 +486,7 @@ export async function POST(
       paymentMethodId,
       totalNote,
       status: updatedOrder.status,
+      receivedById: parseInt(session.user.id, 10),
     });
     void logAudit({
       userId: parseInt(session.user.id, 10),

@@ -101,6 +101,8 @@ interface ReceiveExtra {
 interface Order {
   id: number; supplierId: number; status: string; notes: string;
   createdAt: string; supplier: Supplier; items: OrderItem[];
+  createdBy?: { id: number; name: string } | null;
+  receivedBy?: { id: number; name: string } | null;
 }
 
 interface Pagination {
@@ -111,6 +113,8 @@ interface Pagination {
 interface ExtraColumn {
   id: string; name: string; key: string;
 }
+
+const receiveDraftKey = (orderId: number) => `pos.receiveDraft.${orderId}`;
 
 const EXTRA_COLUMN_OPTIONS: { label: string; key: string }[] = [
   { label: 'Precio Venta', key: 'price' },
@@ -249,6 +253,7 @@ export default function OrdersPage() {
   const [paymentMethods, setPaymentMethods] = useState<Array<{ id: number; name: string; affectsCash: boolean }>>([]);
   const [receivePaymentMethodId, setReceivePaymentMethodId] = useState('');
   const [receiveNoteTotal, setReceiveNoteTotal] = useState('');
+  const [draftRestored, setDraftRestored] = useState(false);
 
   // ── Create form ──
   const [formSupplierId, setFormSupplierId] = useState('');
@@ -619,8 +624,7 @@ export default function OrdersPage() {
   };
 
   // ── Partial receive ──
-  const openReceiveDialog = (order: Order) => {
-    setSelectedOrder(order);
+  const resetReceiveState = (order: Order) => {
     const init: Record<number, number> = {};
     const initCost: Record<number, string> = {};
     const initPrice: Record<number, string> = {};
@@ -646,8 +650,63 @@ export default function OrdersPage() {
     setExtraGhostName(''); setExtraGhostQty('1'); setExtraGhostCost('0'); setExtraGhostPrice('0');
     setReceivePaymentMethodId('');
     setReceiveNoteTotal('');
+  };
+
+  const openReceiveDialog = (order: Order) => {
+    setSelectedOrder(order);
+    resetReceiveState(order);
+    setDraftRestored(false);
+    try {
+      const raw = localStorage.getItem(receiveDraftKey(order.id));
+      if (raw) {
+        const d = JSON.parse(raw) as {
+          quantities?: Record<number, number>;
+          finalStocks?: Record<number, string>;
+          batches?: Record<number, string>;
+          costs?: Record<number, string>;
+          prices?: Record<number, string>;
+          extras?: ReceiveExtra[];
+        };
+        if (d.quantities) setReceiveQuantities(d.quantities);
+        if (d.finalStocks) setReceiveFinalStocks(d.finalStocks);
+        if (d.batches) setReceiveBatches(d.batches);
+        if (d.costs) setReceiveCosts(d.costs);
+        if (d.prices) setReceivePrices(d.prices);
+        if (Array.isArray(d.extras)) setReceiveExtras(d.extras);
+        setDraftRestored(true);
+      }
+    } catch {
+      // Avance corrupto: se ignora y se empieza de cero
+    }
     setReceiveOpen(true);
   };
+
+  const discardReceiveDraft = () => {
+    if (!selectedOrder) return;
+    localStorage.removeItem(receiveDraftKey(selectedOrder.id));
+    resetReceiveState(selectedOrder);
+    setDraftRestored(false);
+    toast('Avance descartado');
+  };
+
+  // Autoguardar el avance de la recepción: si el cajero tiene que salir a
+  // atender una venta, al volver puede continuar donde se quedó.
+  useEffect(() => {
+    if (!receiveOpen || !selectedOrder) return;
+    const draft = {
+      quantities: receiveQuantities,
+      finalStocks: receiveFinalStocks,
+      batches: receiveBatches,
+      costs: receiveCosts,
+      prices: receivePrices,
+      extras: receiveExtras,
+    };
+    try {
+      localStorage.setItem(receiveDraftKey(selectedOrder.id), JSON.stringify(draft));
+    } catch {
+      // Almacenamiento lleno o bloqueado: se ignora
+    }
+  }, [receiveOpen, selectedOrder, receiveQuantities, receiveFinalStocks, receiveBatches, receiveCosts, receivePrices, receiveExtras]);
 
   const extraTotalCost = receiveExtras.reduce((s, e) => {
     const qty = parseInt(e.quantity) || 0;
@@ -753,6 +812,7 @@ export default function OrdersPage() {
         toast.error(data.error || 'Error al recibir pedido');
       } else {
         toast.success('Recepción guardada');
+        localStorage.removeItem(receiveDraftKey(selectedOrder.id));
         setReceiveOpen(false);
         setSelectedOrder(null);
         fetchOrders(orderPage);
@@ -1542,6 +1602,7 @@ export default function OrdersPage() {
               <TableRow>
                 <TableHead>ID</TableHead>
                 <TableHead>Proveedor</TableHead>
+                <TableHead>Cajero</TableHead>
                 <TableHead>Estado</TableHead>
                 <TableHead>Productos</TableHead>
                 <TableHead>Unidades</TableHead>
@@ -1553,9 +1614,9 @@ export default function OrdersPage() {
             </TableHeader>
             <TableBody>
               {loading ? Array.from({ length: 5 }).map((_, i) => (
-                <TableRow key={i}>{Array.from({ length: 9 }).map((_, j) => <TableCell key={j}><Skeleton className="h-4 w-full bg-slate-700" /></TableCell>)}</TableRow>
+                <TableRow key={i}>{Array.from({ length: 10 }).map((_, j) => <TableCell key={j}><Skeleton className="h-4 w-full bg-slate-700" /></TableCell>)}</TableRow>
               )) : orders.length === 0 ? (
-                <TableRow><TableCell colSpan={9} className="text-center text-slate-400 py-8">No hay pedidos creados</TableCell></TableRow>
+                <TableRow><TableCell colSpan={10} className="text-center text-slate-400 py-8">No hay pedidos creados</TableCell></TableRow>
               ) : orders.map(order => {
                 const totalQty = order.items.reduce((s, i) => s + i.quantity, 0);
                 const totalRecv = order.items.reduce((s, i) => s + i.receivedQuantity, 0);
@@ -1564,6 +1625,12 @@ export default function OrdersPage() {
                   <TableRow key={order.id}>
                     <TableCell className="font-mono text-xs text-slate-400">#{order.id}</TableCell>
                     <TableCell className="font-medium text-slate-100">{order.supplier?.name || '—'}</TableCell>
+                    <TableCell>
+                      <div className="space-y-0.5 text-xs">
+                        <div className="text-slate-300">Levantó: <span className="text-slate-400">{order.createdBy?.name || '—'}</span></div>
+                        <div className="text-slate-300">Recibió: <span className="text-slate-400">{order.receivedBy?.name || '—'}</span></div>
+                      </div>
+                    </TableCell>
                     <TableCell>{getStatusBadge(order.status)}</TableCell>
                     <TableCell className="text-slate-300">{order.items.length}</TableCell>
                     <TableCell className="text-slate-300">{totalQty}</TableCell>
@@ -1632,9 +1699,24 @@ export default function OrdersPage() {
               Recibir Pedido #{selectedOrder?.id}
             </DialogTitle>
             <DialogDescription>
-              Ingresa cantidades recibidas, caducidad (opcional), y ajusta precios si es necesario. El stock final se calcula automáticamente (stock actual + piezas recibidas) y puedes corregirlo; nunca puede quedar por debajo de las piezas recibidas.
+              Ingresa cantidades recibidas, caducidad (opcional), y ajusta precios si es necesario. El stock final se calcula automáticamente (stock actual + piezas recibidas) y puedes corregirlo; nunca puede quedar por debajo de las piezas recibidas. Tu avance se guarda automáticamente por si tienes que atender otra cosa.
             </DialogDescription>
           </DialogHeader>
+          {draftRestored && selectedOrder && (
+            <div className="flex items-center justify-between gap-3 rounded-md border border-sky-800/60 bg-sky-950/20 px-3 py-2">
+              <span className="text-xs text-sky-300">
+                Se restauró tu avance guardado. Puedes continuar donde te quedaste o descartarlo.
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={discardReceiveDraft}
+                className="h-7 border-sky-700/50 text-xs text-sky-400 hover:bg-sky-500/10"
+              >
+                Descartar
+              </Button>
+            </div>
+          )}
           {selectedOrder && (
             <div className="space-y-4 py-2">
               <div className="text-sm text-slate-400 mb-2">
@@ -1906,6 +1988,13 @@ export default function OrdersPage() {
             <DialogDescription>
               {selectedOrder && formatDate(selectedOrder.createdAt)}
             </DialogDescription>
+            {selectedOrder && (
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md border border-slate-700 bg-slate-800/50 px-3 py-2 text-xs text-slate-300">
+                <span>Proveedor: <span className="text-slate-200 font-medium">{selectedOrder.supplier?.name || '—'}</span></span>
+                <span>Levantó: <span className="text-slate-200">{selectedOrder.createdBy?.name || '—'}</span></span>
+                <span>Recibió: <span className="text-slate-200">{selectedOrder.receivedBy?.name || '—'}</span></span>
+              </div>
+            )}
           </DialogHeader>
           {selectedOrder && (
             <>
@@ -2054,7 +2143,12 @@ export default function OrdersPage() {
                           <TableCell className="text-center">
                             {editMode ? (
                               <Input type="number" min="0" value={item.quantity} onChange={e => updateOrderItem(item.id, 'quantity', e.target.value)} className="w-20 h-8 text-center mx-auto" />
-                            ) : <span className="text-slate-200">{item.quantity}</span>}
+                            ) : (
+                              <span className="text-slate-200">
+                                {item.quantity}
+                                {item.isBox && item.unitsPerBox ? ' cajas' : ''}
+                              </span>
+                            )}
                           </TableCell>
                           <TableCell className="text-center text-slate-300">{item.receivedQuantity}</TableCell>
                           <TableCell className="text-center">{pending > 0 ? <span className="text-amber-400">{pending}</span> : <span className="text-emerald-400">✓</span>}</TableCell>
@@ -2112,7 +2206,12 @@ export default function OrdersPage() {
                               onClick={() => addEditedItem(p)}
                               className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left text-xs text-slate-200 hover:bg-slate-800 transition-colors"
                             >
-                              <span className="truncate">{p.name}</span>
+                              <span className="truncate">
+                                {p.soldByBox ? `Caja de ${p.name}` : p.name}
+                                {p.soldByBox && p.unitsPerBox && (
+                                  <span className="ml-1 text-emerald-400">x{p.unitsPerBox} por caja</span>
+                                )}
+                              </span>
                               <span className="font-mono text-slate-500 shrink-0">{p.barcode || '—'}</span>
                             </button>
                           ))}

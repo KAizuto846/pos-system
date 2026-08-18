@@ -24,6 +24,8 @@ model User {
   cashEntries CashEntry[]
   shiftReports ShiftReport[]
   refunds   Refund[]
+  createdOrders  SupplierOrder[] @relation("OrderCreatedBy")
+  receivedOrders SupplierOrder[] @relation("OrderReceivedBy")
 
   @@map("users")
 }
@@ -276,11 +278,19 @@ model SupplierOrder {
   updatedAt  DateTime @updatedAt @map("updated_at")
   sentAt     DateTime? @map("sent_at")
 
+  // Historial de cajeros: quién levantó el pedido y quién lo recibió.
+  createdById  Int?   @map("created_by_id")
+  createdBy    User?  @relation("OrderCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  receivedById Int?   @map("received_by_id")
+  receivedBy   User?  @relation("OrderReceivedBy", fields: [receivedById], references: [id], onDelete: SetNull)
+
   items SupplierOrderItem[]
   deliveryNotices DeliveryNotice[]
 
   @@index([supplierId])
   @@index([status])
+  @@index([createdById])
+  @@index([receivedById])
   @@map("supplier_orders")
 }
 
