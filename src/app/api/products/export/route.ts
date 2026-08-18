@@ -70,9 +70,25 @@ export async function GET(request: Request) {
       include: {
         department: { select: { name: true } },
         supplier: { select: { name: true } },
+        productLines: {
+          include: { supplier: { select: { id: true, name: true } } },
+        },
       },
       orderBy: { name: "asc" },
     });
+
+    // Lista de proveedores de cada producto (el primario primero), separados por comas
+    const supplierList = (p: (typeof products)[number]): string => {
+      const primary = p.productLines.find((l) => l.isPrimary);
+      const rest = p.productLines.filter((l) => !l.isPrimary);
+      const ordered = [...(primary ? [primary] : []), ...rest];
+      const names = ordered
+        .map((l) => l.supplier?.name || null)
+        .filter((n): n is string => Boolean(n));
+      // Si no hay líneas, usar el proveedor por defecto del producto
+      if (names.length === 0 && p.supplier?.name) names.push(p.supplier.name);
+      return names.join(", ");
+    };
 
     if (format === "csv") {
       const escapeCsv = (value: string | number | boolean | null | undefined): string => {
@@ -86,7 +102,7 @@ export async function GET(request: Request) {
       const header = [
         "id", "nombre", "codigo_barras", "precio_venta", "costo",
         "stock", "stock_minimo", "activo", "departamento", "proveedor",
-        "maneja_cajas", "piezas_por_caja", "sobrante_cajas",
+        "proveedores", "maneja_cajas", "piezas_por_caja", "sobrante_cajas",
       ];
       const rows = products.map((p) => [
         p.id,
@@ -99,6 +115,7 @@ export async function GET(request: Request) {
         p.active ? "si" : "no",
         escapeCsv(p.department?.name || ""),
         escapeCsv(p.supplier?.name || ""),
+        escapeCsv(supplierList(p)),
         p.soldByBox ? "si" : "no",
         p.unitsPerBox ?? "",
         p.boxRemainder ?? "",
@@ -129,6 +146,7 @@ export async function GET(request: Request) {
         active: p.active,
         department: p.department?.name || null,
         supplier: p.supplier?.name || null,
+        suppliers: supplierList(p).split(", ").filter(Boolean),
         soldByBox: p.soldByBox,
         unitsPerBox: p.unitsPerBox,
         boxRemainder: p.boxRemainder,

@@ -69,6 +69,8 @@ interface SoldProduct {
   ghost?: boolean;
   // Gestión de cajas: el producto se pide por cajas
   soldByBox?: boolean; unitsPerBox?: number | null; boxRemainder?: number; totalSoldUnits?: number;
+  supplierId?: number | null;
+  productLines?: Array<{ supplierId: number; supplierPrice: number | null; isPrimary: boolean }>;
 }
 
 interface ProductSearchResult {
@@ -77,6 +79,8 @@ interface ProductSearchResult {
   department: { id: number; name: string } | null;
   productLines?: Array<{ supplierId: number; supplierPrice: number | null; isPrimary: boolean }>;
   soldByBox?: boolean; unitsPerBox?: number | null; boxRemainder?: number;
+  supplierId?: number | null;
+  supplierPrice?: number | null;
 }
 
 interface OrderItem {
@@ -115,6 +119,16 @@ interface ExtraColumn {
 }
 
 const receiveDraftKey = (orderId: number) => `pos.receiveDraft.${orderId}`;
+
+interface SupplierPrompt {
+  productId: number;
+  name: string;
+  cost: number;
+  supplierPrice: number | null;
+  supplierId: number | null;
+  productLines?: Array<{ supplierId: number; supplierPrice: number | null; isPrimary: boolean }>;
+  onAdd: () => void;
+}
 
 const EXTRA_COLUMN_OPTIONS: { label: string; key: string }[] = [
   { label: 'Precio Venta', key: 'price' },
@@ -274,6 +288,7 @@ export default function OrdersPage() {
   const [formLoading, setFormLoading] = useState(false);
   const [calculating, setCalculating] = useState(false);
   const [salesInfo, setSalesInfo] = useState<{ totalProducts: number; totalUnits: number } | null>(null);
+  const [supplierPrompt, setSupplierPrompt] = useState<SupplierPrompt | null>(null);
   const [extraColumns, setExtraColumns] = useState<ExtraColumn[]>([]);
   const [showAddColumn, setShowAddColumn] = useState(false);
   const [newColumnKey, setNewColumnKey] = useState('price');
@@ -477,6 +492,8 @@ export default function OrdersPage() {
             soldByBox: p.soldByBox,
             unitsPerBox: p.unitsPerBox,
             boxRemainder: p.boxRemainder,
+            supplierId: p.supplierId ?? null,
+            productLines: p.productLines,
           };
         }));
       } catch (error) {
@@ -494,7 +511,7 @@ export default function OrdersPage() {
     };
   }, [manualSearch, showManualAdd, formSupplierId]);
 
-  const addManualProduct = (product: SoldProduct) => {
+  const addProductToOrder = (product: SoldProduct) => {
     // Check if already in the list
     if (soldProducts.some(p => p.productId === product.productId)) {
       // Just increase quantity
@@ -502,14 +519,34 @@ export default function OrdersPage() {
         ...prev,
         [String(product.productId)]: (prev[String(product.productId)] || 0) + 1,
       }));
+    } else {
+      // Add to sold products list
+      setSoldProducts(prev => [...prev, product]);
+      setQuantities(prev => ({ ...prev, [String(product.productId)]: 1 }));
+    }
+  };
+
+  const isLinkedToSupplier = (p: SoldProduct | ProductSearchResult, supplierId: number) =>
+    p.productLines?.some(l => l.supplierId === supplierId) ?? p.supplierId === supplierId;
+
+  const addManualProduct = (product: SoldProduct) => {
+    const sid = formSupplierId ? parseInt(formSupplierId) : null;
+    if (sid && product.productId > 0 && !isLinkedToSupplier(product, sid)) {
+      setSupplierPrompt({
+        productId: product.productId,
+        name: product.name,
+        cost: product.cost,
+        supplierPrice: product.supplierPrice ?? null,
+        supplierId: product.supplierId ?? null,
+        productLines: product.productLines,
+        onAdd: () => addProductToOrder(product),
+      });
       setShowManualAdd(false);
       setManualSearch('');
       setManualResults([]);
       return;
     }
-    // Add to sold products list
-    setSoldProducts(prev => [...prev, product]);
-    setQuantities(prev => ({ ...prev, [String(product.productId)]: 1 }));
+    addProductToOrder(product);
     setShowManualAdd(false);
     setManualSearch('');
     setManualResults([]);
@@ -600,6 +637,15 @@ export default function OrdersPage() {
     if (!res.ok) { setFormError(data.error || 'Error al crear'); return; }
     toast.success(status === 'on_hold' ? 'Pedido guardado en espera' : 'Pedido creado');
     setCreateOpen(false); resetForm(); fetchOrders(1);
+  };
+
+  const handleGhostKeyDown = (e: React.KeyboardEvent) => {
+    // Evita que Enter envíe el formulario del pedido y pierda lo capturado;
+    // en su lugar agrega el producto fantasma al pedido.
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (ghostName.trim()) addGhostProduct();
+    }
   };
 
   const addGhostProduct = () => {
@@ -877,6 +923,26 @@ export default function OrdersPage() {
 
   const addEditedItem = (p: ProductSearchResult) => {
     if (!selectedOrder) return;
+    const sid = selectedOrder.supplierId;
+    if (sid && !isLinkedToSupplier(p, sid)) {
+      setSupplierPrompt({
+        productId: p.id,
+        name: p.name,
+        cost: p.cost,
+        supplierPrice: p.supplierPrice ?? null,
+        supplierId: p.supplierId ?? null,
+        productLines: p.productLines,
+        onAdd: () => addEditedItemDirect(p),
+      });
+      setEditItemSearch('');
+      setEditItemResults([]);
+      return;
+    }
+    addEditedItemDirect(p);
+  };
+
+  const addEditedItemDirect = (p: ProductSearchResult) => {
+    if (!selectedOrder) return;
     const existing = selectedOrder.items.find(i => i.productId === p.id && i.id > 0);
     if (existing) {
       setSelectedOrder({
@@ -904,6 +970,62 @@ export default function OrdersPage() {
     }
     setEditItemSearch('');
     setEditItemResults([]);
+  };
+
+  // Aplica el proveedor elegido (predeterminado o secundario) al producto y lo agrega al pedido
+  const applySupplierMode = async (mode: 'primary' | 'secondary') => {
+    if (!supplierPrompt) return;
+    const sid = formSupplierId ? parseInt(formSupplierId) : (selectedOrder?.supplierId ?? null);
+    if (!sid) { setSupplierPrompt(null); return; }
+    const supplierName = suppliers.find(s => s.id === sid)?.name || 'proveedor';
+    try {
+      const existing = (supplierPrompt.productLines || []).map(l => ({
+        supplierId: l.supplierId,
+        supplierPrice: l.supplierPrice,
+        isPrimary: l.isPrimary,
+      }));
+      const price = supplierPrompt.supplierPrice ?? supplierPrompt.cost;
+      let lines: Array<{ supplierId: number; supplierPrice: number | null; isPrimary: boolean }>;
+      if (mode === 'primary') {
+        lines = existing.map(l => ({ ...l, isPrimary: false }));
+        if (!lines.some(l => l.supplierId === sid)) {
+          lines.push({ supplierId: sid, supplierPrice: price, isPrimary: true });
+        } else {
+          lines = lines.map(l => l.supplierId === sid ? { ...l, isPrimary: true } : l);
+        }
+      } else {
+        lines = existing.map(l => ({ ...l, isPrimary: l.isPrimary }));
+        if (lines.length === 0 && supplierPrompt.supplierId && supplierPrompt.supplierId !== sid) {
+          lines.push({ supplierId: supplierPrompt.supplierId, supplierPrice: null, isPrimary: true });
+        }
+        if (lines.length === 0) {
+          lines.push({ supplierId: sid, supplierPrice: price, isPrimary: true });
+        } else {
+          if (!lines.some(l => l.isPrimary)) lines[0].isPrimary = true;
+          if (!lines.some(l => l.supplierId === sid)) {
+            lines.push({ supplierId: sid, supplierPrice: price, isPrimary: false });
+          }
+        }
+      }
+      const res = await fetch(`/api/products/${supplierPrompt.productId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ productLines: lines }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error || 'Error al actualizar el proveedor');
+        return;
+      }
+      toast.success(mode === 'primary'
+        ? `${supplierName} ahora es el proveedor predeterminado de "${supplierPrompt.name}"`
+        : `${supplierName} agregado como proveedor secundario de "${supplierPrompt.name}"`);
+      supplierPrompt.onAdd();
+    } catch {
+      toast.error('Error al actualizar el proveedor');
+    } finally {
+      setSupplierPrompt(null);
+    }
   };
 
   const addEditedGhost = () => {
@@ -1549,19 +1671,19 @@ export default function OrdersPage() {
                     </div>
                     <div className="grid grid-cols-12 gap-2">
                       <div className="col-span-5">
-                        <Input placeholder="Nombre *" value={ghostName} onChange={e => setGhostName(e.target.value)} />
+                        <Input placeholder="Nombre *" value={ghostName} onChange={e => setGhostName(e.target.value)} onKeyDown={handleGhostKeyDown} />
                       </div>
                       <div className="col-span-4">
-                        <Input placeholder="Código (opcional)" value={ghostBarcode} onChange={e => setGhostBarcode(e.target.value)} />
+                        <Input placeholder="Código (opcional)" value={ghostBarcode} onChange={e => setGhostBarcode(e.target.value)} onKeyDown={handleGhostKeyDown} />
                       </div>
                       <div className="col-span-3">
-                        <Input type="number" min="1" placeholder="Cantidad" value={ghostQty} onChange={e => setGhostQty(e.target.value)} />
+                        <Input type="number" min="1" placeholder="Cantidad" value={ghostQty} onChange={e => setGhostQty(e.target.value)} onKeyDown={handleGhostKeyDown} />
                       </div>
                       <div className="col-span-6">
-                        <Input type="number" step="0.01" min="0" placeholder="P. Proveedor (costo)" value={ghostCost} onChange={e => setGhostCost(e.target.value)} />
+                        <Input type="number" step="0.01" min="0" placeholder="P. Proveedor (costo)" value={ghostCost} onChange={e => setGhostCost(e.target.value)} onKeyDown={handleGhostKeyDown} />
                       </div>
                       <div className="col-span-6">
-                        <Input type="number" step="0.01" min="0" placeholder="Precio de venta" value={ghostPrice} onChange={e => setGhostPrice(e.target.value)} />
+                        <Input type="number" step="0.01" min="0" placeholder="Precio de venta" value={ghostPrice} onChange={e => setGhostPrice(e.target.value)} onKeyDown={handleGhostKeyDown} />
                       </div>
                     </div>
 <Button type="button" size="sm" variant="outline" className="text-sky-300 border-sky-700/60 hover:bg-sky-500/10" onClick={addGhostProduct} disabled={!ghostName.trim()}>
@@ -1590,6 +1712,42 @@ export default function OrdersPage() {
                 </Button>
               </DialogFooter>
             </form>
+          </DialogContent>
+        </Dialog>
+
+        {/* Aviso de proveedor no asignado al producto */}
+        <Dialog open={!!supplierPrompt} onOpenChange={o => { if (!o) setSupplierPrompt(null); }}>
+          <DialogContent className="max-w-md border-slate-700 bg-slate-800 text-slate-200">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-amber-400">
+                <AlertTriangle className="h-5 w-5" />
+                El producto no pertenece a este proveedor
+              </DialogTitle>
+              <DialogDescription className="text-slate-400">
+                <span className="text-slate-200 font-medium">{`"${supplierPrompt?.name}"`}</span> no está asignado
+                al proveedor <span className="text-slate-200 font-medium">
+                  {formSupplierId ? suppliers.find(s => s.id === parseInt(formSupplierId))?.name : selectedOrder?.supplier?.name || 'proveedor'}
+                </span>.
+                Elige cómo deseas agregarlo al pedido.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-2 py-2">
+              <Button className="w-full justify-start" onClick={() => applySupplierMode('primary')}>
+                <CheckCircle className="mr-2 h-4 w-4" />
+                Poner como proveedor predeterminado
+              </Button>
+              <Button variant="outline" className="w-full justify-start border-slate-600 text-slate-300" onClick={() => applySupplierMode('secondary')}>
+                <Plus className="mr-2 h-4 w-4" />
+                Agregar como proveedor secundario
+              </Button>
+              <Button variant="outline" className="w-full justify-start border-slate-600 text-slate-300" onClick={() => { supplierPrompt?.onAdd(); setSupplierPrompt(null); }}>
+                <Package className="mr-2 h-4 w-4" />
+                Solo esta vez (no cambiar proveedores)
+              </Button>
+            </div>
+            <DialogFooter>
+              <DialogClose asChild><Button variant="ghost">Cancelar</Button></DialogClose>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
       </div>
