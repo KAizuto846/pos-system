@@ -525,8 +525,8 @@ export default function OrdersPage() {
       {/* ── Header ── */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-slate-100">Pedidos a Proveedores</h2>
-          <p className="text-sm text-slate-400 mt-1">
+          <h2 className="text-2xl font-bold text-fg">Pedidos a Proveedores</h2>
+          <p className="text-sm text-fg-muted mt-1">
             Genera pedidos basados en ventas reales + recepción parcial + exportación
           </p>
         </div>
@@ -544,7 +544,7 @@ export default function OrdersPage() {
             <form onSubmit={handleCreate}>
               <div className="space-y-5 py-4">
                 {formError && (
-                  <div className="rounded-md bg-red-600/20 border border-red-600/50 px-4 py-3 text-sm text-red-400">{formError}</div>
+                  <div className="rounded-lg border border-red-500/25 bg-red-500/10 px-4 py-3 text-[13px] text-red-300">{formError}</div>
                 )}
 
                 {/* Proveedor */}
@@ -562,26 +562,26 @@ export default function OrdersPage() {
                 {/* Fechas y horas */}
                 <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
                   <div className="space-y-2">
-                    <Label className="flex items-center gap-1"><Calendar className="h-3.5 w-3.5 text-slate-400" />Desde fecha</Label>
+                    <Label className="flex items-center gap-1"><Calendar className="h-3.5 w-3.5 text-fg-muted" />Desde fecha</Label>
                     <Input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
                   </div>
                   <div className="space-y-2">
-                    <Label className="flex items-center gap-1"><Calendar className="h-3.5 w-3.5 text-slate-400" />Hasta fecha</Label>
+                    <Label className="flex items-center gap-1"><Calendar className="h-3.5 w-3.5 text-fg-muted" />Hasta fecha</Label>
                     <Input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} />
                   </div>
                   <div className="space-y-2">
-                    <Label className="flex items-center gap-1"><Clock className="h-3.5 w-3.5 text-slate-400" />Desde hora</Label>
+                    <Label className="flex items-center gap-1"><Clock className="h-3.5 w-3.5 text-fg-muted" />Desde hora</Label>
                     <Input type="time" value={timeFrom} onChange={e => setTimeFrom(e.target.value)} />
                   </div>
                   <div className="space-y-2">
-                    <Label className="flex items-center gap-1"><Clock className="h-3.5 w-3.5 text-slate-400" />Hasta hora</Label>
+                    <Label className="flex items-center gap-1"><Clock className="h-3.5 w-3.5 text-fg-muted" />Hasta hora</Label>
                     <Input type="time" value={timeTo} onChange={e => setTimeTo(e.target.value)} />
                   </div>
                 </div>
 
                 {/* Botones: Calcular + Pendientes + Notas */}
                 <div className="flex items-end gap-2 flex-wrap">
-                  <Button type="button" className="bg-emerald-700 hover:bg-emerald-600" onClick={calculateSales} disabled={calculating || !formSupplierId}>
+                  <Button type="button" className="bg-brand-strong hover:bg-brand-strong" onClick={calculateSales} disabled={calculating || !formSupplierId}>
                     <Calculator className="mr-2 h-4 w-4" />{calculating ? 'Calculando...' : 'Calcular Ventas'}
                   </Button>
                   {formSupplierId && (
@@ -600,10 +600,10 @@ export default function OrdersPage() {
 
                 {/* Resultados */}
                 {salesInfo && (
-                  <div className="flex items-center justify-between text-sm bg-slate-700/30 rounded-md px-4 py-2">
+                  <div className="flex items-center justify-between text-sm bg-line/30 rounded-md px-4 py-2">
                     <div className="flex items-center gap-4">
-                      <span className="text-slate-300"><Package className="h-3.5 w-3.5 inline mr-1 text-emerald-400" />{salesInfo.totalProducts} productos vendidos</span>
-                      <span className="text-slate-300">{salesInfo.totalUnits} unidades</span>
+                      <span className="text-fg-muted"><Package className="h-3.5 w-3.5 inline mr-1 text-brand" />{salesInfo.totalProducts} productos vendidos</span>
+                      <span className="text-fg-muted">{salesInfo.totalUnits} unidades</span>
                       {pendingItems && <Badge variant="outline" className="text-amber-400 border-amber-600">{pendingItems.length} pendientes</Badge>}
                     </div>
                   </div>
@@ -613,7 +613,7 @@ export default function OrdersPage() {
                 {soldProducts.length > 0 && (
                   <>
                     <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium text-slate-200">
+                      <span className="text-sm font-medium text-fg">
                         Productos {visibleProducts.length !== soldProducts.length && <Badge variant="secondary" className="ml-1">{visibleProducts.length} mostrados</Badge>}
                       </span>
                       <div className="flex items-center gap-2">
@@ -624,8 +624,8 @@ export default function OrdersPage() {
                     </div>
 
                     {showAddColumn && (
-                      <div className="flex items-center gap-2 p-2 bg-slate-700/30 rounded-md flex-wrap">
-                        <span className="text-xs text-slate-400">Añadir columna:</span>
+                      <div className="flex items-center gap-2 p-2 bg-line/30 rounded-md flex-wrap">
+                        <span className="text-xs text-fg-muted">Añadir columna:</span>
                         <Select value={newColumnKey} onValueChange={v => { setNewColumnKey(v); setCustomColumnName(''); }}>
                           <SelectTrigger className="w-48 h-8 text-xs"><SelectValue /></SelectTrigger>
                           <SelectContent>
@@ -646,10 +646,10 @@ export default function OrdersPage() {
                       </div>
                     )}
 
-                    <div className="overflow-x-auto border border-slate-700 rounded-md">
+                    <div className="overflow-x-auto rounded-xl">
                       <Table>
                         <TableHeader>
-                          <TableRow className="bg-slate-800/80">
+                          <TableRow className="bg-surface-2/80">
                             <TableHead className="w-8"></TableHead>
                             <TableHead className="w-10 text-center">#</TableHead>
                             <TableHead>Código</TableHead>
@@ -669,22 +669,22 @@ export default function OrdersPage() {
                           {soldProducts.map((product, idx) => {
                             const hidden = hiddenRows.has(product.productId);
                             return (
-                              <TableRow key={product.productId} className={`${hidden ? 'hidden' : ''} hover:bg-slate-700/40 ${(quantities[String(product.productId)] || 0) > 0 ? 'bg-emerald-900/10' : ''}`}>
+                              <TableRow key={product.productId} className={`${hidden ? 'hidden' : ''} hover:bg-line/40 ${(quantities[String(product.productId)] || 0) > 0 ? 'bg-brand/10' : ''}`}>
                                 <TableCell>
                                   <button type="button" onClick={() => toggleRow(product.productId)} className="text-red-400 hover:text-red-300 opacity-60 hover:opacity-100" title="Eliminar fila">
                                     <Trash2 className="h-3.5 w-3.5" />
                                   </button>
                                 </TableCell>
-                                <TableCell className="text-center text-xs text-slate-500 font-mono">{idx + 1}</TableCell>
-                                <TableCell className="font-mono text-xs text-slate-400">{product.barcode || '—'}</TableCell>
-                                <TableCell className="text-sm text-slate-200">{product.name}</TableCell>
+                                <TableCell className="text-center text-xs text-fg-subtle font-mono">{idx + 1}</TableCell>
+                                <TableCell className="font-mono text-xs text-fg-muted">{product.barcode || '—'}</TableCell>
+                                <TableCell className="text-sm text-fg">{product.name}</TableCell>
                                 <TableCell className="text-center">
                                   <Input type="number" min="0" value={quantities[String(product.productId)] || 0}
                                     onChange={e => { const v = parseInt(e.target.value) || 0; setQuantities(prev => ({ ...prev, [String(product.productId)]: Math.max(0, v) })); }}
                                     className="w-20 h-8 text-center text-sm" />
                                 </TableCell>
                                 {extraColumns.map(col => (
-                                  <TableCell key={col.id} className="text-right text-sm text-slate-300">
+                                  <TableCell key={col.id} className="text-right text-sm text-fg-muted">
                                     {col.key === 'custom_text' ? (
                                       <Input
                                         type="text"
@@ -719,12 +719,12 @@ export default function OrdersPage() {
                       </div>
                     )}
 
-                    <div className="text-sm text-slate-400">{orderedCount} productos con pedido · {totalUnits} unidades</div>
+                    <div className="text-sm text-fg-muted">{orderedCount} productos con pedido · {totalUnits} unidades</div>
                   </>
                 )}
 
                 {!formSupplierId && (
-                  <div className="text-center py-8 text-slate-500 text-sm">
+                  <div className="text-center py-8 text-fg-subtle text-sm">
                     Selecciona un proveedor, ajusta el rango de fechas y horas, y presiona "Calcular Ventas"
                   </div>
                 )}
@@ -741,7 +741,7 @@ export default function OrdersPage() {
                   </DialogHeader>
                   <div className="space-y-4 py-2">
                     <div className="relative">
-                      <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                      <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-muted" />
                       <Input
                         placeholder="Buscar producto..."
                         value={manualSearch}
@@ -752,24 +752,24 @@ export default function OrdersPage() {
                     </div>
                     <div className="max-h-60 overflow-y-auto space-y-1">
                       {manualSearching ? (
-                        <div className="text-center py-4 text-sm text-slate-400">Buscando...</div>
+                        <div className="text-center py-4 text-sm text-fg-muted">Buscando...</div>
                       ) : manualResults.length === 0 && manualSearch.length >= 2 ? (
-                        <div className="text-center py-4 text-sm text-slate-500">Sin resultados</div>
+                        <div className="text-center py-4 text-sm text-fg-subtle">Sin resultados</div>
                       ) : manualResults.length === 0 ? (
-                        <div className="text-center py-4 text-sm text-slate-500">Escribe al menos 2 caracteres</div>
+                        <div className="text-center py-4 text-sm text-fg-subtle">Escribe al menos 2 caracteres</div>
                       ) : (
                         manualResults.map(p => (
                           <button
                             key={p.productId}
                             type="button"
                             onClick={() => addManualProduct(p)}
-                            className="w-full text-left px-3 py-2 rounded-md hover:bg-slate-700/60 transition-colors flex items-center justify-between"
+                            className="w-full text-left px-3 py-2 rounded-md hover:bg-line/60 transition-colors flex items-center justify-between"
                           >
                             <div>
-                              <div className="text-sm text-slate-200">{p.name}</div>
-                              <div className="text-xs text-slate-500 font-mono">{p.barcode || '—'} · Stock: {p.stock} · ${p.price.toFixed(2)}</div>
+                              <div className="text-sm text-fg">{p.name}</div>
+                              <div className="text-xs text-fg-subtle font-mono">{p.barcode || '—'} · Stock: {p.stock} · ${p.price.toFixed(2)}</div>
                             </div>
-                            <PlusCircle className="h-4 w-4 text-emerald-400 flex-shrink-0" />
+                            <PlusCircle className="h-4 w-4 text-brand flex-shrink-0" />
                           </button>
                         ))
                       )}
@@ -781,7 +781,7 @@ export default function OrdersPage() {
                 </DialogContent>
               </Dialog>
 
-              <DialogFooter className="border-t border-slate-700 pt-4">
+              <DialogFooter className="border-t border-line/60 pt-4">
                 <DialogClose asChild><Button type="button" variant="secondary">Cancelar</Button></DialogClose>
                 <Button type="submit" disabled={formLoading || orderedCount === 0}>
                   {formLoading ? 'Creando...' : `Crear Pedido (${orderedCount} prods.)`}
@@ -793,7 +793,7 @@ export default function OrdersPage() {
       </div>
 
       {/* ── Orders List ── */}
-      <Card className="border-slate-700 bg-slate-800">
+      <Card className="bg-surface-2/50">
         <CardContent className="p-0">
           <Table>
             <TableHeader>
@@ -810,32 +810,32 @@ export default function OrdersPage() {
             </TableHeader>
             <TableBody>
               {loading ? Array.from({ length: 5 }).map((_, i) => (
-                <TableRow key={i}>{Array.from({ length: 8 }).map((_, j) => <TableCell key={j}><Skeleton className="h-4 w-full bg-slate-700" /></TableCell>)}</TableRow>
+                <TableRow key={i}>{Array.from({ length: 8 }).map((_, j) => <TableCell key={j}><Skeleton className="h-4 w-full bg-line" /></TableCell>)}</TableRow>
               )) : orders.length === 0 ? (
-                <TableRow><TableCell colSpan={8} className="text-center text-slate-400 py-8">No hay pedidos creados</TableCell></TableRow>
+                <TableRow><TableCell colSpan={8} className="text-center text-fg-muted py-8">No hay pedidos creados</TableCell></TableRow>
               ) : orders.map(order => {
                 const totalQty = order.items.reduce((s, i) => s + i.quantity, 0);
                 const totalRecv = order.items.reduce((s, i) => s + i.receivedQuantity, 0);
                 return (
                   <TableRow key={order.id}>
-                    <TableCell className="font-mono text-xs text-slate-400">#{order.id}</TableCell>
-                    <TableCell className="font-medium text-slate-100">{order.supplier?.name || '—'}</TableCell>
+                    <TableCell className="font-mono text-xs text-fg-muted">#{order.id}</TableCell>
+                    <TableCell className="font-medium text-fg">{order.supplier?.name || '—'}</TableCell>
                     <TableCell>{getStatusBadge(order.status)}</TableCell>
-                    <TableCell className="text-slate-300">{order.items.length}</TableCell>
-                    <TableCell className="text-slate-300">{totalQty}</TableCell>
+                    <TableCell className="text-fg-muted">{order.items.length}</TableCell>
+                    <TableCell className="text-fg-muted">{totalQty}</TableCell>
                     <TableCell>
                       {order.status === 'received' ? (
                         <Badge variant={totalRecv >= totalQty ? 'default' : 'secondary'} className={totalRecv < totalQty ? 'bg-amber-900/40 text-amber-400' : ''}>
                           {totalRecv}/{totalQty}
                         </Badge>
-                      ) : <span className="text-slate-500">—</span>}
+                      ) : <span className="text-fg-subtle">—</span>}
                     </TableCell>
-                    <TableCell className="text-sm text-slate-300">{formatDate(order.createdAt)}</TableCell>
+                    <TableCell className="text-sm text-fg-muted">{formatDate(order.createdAt)}</TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
-                        <Button variant="ghost" size="icon" onClick={() => { setSelectedOrder(order); setDetailOpen(true); setEditMode(false); }} title="Ver detalle"><Eye className="h-4 w-4 text-slate-400" /></Button>
+                        <Button variant="ghost" size="icon" onClick={() => { setSelectedOrder(order); setDetailOpen(true); setEditMode(false); }} title="Ver detalle"><Eye className="h-4 w-4 text-fg-muted" /></Button>
                         {order.status !== 'received' && (
-                          <Button variant="ghost" size="icon" onClick={() => openReceiveDialog(order)} title="Recibir productos"><CheckCircle className="h-4 w-4 text-emerald-400" /></Button>
+                          <Button variant="ghost" size="icon" onClick={() => openReceiveDialog(order)} title="Recibir productos"><CheckCircle className="h-4 w-4 text-brand" /></Button>
                         )}
                       </div>
                     </TableCell>
@@ -852,7 +852,7 @@ export default function OrdersPage() {
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <CheckCircle className="h-5 w-5 text-emerald-400" />
+              <CheckCircle className="h-5 w-5 text-brand" />
               Recibir Pedido #{selectedOrder?.id}
             </DialogTitle>
             <DialogDescription>
@@ -861,15 +861,15 @@ export default function OrdersPage() {
           </DialogHeader>
           {selectedOrder && (
             <div className="space-y-4 py-2">
-              <div className="text-sm text-slate-400 mb-2">
-                Proveedor: <span className="text-slate-200 font-medium">{selectedOrder.supplier?.name}</span>
-                <span className="text-xs text-slate-500 ml-2">(cada producto tiene su propia fecha y lote)</span>
+              <div className="text-sm text-fg-muted mb-2">
+                Proveedor: <span className="text-fg font-medium">{selectedOrder.supplier?.name}</span>
+                <span className="text-xs text-fg-subtle ml-2">(cada producto tiene su propia fecha y lote)</span>
               </div>
 
-              <div className="overflow-x-auto border border-slate-700 rounded-md">
+              <div className="overflow-x-auto rounded-xl">
                 <Table>
                   <TableHeader>
-                    <TableRow className="bg-slate-800/80">
+                    <TableRow className="bg-surface-2/80">
                       <TableHead>Producto</TableHead>
                       <TableHead className="text-center w-20">Pedido</TableHead>
                       <TableHead className="text-center w-24">Recibido</TableHead>
@@ -883,10 +883,10 @@ export default function OrdersPage() {
                       return (
                         <TableRow key={item.id}>
                           <TableCell>
-                            <div className="text-sm font-medium text-slate-200">{item.product?.name || `#${item.productId}`}</div>
-                            <div className="text-xs text-slate-500">{item.product?.barcode || ''}</div>
+                            <div className="text-sm font-medium text-fg">{item.product?.name || `#${item.productId}`}</div>
+                            <div className="text-xs text-fg-subtle">{item.product?.barcode || ''}</div>
                           </TableCell>
-                          <TableCell className="text-center text-slate-300 align-middle">{item.quantity}</TableCell>
+                          <TableCell className="text-center text-fg-muted align-middle">{item.quantity}</TableCell>
                           <TableCell className="text-center align-middle">
                             <Input
                               type="number" min="0" max={item.quantity}
@@ -939,8 +939,8 @@ export default function OrdersPage() {
                 const totalPendiente = totalPedido - totalRecibido;
                 return (
                   <div className="flex justify-between text-sm px-1">
-                    <span className="text-slate-400">Total pedido: <span className="text-slate-200 font-medium">{totalPedido}</span></span>
-                    <span className="text-emerald-400">Recibido: <span className="font-medium">{totalRecibido}</span></span>
+                    <span className="text-fg-muted">Total pedido: <span className="text-fg font-medium">{totalPedido}</span></span>
+                    <span className="text-brand">Recibido: <span className="font-medium">{totalRecibido}</span></span>
                     {totalPendiente > 0 && <span className="text-amber-400">Pendiente: <span className="font-medium">{totalPendiente}</span></span>}
                   </div>
                 );
@@ -949,7 +949,7 @@ export default function OrdersPage() {
           )}
           <DialogFooter>
             <DialogClose asChild><Button variant="secondary">Cancelar</Button></DialogClose>
-            <Button onClick={handleReceive} disabled={receiveLoading} className="bg-emerald-700 hover:bg-emerald-600">
+            <Button onClick={handleReceive} disabled={receiveLoading} className="bg-brand-strong hover:bg-brand-strong">
               {receiveLoading ? 'Guardando...' : '✅ Confirmar Recepción'}
             </Button>
           </DialogFooter>
@@ -983,23 +983,23 @@ export default function OrdersPage() {
               {/* Exportable content */}
               <div ref={exportRef} className="p-4 rounded-lg" style={{ background: '#1e293b' }}>
                 {/* Header info */}
-                <div className="text-center mb-4 pb-3 border-b border-slate-600">
-                  <h3 className="text-lg font-bold text-slate-100">Pedido #{selectedOrder.id}</h3>
-                  <p className="text-xs text-slate-400">{formatDate(selectedOrder.createdAt)}</p>
-                  <p className="text-sm text-slate-300 mt-1">Proveedor: <span className="font-medium">{selectedOrder.supplier?.name}</span></p>
-                  {selectedOrder.notes && <p className="text-xs text-slate-400 mt-1">Notas: {selectedOrder.notes}</p>}
+                <div className="text-center mb-4 pb-3 border-b border-line-strong">
+                  <h3 className="text-lg font-bold text-fg">Pedido #{selectedOrder.id}</h3>
+                  <p className="text-xs text-fg-muted">{formatDate(selectedOrder.createdAt)}</p>
+                  <p className="text-sm text-fg-muted mt-1">Proveedor: <span className="font-medium">{selectedOrder.supplier?.name}</span></p>
+                  {selectedOrder.notes && <p className="text-xs text-fg-muted mt-1">Notas: {selectedOrder.notes}</p>}
                 </div>
 
                 {/* Export table */}
                 <Table>
                   <TableHeader>
-                    <TableRow className="bg-slate-700/50">
-                      <TableHead className="text-slate-300">#</TableHead>
-                      <TableHead className="text-slate-300">Código</TableHead>
-                      <TableHead className="text-slate-300">Nombre</TableHead>
-                      <TableHead className="text-center text-slate-300">Cantidad</TableHead>
-                      <TableHead className="text-center text-slate-300">Recibido</TableHead>
-                      <TableHead className="text-center text-slate-300">Pendiente</TableHead>
+                    <TableRow className="bg-line/50">
+                      <TableHead className="text-fg-muted">#</TableHead>
+                      <TableHead className="text-fg-muted">Código</TableHead>
+                      <TableHead className="text-fg-muted">Nombre</TableHead>
+                      <TableHead className="text-center text-fg-muted">Cantidad</TableHead>
+                      <TableHead className="text-center text-fg-muted">Recibido</TableHead>
+                      <TableHead className="text-center text-fg-muted">Pendiente</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -1007,26 +1007,26 @@ export default function OrdersPage() {
                       const pending = Math.max(0, item.quantity - item.receivedQuantity);
                       return (
                         <TableRow key={item.id}>
-                          <TableCell className="text-xs text-slate-400 font-mono">{idx + 1}</TableCell>
-                          <TableCell className="text-xs text-slate-400 font-mono">{item.product?.barcode || '—'}</TableCell>
-                          <TableCell className="text-sm text-slate-200">{item.product?.name || `#${item.productId}`}</TableCell>
-                          <TableCell className="text-center text-slate-200">{item.quantity}</TableCell>
-                          <TableCell className="text-center text-slate-300">{item.receivedQuantity}</TableCell>
-                          <TableCell className="text-center">{pending > 0 ? <span className="text-amber-400">{pending}</span> : <span className="text-emerald-400">✓</span>}</TableCell>
+                          <TableCell className="text-xs text-fg-muted font-mono">{idx + 1}</TableCell>
+                          <TableCell className="text-xs text-fg-muted font-mono">{item.product?.barcode || '—'}</TableCell>
+                          <TableCell className="text-sm text-fg">{item.product?.name || `#${item.productId}`}</TableCell>
+                          <TableCell className="text-center text-fg">{item.quantity}</TableCell>
+                          <TableCell className="text-center text-fg-muted">{item.receivedQuantity}</TableCell>
+                          <TableCell className="text-center">{pending > 0 ? <span className="text-amber-400">{pending}</span> : <span className="text-brand">✓</span>}</TableCell>
                         </TableRow>
                       );
                     })}
                   </TableBody>
                 </Table>
 
-                <div className="mt-3 text-xs text-slate-500 text-center">
+                <div className="mt-3 text-xs text-fg-subtle text-center">
                   Generado por POS System — {new Date().toLocaleString('es-MX')}
                 </div>
               </div>
 
               {/* Edit mode */}
               <div className="flex items-center justify-between mt-4">
-                <h4 className="text-sm font-medium text-slate-300">Productos ({selectedOrder.items.length})</h4>
+                <h4 className="text-sm font-medium text-fg-muted">Productos ({selectedOrder.items.length})</h4>
                 {selectedOrder.status !== 'received' && (
                   <Button type="button" variant={editMode ? 'default' : 'outline'} size="sm" onClick={() => setEditMode(!editMode)}>
                     {editMode ? 'Cancelar edición' : 'Editar cantidades'}
@@ -1034,10 +1034,10 @@ export default function OrdersPage() {
                 )}
               </div>
 
-              <div className="overflow-x-auto border border-slate-700 rounded-md">
+              <div className="overflow-x-auto rounded-xl">
                 <Table>
                   <TableHeader>
-                    <TableRow className="bg-slate-800/80">
+                    <TableRow className="bg-surface-2/80">
                       <TableHead>Código</TableHead>
                       <TableHead>Nombre</TableHead>
                       <TableHead className="text-center">Solicitado</TableHead>
@@ -1051,19 +1051,19 @@ export default function OrdersPage() {
                       const pending = Math.max(0, item.quantity - item.receivedQuantity);
                       return (
                         <TableRow key={item.id}>
-                          <TableCell className="font-mono text-xs text-slate-400">{item.product?.barcode || '—'}</TableCell>
-                          <TableCell className="text-sm font-medium text-slate-200">{item.product?.name || `#${item.productId}`}</TableCell>
+                          <TableCell className="font-mono text-xs text-fg-muted">{item.product?.barcode || '—'}</TableCell>
+                          <TableCell className="text-sm font-medium text-fg">{item.product?.name || `#${item.productId}`}</TableCell>
                           <TableCell className="text-center">
                             {editMode ? (
                               <Input type="number" min="0" value={item.quantity} onChange={e => updateOrderItem(item.id, 'quantity', e.target.value)} className="w-20 h-8 text-center mx-auto" />
-                            ) : <span className="text-slate-200">{item.quantity}</span>}
+                            ) : <span className="text-fg">{item.quantity}</span>}
                           </TableCell>
-                          <TableCell className="text-center text-slate-300">{item.receivedQuantity}</TableCell>
-                          <TableCell className="text-center">{pending > 0 ? <span className="text-amber-400">{pending}</span> : <span className="text-emerald-400">✓</span>}</TableCell>
+                          <TableCell className="text-center text-fg-muted">{item.receivedQuantity}</TableCell>
+                          <TableCell className="text-center">{pending > 0 ? <span className="text-amber-400">{pending}</span> : <span className="text-brand">✓</span>}</TableCell>
                           <TableCell>
                             {editMode ? (
                               <Input value={item.notes} onChange={e => updateOrderItem(item.id, 'notes', e.target.value)} className="h-8 text-sm" placeholder="Notas..." />
-                            ) : <span className="text-xs text-slate-400">{item.notes || '—'}</span>}
+                            ) : <span className="text-xs text-fg-muted">{item.notes || '—'}</span>}
                           </TableCell>
                         </TableRow>
                       );

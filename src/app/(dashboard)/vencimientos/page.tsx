@@ -89,30 +89,30 @@ export default function VencimientosPage() {
 
   function renderExpiryTable(items: ExpiryGroup[], label: string, danger: boolean) {
     if (items.length === 0) {
-      return <p className="text-sm text-slate-400 py-4 text-center">No hay productos en esta categoría</p>;
+      return <p className="text-sm text-fg-muted py-4 text-center">No hay productos en esta categoría</p>;
     }
     return (
       <Table>
         <TableHeader>
-          <TableRow className="border-slate-700">
-            <TableHead className="text-slate-400">Producto</TableHead>
-            <TableHead className="text-slate-400">Código</TableHead>
-            <TableHead className="text-slate-400">Stock Total</TableHead>
-            <TableHead className="text-slate-400">Cantidad próx. vencer</TableHead>
-            <TableHead className="text-slate-400">Vence</TableHead>
-            <TableHead className="text-slate-400">Días restantes</TableHead>
+          <TableRow className="border-line">
+            <TableHead className="text-fg-muted">Producto</TableHead>
+            <TableHead className="text-fg-muted">Código</TableHead>
+            <TableHead className="text-fg-muted">Stock Total</TableHead>
+            <TableHead className="text-fg-muted">Cantidad próx. vencer</TableHead>
+            <TableHead className="text-fg-muted">Vence</TableHead>
+            <TableHead className="text-fg-muted">Días restantes</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {items.map((item, i) => (
-            <TableRow key={i} className="border-slate-700">
-              <TableCell className="font-medium text-slate-200">{item.product.name}</TableCell>
-              <TableCell className="text-slate-400">{item.product.barcode || '—'}</TableCell>
-              <TableCell className="text-slate-300">{item.product.stock}</TableCell>
+            <TableRow key={i} className="border-line">
+              <TableCell className="font-medium text-fg">{item.product.name}</TableCell>
+              <TableCell className="text-fg-muted">{item.product.barcode || '—'}</TableCell>
+              <TableCell className="text-fg-muted">{item.product.stock}</TableCell>
               <TableCell className={danger ? 'text-red-400 font-bold' : 'text-yellow-400'}>
                 {item.totalQty}
               </TableCell>
-              <TableCell className="text-slate-300">
+              <TableCell className="text-fg-muted">
                 {item.nearestExpiry ? formatDate(item.nearestExpiry) : '—'}
               </TableCell>
               <TableCell>
@@ -132,11 +132,11 @@ export default function VencimientosPage() {
   if (loading && !summary) {
     return (
       <div className="space-y-4 p-4">
-        <Skeleton className="h-8 w-64 bg-slate-800" />
+        <Skeleton className="h-8 w-64 bg-surface-2" />
         <div className="grid grid-cols-3 gap-4">
-          {[1, 2, 3].map(i => <Skeleton key={i} className="h-32 bg-slate-800" />)}
+          {[1, 2, 3].map(i => <Skeleton key={i} className="h-32 bg-surface-2" />)}
         </div>
-        <Skeleton className="h-64 bg-slate-800" />
+        <Skeleton className="h-64 bg-surface-2" />
       </div>
     );
   }
@@ -145,21 +145,21 @@ export default function VencimientosPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-100 flex items-center gap-2">
-            <Calendar className="h-6 w-6 text-emerald-400" />
+          <h1 className="text-2xl font-bold text-fg flex items-center gap-2">
+            <Calendar className="h-6 w-6 text-brand" />
             Control de Vencimientos
           </h1>
-          <p className="text-sm text-slate-400 mt-1">
+          <p className="text-sm text-fg-muted mt-1">
             Productos próximos a vencer y notificaciones
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={fetchData} className="border-slate-600 text-slate-300">
+        <Button variant="outline" size="sm" onClick={fetchData} className="border-line-strong text-fg-muted">
           <RefreshCw className="h-4 w-4 mr-1" /> Actualizar
         </Button>
       </div>
 
       {error && (
-        <div className="rounded-lg bg-red-900/30 border border-red-800 p-3 text-red-400 text-sm">
+        <div className="rounded-lg bg-red-500/10 p-3 text-[13px] text-red-300">
           {error}
         </div>
       )}
@@ -198,17 +198,17 @@ export default function VencimientosPage() {
           </CardContent>
         </Card>
 
-        <Card className="border-emerald-800 bg-emerald-950/30">
+        <Card className="border-brand-strong bg-brand/30">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-emerald-400 flex items-center gap-2">
+            <CardTitle className="text-sm font-medium text-brand flex items-center gap-2">
               <Calendar className="h-4 w-4" /> Próximos 7 días
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-3xl font-bold text-emerald-400">
+            <p className="text-3xl font-bold text-brand">
               {summary?.nearExpiry.reduce((s, g) => s + g.totalQty, 0) || 0}
             </p>
-            <p className="text-xs text-emerald-500/70 mt-1">
+            <p className="text-xs text-brand/70 mt-1">
               {summary?.nearExpiry.length || 0} producto(s)
             </p>
           </CardContent>
@@ -217,11 +217,11 @@ export default function VencimientosPage() {
 
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <TabsList className="bg-slate-800 border border-slate-700">
-          <TabsTrigger value="expiry" className="text-slate-300 data-[state=active]:bg-emerald-600 data-[state=active]:text-white">
+        <TabsList className="bg-surface-2/50">
+          <TabsTrigger value="expiry" className="text-fg-muted data-[state=active]:bg-brand-strong data-[state=active]:text-white">
             Vencimientos
           </TabsTrigger>
-          <TabsTrigger value="notifications" className="text-slate-300 data-[state=active]:bg-emerald-600 data-[state=active]:text-white">
+          <TabsTrigger value="notifications" className="text-fg-muted data-[state=active]:bg-brand-strong data-[state=active]:text-white">
             Notificaciones
             {notifications.filter(n => !n.read).length > 0 && (
               <Badge variant="destructive" className="ml-2 px-1.5 py-0 text-xs">
@@ -233,7 +233,7 @@ export default function VencimientosPage() {
 
         <TabsContent value="expiry" className="space-y-6">
           {/* Expired */}
-          <Card className="border-slate-700 bg-slate-800/50">
+          <Card className="bg-surface-2/50/50">
             <CardHeader>
               <CardTitle className="text-lg text-red-400 flex items-center gap-2">
                 <XCircle className="h-5 w-5" /> Vencidos ({summary?.expired.length || 0})
@@ -245,7 +245,7 @@ export default function VencimientosPage() {
           </Card>
 
           {/* Expiring Today */}
-          <Card className="border-slate-700 bg-slate-800/50">
+          <Card className="bg-surface-2/50/50">
             <CardHeader>
               <CardTitle className="text-lg text-yellow-400 flex items-center gap-2">
                 <AlertTriangle className="h-5 w-5" /> Vencen hoy ({summary?.expiringToday.length || 0})
@@ -257,9 +257,9 @@ export default function VencimientosPage() {
           </Card>
 
           {/* Near Expiry */}
-          <Card className="border-slate-700 bg-slate-800/50">
+          <Card className="bg-surface-2/50/50">
             <CardHeader>
-              <CardTitle className="text-lg text-emerald-400 flex items-center gap-2">
+              <CardTitle className="text-lg text-brand flex items-center gap-2">
                 <Calendar className="h-5 w-5" /> Próximos 7 días ({summary?.nearExpiry.length || 0})
               </CardTitle>
             </CardHeader>
@@ -270,19 +270,19 @@ export default function VencimientosPage() {
         </TabsContent>
 
         <TabsContent value="notifications">
-          <Card className="border-slate-700 bg-slate-800/50">
+          <Card className="bg-surface-2/50/50">
             <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle className="text-lg text-slate-100 flex items-center gap-2">
-                <Bell className="h-5 w-5 text-emerald-400" />
+              <CardTitle className="text-lg text-fg flex items-center gap-2">
+                <Bell className="h-5 w-5 text-brand" />
                 Notificaciones
               </CardTitle>
-              <Button variant="ghost" size="sm" onClick={markAllRead} className="text-slate-400 hover:text-white">
+              <Button variant="ghost" size="sm" onClick={markAllRead} className="text-fg-muted hover:text-white">
                 <CheckCircle className="h-4 w-4 mr-1" /> Marcar todas leídas
               </Button>
             </CardHeader>
             <CardContent>
               {notifications.length === 0 ? (
-                <p className="text-sm text-slate-400 text-center py-8">
+                <p className="text-sm text-fg-muted text-center py-8">
                   No hay notificaciones
                 </p>
               ) : (
@@ -292,7 +292,7 @@ export default function VencimientosPage() {
                       key={n.id}
                       className={`flex items-start gap-3 rounded-lg border p-3 transition-colors ${
                         n.read
-                          ? 'border-slate-700 bg-slate-800/30 opacity-60'
+                          ? 'bg-surface-2/50/30 opacity-60'
                           : n.severity === 'danger'
                           ? 'border-red-800 bg-red-950/20'
                           : 'border-yellow-800 bg-yellow-950/20'
@@ -302,11 +302,11 @@ export default function VencimientosPage() {
                         {n.severity === 'danger' ? <XCircle className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className={`text-sm font-medium ${n.read ? 'text-slate-400' : 'text-slate-200'}`}>
+                        <p className={`text-sm font-medium ${n.read ? 'text-fg-muted' : 'text-fg'}`}>
                           {n.title}
                         </p>
-                        <p className="text-xs text-slate-500 mt-0.5">{n.message}</p>
-                        <p className="text-[10px] text-slate-600 mt-1">
+                        <p className="text-xs text-fg-subtle mt-0.5">{n.message}</p>
+                        <p className="text-[10px] text-line-strong mt-1">
                           {new Date(n.createdAt).toLocaleDateString('es-MX', {
                             year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
                           })}
@@ -314,7 +314,7 @@ export default function VencimientosPage() {
                         </p>
                       </div>
                       {!n.read && (
-                        <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-slate-500" onClick={() => markRead(n.id)}>
+                        <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-fg-subtle" onClick={() => markRead(n.id)}>
                           <CheckCircle className="h-4 w-4" />
                         </Button>
                       )}

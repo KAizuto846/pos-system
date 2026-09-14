@@ -211,8 +211,8 @@ export default function SalesPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold text-slate-100">Sales History</h2>
-        <p className="text-sm text-slate-400 mt-1">View all completed sales</p>
+        <h2 className="text-2xl font-bold text-fg">Sales History</h2>
+        <p className="text-sm text-fg-muted mt-1">View all completed sales</p>
       </div>
 
       {/* Date Filters */}
@@ -252,7 +252,7 @@ export default function SalesPage() {
         )}
       </div>
 
-      <Card className="border-slate-700 bg-slate-800">
+      <Card className="bg-surface-2/50">
         <CardContent className="p-0 overflow-x-auto">
           <Table>
             <TableHeader>
@@ -273,14 +273,14 @@ export default function SalesPage() {
                   <TableRow key={i}>
                     {Array.from({ length: 8 }).map((_, j) => (
                       <TableCell key={j}>
-                        <Skeleton className="h-4 w-full bg-slate-700" />
+                        <Skeleton className="h-4 w-full bg-line" />
                       </TableCell>
                     ))}
                   </TableRow>
                 ))
               ) : sales.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center text-slate-400 py-8">
+                  <TableCell colSpan={8} className="text-center text-fg-muted py-8">
                     No sales found
                   </TableCell>
                 </TableRow>
@@ -290,23 +290,23 @@ export default function SalesPage() {
                   const hasRefunds = totalRefunded > 0;
                   return (
                     <TableRow key={sale.id}>
-                      <TableCell className="font-mono text-xs text-slate-400">#{sale.id}</TableCell>
-                      <TableCell className="text-slate-300 text-sm">{formatDate(sale.createdAt)}</TableCell>
-                      <TableCell className="font-medium text-slate-100">
+                      <TableCell className="font-mono text-xs text-fg-muted">#{sale.id}</TableCell>
+                      <TableCell className="text-fg-muted text-sm">{formatDate(sale.createdAt)}</TableCell>
+                      <TableCell className="font-medium text-fg">
                         ${sale.total.toFixed(2)}
                       </TableCell>
-                      <TableCell className="text-slate-300">{sale.items.length}</TableCell>
+                      <TableCell className="text-fg-muted">{sale.items.length}</TableCell>
                       <TableCell>
                         <Badge variant="secondary">{sale.paymentMethod?.name || '—'}</Badge>
                       </TableCell>
-                      <TableCell className="text-slate-300">{sale.user?.name || '—'}</TableCell>
+                      <TableCell className="text-fg-muted">{sale.user?.name || '—'}</TableCell>
                       <TableCell>
                         {hasRefunds ? (
                           <Badge variant="destructive" className="text-xs">
                             -${totalRefunded.toFixed(2)}
                           </Badge>
                         ) : (
-                          <span className="text-slate-500 text-xs">—</span>
+                          <span className="text-fg-subtle text-xs">—</span>
                         )}
                       </TableCell>
                       <TableCell className="text-right">
@@ -316,7 +316,7 @@ export default function SalesPage() {
                             size="icon"
                             onClick={() => { setSelectedSale(sale); setDetailOpen(true); }}
                           >
-                            <Eye className="h-4 w-4 text-slate-400" />
+                            <Eye className="h-4 w-4 text-fg-muted" />
                           </Button>
                           <Button
                             variant="ghost"
@@ -351,34 +351,34 @@ export default function SalesPage() {
           {selectedSale && (
             <div className="space-y-4">
               <div className="flex justify-between text-sm">
-                <span className="text-slate-400">Payment Method:</span>
-                <span className="text-slate-100 font-medium">{selectedSale.paymentMethod?.name || '—'}</span>
+                <span className="text-fg-muted">Payment Method:</span>
+                <span className="text-fg font-medium">{selectedSale.paymentMethod?.name || '—'}</span>
               </div>
               <div className="flex justify-between text-sm">
-                <span className="text-slate-400">Cashier:</span>
-                <span className="text-slate-100 font-medium">{selectedSale.user?.name || '—'}</span>
+                <span className="text-fg-muted">Cashier:</span>
+                <span className="text-fg font-medium">{selectedSale.user?.name || '—'}</span>
               </div>
 
-              <div className="border-t border-slate-700 pt-4">
-                <h4 className="text-sm font-medium text-slate-300 mb-2">Items</h4>
+              <div className="border-t border-line/60 pt-4">
+                <h4 className="text-sm font-medium text-fg-muted mb-2">Items</h4>
                 <div className="space-y-2">
                   {selectedSale.items.map((item) => (
                     <div
                       key={item.id}
-                      className="flex items-center justify-between rounded-md bg-slate-800/50 px-3 py-2 text-sm"
+                      className="flex items-center justify-between rounded-md bg-surface-2/50 px-3 py-2 text-sm"
                     >
                       <div>
-                        <span className="text-slate-100">{item.product.name}</span>
-                        <span className="ml-2 text-xs text-slate-500">x{item.quantity}</span>
+                        <span className="text-fg">{item.product.name}</span>
+                        <span className="ml-2 text-xs text-fg-subtle">x{item.quantity}</span>
                       </div>
-                      <span className="text-slate-200">${(item.price * item.quantity).toFixed(2)}</span>
+                      <span className="text-fg">${(item.price * item.quantity).toFixed(2)}</span>
                     </div>
                   ))}
                 </div>
               </div>
 
               {selectedSale.refunds && selectedSale.refunds.length > 0 && (
-                <div className="border-t border-slate-700 pt-4">
+                <div className="border-t border-line/60 pt-4">
                   <h4 className="text-sm font-medium text-red-400 mb-2">Reembolsos</h4>
                   <div className="space-y-2">
                     {selectedSale.refunds.map((refund) => (
@@ -387,8 +387,8 @@ export default function SalesPage() {
                         className="flex items-center justify-between rounded-md bg-red-900/20 px-3 py-2 text-sm"
                       >
                         <div>
-                          <span className="text-slate-300">Refund #{refund.id}</span>
-                          <span className="ml-2 text-xs text-slate-500">
+                          <span className="text-fg-muted">Refund #{refund.id}</span>
+                          <span className="ml-2 text-xs text-fg-subtle">
                             {refund.reason ? `- ${refund.reason}` : ''}
                           </span>
                         </div>
@@ -399,13 +399,13 @@ export default function SalesPage() {
                 </div>
               )}
 
-              <div className="flex justify-between border-t border-slate-700 pt-4 text-base font-bold">
-                <span className="text-slate-300">Total</span>
-                <span className="text-emerald-400">${selectedSale.total.toFixed(2)}</span>
+              <div className="flex justify-between border-t border-line/60 pt-4 text-base font-bold">
+                <span className="text-fg-muted">Total</span>
+                <span className="text-brand">${selectedSale.total.toFixed(2)}</span>
               </div>
               {getTotalRefunded(selectedSale) > 0 && (
                 <div className="flex justify-between text-sm">
-                  <span className="text-slate-400">Reembolsado</span>
+                  <span className="text-fg-muted">Reembolsado</span>
                   <span className="text-red-400">-${getTotalRefunded(selectedSale).toFixed(2)}</span>
                 </div>
               )}
@@ -433,7 +433,7 @@ export default function SalesPage() {
               {message && (
                 <div className={`rounded-md p-3 text-sm ${
                   message.includes('exitosamente') || message.includes('éxito')
-                    ? 'bg-emerald-900/30 text-emerald-300'
+                    ? 'bg-brand/30 text-brand'
                     : 'bg-red-900/30 text-red-300'
                 }`}>
                   {message}

@@ -2,73 +2,132 @@
 
 @variant dark (&:is(.dark *));
 
+/* ==========================================================================
+   POS System — Design tokens (Linear-inspired dark, near-black canvas)
+   Superficies por luminancia, bordes whisper-thin, un solo acento.
+   El /50 funciona porque los tokens son hex, no rgba().
+   ========================================================================== */
 @theme {
-  --color-background: #0f172a;
-  --color-foreground: #f1f5f9;
-  --color-card: #1e293b;
-  --color-card-foreground: #f1f5f9;
-  --color-popover: #1e293b;
-  --color-popover-foreground: #f1f5f9;
-  --color-primary: #059669;
+  /* Superficies (de más profunda a más elevada) */
+  --color-canvas: #08090a;
+  --color-surface: #0f1011;
+  --color-surface-2: #191a1b;
+  --color-surface-3: #28282c;
+
+  /* Texto */
+  --color-fg: #f7f8f8;
+  --color-fg-muted: #8a8f98;
+  --color-fg-subtle: #62666d;
+
+  /* Líneas: semi-transparentes blancas ~8% / 14% aplanadas sobre canvas */
+  --color-line: #26282d;
+  --color-line-strong: #34373d;
+
+  /* Acento: verde POS (estados, CTAs, focos) */
+  --color-brand: #10b981;
+  --color-brand-strong: #059669;
+
+  /* Nombres semánticos heredados — remapeados al nuevo sistema */
+  --color-background: #08090a;
+  --color-foreground: #f7f8f8;
+  --color-card: #191a1b;
+  --color-card-foreground: #f7f8f8;
+  --color-popover: #191a1b;
+  --color-popover-foreground: #f7f8f8;
+  --color-primary: #10b981;
   --color-primary-foreground: #ffffff;
-  --color-secondary: #475569;
-  --color-secondary-foreground: #f1f5f9;
-  --color-muted: #334155;
-  --color-muted-foreground: #94a3b8;
-  --color-accent: #059669;
-  --color-accent-foreground: #ffffff;
+  --color-secondary: #28282c;
+  --color-secondary-foreground: #f7f8f8;
+  --color-muted: #28282c;
+  --color-muted-foreground: #8a8f98;
+  --color-accent: #28282c;
+  --color-accent-foreground: #f7f8f8;
   --color-destructive: #dc2626;
   --color-destructive-foreground: #ffffff;
-  --color-border: #334155;
-  --color-input: #334155;
-  --color-ring: #059669;
+  --color-border: #26282d;
+  --color-input: #26282d;
+  --color-ring: #10b981;
+
   --radius: 0.5rem;
 }
 
 @layer base {
   * {
-    @apply border-border;
+    border-color: var(--color-line);
   }
+
+  html {
+    background-color: var(--color-canvas);
+    color-scheme: dark;
+  }
+
   body {
-    @apply bg-background text-foreground;
-    font-feature-settings: "rlig" 1, "calt" 1;
+    background-color: var(--color-canvas);
+    color: var(--color-fg);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-feature-settings: 'cv01' 1, 'ss03' 1, 'rlig' 1, 'calt' 1;
+    letter-spacing: -0.011em;
+  }
+
+  /* Titulares: tracking negativo progresivo (Linear) */
+  h1, h2, h3, h4 {
+    letter-spacing: -0.02em;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--color-brand) 30%, transparent);
+    color: var(--color-fg);
   }
 }
 
-/* Custom scrollbar for dark theme */
+/* Superficie reutilizable: sin borde duro, sólo un cambio de luminancia */
+@utility panel {
+  background-color: color-mix(in srgb, var(--color-surface-2) 70%, transparent);
+  border-radius: 0.75rem;
+}
+
+/* Scrollbars discretas */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #1e293b;
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #475569;
-  border-radius: 4px;
+  background: #2c2e34;
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 8px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #64748b;
+  background: #3d4046;
+  background-clip: content-box;
 }
 
-/* Animations */
+/* Animaciones */
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
 .animate-fade-in {
-  animation: fadeIn 0.3s ease-out;
+  animation: fadeIn 0.28s ease-out;
 }
 
 @keyframes slideIn {
-  from { transform: translateX(-20px); opacity: 0; }
+  from { transform: translateX(-16px); opacity: 0; }
   to { transform: translateX(0); opacity: 1; }
 }
 
 .animate-slide-in {
-  animation: slideIn 0.3s ease-out;
+  animation: slideIn 0.28s ease-out;
+}
+
+@keyframes shimmer {
+  100% { transform: translateX(100%); }
 }

@@ -515,17 +515,17 @@ export default function ProductsPage() {
       </div>
 
       {formProductLines.length === 0 ? (
-        <p className="text-xs text-slate-500 italic">Sin proveedores asignados</p>
+        <p className="text-xs text-fg-subtle italic">Sin proveedores asignados</p>
       ) : (
         <div className="space-y-2">
           {formProductLines.map((pl, index) => {
             const available = getAvailableSuppliers(index, formProductLines);
             return (
-              <div key={index} className="flex items-start gap-2 rounded-md border border-slate-700 bg-slate-800/50 p-2">
+              <div key={index} className="flex items-start gap-2 rounded-md bg-surface-2/50 p-2">
                 <div className="flex-1 space-y-2">
                   <div className="grid grid-cols-2 gap-2">
                     <div className="space-y-1">
-                      <Label className="text-xs text-slate-400">Proveedor</Label>
+                      <Label className="text-xs text-fg-muted">Proveedor</Label>
                       <Select
                         value={pl.supplierId}
                         onValueChange={(v) => updateProductLine(index, 'supplierId', v)}
@@ -542,7 +542,7 @@ export default function ProductsPage() {
                       </Select>
                     </div>
                     <div className="space-y-1">
-                      <Label className="text-xs text-slate-400">Precio proveedor</Label>
+                      <Label className="text-xs text-fg-muted">Precio proveedor</Label>
                       <Input
                         type="number"
                         step="0.01"
@@ -560,7 +560,7 @@ export default function ProductsPage() {
                         checked={pl.isPrimary}
                         onCheckedChange={(checked) => updateProductLine(index, 'isPrimary', checked === true)}
                       />
-                      <span className="text-xs text-slate-400">Principal</span>
+                      <span className="text-xs text-fg-muted">Principal</span>
                     </label>
                     {!isQuickAdd && (
                       <button
@@ -591,8 +591,8 @@ export default function ProductsPage() {
       {/* Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-slate-100">Productos</h2>
-          <p className="text-sm text-slate-400 mt-1">Administra tu inventario de productos</p>
+          <h2 className="text-2xl font-bold text-fg">Productos</h2>
+          <p className="text-sm text-fg-muted mt-1">Administra tu inventario de productos</p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" className="border-amber-500/50 text-amber-400 hover:bg-amber-500/10" onClick={openQuickAdd}>
@@ -614,7 +614,7 @@ export default function ProductsPage() {
               <form onSubmit={handleCreate}>
                 <div className="grid gap-4 py-4">
                   {formError && (
-                    <div className="rounded-md bg-red-600/20 border border-red-600/50 px-4 py-3 text-sm text-red-400">
+                    <div className="rounded-lg border border-red-500/25 bg-red-500/10 px-4 py-3 text-[13px] text-red-300">
                       {formError}
                     </div>
                   )}
@@ -680,7 +680,7 @@ export default function ProductsPage() {
       {/* Filters */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
         <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-muted" />
           <Input
             placeholder="Buscar por nombre o código..."
             value={search}
@@ -717,7 +717,7 @@ export default function ProductsPage() {
       </div>
 
       {/* Table */}
-      <Card className="border-slate-700 bg-slate-800">
+      <Card className="bg-surface-2/50">
         <CardContent className="p-0">
           <Table>
             <TableHeader>
@@ -739,30 +739,30 @@ export default function ProductsPage() {
                   <TableRow key={i}>
                     {Array.from({ length: 8 }).map((_, j) => (
                       <TableCell key={j}>
-                        <Skeleton className="h-4 w-full bg-slate-700" />
+                        <Skeleton className="h-4 w-full bg-line" />
                       </TableCell>
                     ))}
                   </TableRow>
                 ))
               ) : products.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center text-slate-400 py-8">
+                  <TableCell colSpan={8} className="text-center text-fg-muted py-8">
                     No se encontraron productos
                   </TableCell>
                 </TableRow>
               ) : (
                 products.map((product) => (
                   <TableRow key={product.id} className="group">
-                    <TableCell className="font-medium text-slate-100">{product.name}</TableCell>
-                    <TableCell className="text-slate-400 font-mono text-xs">{product.barcode || '—'}</TableCell>
-                    <TableCell className="text-slate-200">${product.price.toFixed(2)}</TableCell>
+                    <TableCell className="font-medium text-fg">{product.name}</TableCell>
+                    <TableCell className="text-fg-muted font-mono text-xs">{product.barcode || '—'}</TableCell>
+                    <TableCell className="text-fg">${product.price.toFixed(2)}</TableCell>
                     <TableCell>
                       <Badge variant={product.stock <= product.minStock ? 'destructive' : 'default'}>
                         {product.stock}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-slate-300">{product.department?.name || '—'}</TableCell>
-                    <TableCell className="text-slate-300">{getSupplierDisplay(product)}</TableCell>
+                    <TableCell className="text-fg-muted">{product.department?.name || '—'}</TableCell>
+                    <TableCell className="text-fg-muted">{getSupplierDisplay(product)}</TableCell>
                     <TableCell>
                       <Badge variant={product.active ? 'default' : 'secondary'}>
                         {product.active ? 'Activo' : 'Inactivo'}
@@ -781,7 +781,7 @@ export default function ProductsPage() {
                           );
                         })()
                       ) : (
-                        <span className="text-slate-500">—</span>
+                        <span className="text-fg-subtle">—</span>
                       )}
                     </TableCell>
                     <TableCell className="text-right">
@@ -794,7 +794,7 @@ export default function ProductsPage() {
                           <PackageOpen className="h-4 w-4 text-amber-400" />
                         </Button>
                         <Button variant="ghost" size="icon" onClick={() => openEdit(product)}>
-                          <Pencil className="h-4 w-4 text-slate-400" />
+                          <Pencil className="h-4 w-4 text-fg-muted" />
                         </Button>
                         <Button variant="ghost" size="icon" onClick={() => { setSelectedProduct(product); setDeleteOpen(true); }}>
                           <Trash2 className="h-4 w-4 text-red-400" />
@@ -806,15 +806,15 @@ export default function ProductsPage() {
               )}
             </TableBody>
           </Table>
-          <div className="flex items-center justify-between border-t border-slate-700 px-4 py-3">
-            <p className="text-xs text-slate-500">
+          <div className="flex items-center justify-between border-t border-line/60 px-4 py-3">
+            <p className="text-xs text-fg-subtle">
               Mostrando {products.length} de {total} productos
             </p>
             {hasMore && (
-              <Button variant="outline" size="sm" onClick={loadMore} disabled={loadingMore} className="border-slate-600 text-slate-300">
+              <Button variant="outline" size="sm" onClick={loadMore} disabled={loadingMore} className="border-line-strong text-fg-muted">
                 {loadingMore ? (
                   <span className="flex items-center gap-2">
-                    <span className="h-3 w-3 animate-spin rounded-full border-2 border-slate-400 border-t-transparent" />
+                    <span className="h-3 w-3 animate-spin rounded-full border-2 border-fg-muted border-t-transparent" />
                     Cargando...
                   </span>
                 ) : (
@@ -841,7 +841,7 @@ export default function ProductsPage() {
           <form onSubmit={handleQuickAdd}>
             <div className="space-y-4 py-4">
               {formError && (
-                <div className="rounded-md bg-red-600/20 border border-red-600/50 px-4 py-3 text-sm text-red-400">
+                <div className="rounded-lg border border-red-500/25 bg-red-500/10 px-4 py-3 text-[13px] text-red-300">
                   {formError}
                 </div>
               )}
@@ -907,7 +907,7 @@ export default function ProductsPage() {
           <form onSubmit={handleEdit}>
             <div className="grid gap-4 py-4">
               {formError && (
-                <div className="rounded-md bg-red-600/20 border border-red-600/50 px-4 py-3 text-sm text-red-400">{formError}</div>
+                <div className="rounded-lg border border-red-500/25 bg-red-500/10 px-4 py-3 text-[13px] text-red-300">{formError}</div>
               )}
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
@@ -982,11 +982,11 @@ export default function ProductsPage() {
                 <Input type="number" value={stockAdjust} onChange={(e) => setStockAdjust(e.target.value)} placeholder="ej. 10" required min="1" />
               </div>
               <div className="space-y-2">
-                <Label>Fecha de vencimiento <span className="text-slate-500 text-xs">(opcional)</span></Label>
+                <Label>Fecha de vencimiento <span className="text-fg-subtle text-xs">(opcional)</span></Label>
                 <Input type="date" value={stockExpiryDate} onChange={(e) => setStockExpiryDate(e.target.value)} />
               </div>
               <div className="space-y-2">
-                <Label>Código de lote <span className="text-slate-500 text-xs">(opcional)</span></Label>
+                <Label>Código de lote <span className="text-fg-subtle text-xs">(opcional)</span></Label>
                 <Input type="text" value={stockBatchCode} onChange={(e) => setStockBatchCode(e.target.value)} placeholder="ej. LOTE-001" />
               </div>
             </div>

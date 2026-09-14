@@ -267,19 +267,19 @@ export default function PosPage() {
       <div className="flex w-2/3 flex-col overflow-hidden">
         {/* Search bar with count */}
         <div className="relative px-4 pt-4 pb-3 lg:px-6">
-          <Search className="absolute left-7 lg:left-9 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <Search className="absolute left-7 lg:left-9 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-muted" />
           <Input
             ref={searchRef}
             placeholder="Buscar productos por nombre o código de barras..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="bg-slate-800 border-slate-600 pl-10 pr-32 text-slate-100 placeholder:text-slate-500 focus-visible:ring-emerald-500"
+            className="bg-surface-2 border-line-strong pl-10 pr-32 text-fg placeholder:text-fg-subtle focus-visible:ring-brand"
           />
           <span className="absolute right-7 lg:right-9 top-1/2 -translate-y-1/2 flex items-center gap-2">
-            <span className="text-xs text-slate-500">
+            <span className="text-xs text-fg-subtle">
               {total > 0 ? `${products.length}/${total}` : ''}
             </span>
-            <span className="rounded bg-slate-700 px-2 py-0.5 text-xs text-slate-400">
+            <span className="rounded bg-line px-2 py-0.5 text-xs text-fg-muted">
               F2
             </span>
           </span>
@@ -293,17 +293,17 @@ export default function PosPage() {
           {loading ? (
             <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4">
               {Array.from({ length: 12 }).map((_, i) => (
-                <Card key={i} className="border-slate-700 bg-slate-800">
+                <Card key={i} className="bg-surface-2/50">
                   <CardContent className="p-4">
-                    <Skeleton className="mb-2 h-4 w-3/4 bg-slate-700" />
-                    <Skeleton className="mb-2 h-5 w-1/2 bg-slate-700" />
-                    <Skeleton className="h-4 w-1/3 bg-slate-700" />
+                    <Skeleton className="mb-2 h-4 w-3/4 bg-line" />
+                    <Skeleton className="mb-2 h-5 w-1/2 bg-line" />
+                    <Skeleton className="h-4 w-1/3 bg-line" />
                   </CardContent>
                 </Card>
               ))}
             </div>
           ) : products.length === 0 ? (
-            <div className="flex h-full flex-col items-center justify-center text-slate-500">
+            <div className="flex h-full flex-col items-center justify-center text-fg-subtle">
               <Search className="mb-2 h-12 w-12" />
               <p className="text-sm">
                 {searchTerm
@@ -318,13 +318,13 @@ export default function PosPage() {
                   <Card
                     key={product.id}
                     onClick={() => handleAddItem(product)}
-                    className="cursor-pointer border-slate-700 bg-slate-800 transition-colors hover:bg-slate-700"
+                    className="cursor-pointer bg-surface-2/50 transition-colors hover:bg-line"
                   >
                     <CardContent className="flex flex-col gap-1 p-4">
-                      <span className="truncate text-sm font-medium text-slate-100">
+                      <span className="truncate text-sm font-medium text-fg">
                         {product.name}
                       </span>
-                      <span className="text-lg font-bold text-emerald-400">
+                      <span className="text-lg font-bold text-brand">
                         {formatCurrency(product.price)}
                       </span>
                       <div className="flex items-center gap-1">
@@ -353,13 +353,13 @@ export default function PosPage() {
               {/* Loading more indicator */}
               {loadingMore && (
                 <div className="flex items-center justify-center py-6">
-                  <Loader2 className="h-5 w-5 animate-spin text-emerald-400" />
-                  <span className="ml-2 text-sm text-slate-400">Cargando más productos...</span>
+                  <Loader2 className="h-5 w-5 animate-spin text-brand" />
+                  <span className="ml-2 text-sm text-fg-muted">Cargando más productos...</span>
                 </div>
               )}
 
               {!hasMore && products.length > 0 && (
-                <div className="py-4 text-center text-xs text-slate-600">
+                <div className="py-4 text-center text-xs text-line-strong">
                   — Todos los productos cargados ({total} en total) —
                 </div>
               )}
@@ -369,10 +369,10 @@ export default function PosPage() {
       </div>
 
       {/* Right Panel — Shopping Cart (1/3) */}
-      <div className="flex w-1/3 flex-col border-l border-slate-700 bg-slate-800">
+      <div className="flex w-1/3 flex-col border-l bg-surface-2/50">
         {/* Cart Header */}
-        <div className="flex items-center justify-between border-b border-slate-700 px-4 py-3">
-          <h2 className="flex items-center gap-2 text-lg font-semibold text-slate-100">
+        <div className="flex items-center justify-between border-b border-line/60 px-4 py-3">
+          <h2 className="flex items-center gap-2 text-lg font-semibold text-fg">
             🛒 Venta Actual
             {count > 0 && (
               <Badge variant="default" className="ml-1 rounded-full px-2 py-0 text-xs">
@@ -389,7 +389,7 @@ export default function PosPage() {
                   clearCart();
                 }
               }}
-              className="h-8 text-xs text-slate-400 hover:text-red-400"
+              className="h-8 text-xs text-fg-muted hover:text-red-400"
             >
               <Trash2 className="mr-1 h-3.5 w-3.5" />
               Vaciar
@@ -400,7 +400,7 @@ export default function PosPage() {
         {/* Cart Items */}
         <div className="flex-1 overflow-y-auto">
           {count === 0 ? (
-            <div className="flex h-full flex-col items-center justify-center text-slate-500">
+            <div className="flex h-full flex-col items-center justify-center text-fg-subtle">
               <ShoppingCart className="mb-2 h-16 w-16" />
               <p className="text-sm">Agrega productos al carrito</p>
             </div>
@@ -409,13 +409,13 @@ export default function PosPage() {
               {cart.map((item) => (
                 <div
                   key={item.productId}
-                  className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900/50 px-3 py-2"
+                  className="flex items-center gap-2 rounded-lg bg-surface-2/40 px-3 py-2"
                 >
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-slate-100">
+                    <p className="truncate text-sm font-medium text-fg">
                       {item.name}
                     </p>
-                    <p className="text-xs text-slate-400">
+                    <p className="text-xs text-fg-muted">
                       {formatCurrency(item.price)} c/u
                     </p>
                   </div>
@@ -431,11 +431,11 @@ export default function PosPage() {
                           updateQuantity(item.productId, item.quantity - 1);
                         }
                       }}
-                      className="h-7 w-7 rounded-full bg-emerald-700 text-white hover:bg-emerald-600"
+                      className="h-7 w-7 rounded-full bg-brand-strong text-white hover:bg-brand-strong"
                     >
                       <Minus className="h-3 w-3" />
                     </Button>
-                    <span className="flex h-7 w-8 items-center justify-center text-sm font-semibold text-slate-100">
+                    <span className="flex h-7 w-8 items-center justify-center text-sm font-semibold text-fg">
                       {item.quantity}
                     </span>
                     <Button
@@ -443,13 +443,13 @@ export default function PosPage() {
                       size="icon"
                       onClick={() => updateQuantity(item.productId, item.quantity + 1)}
                       disabled={item.quantity >= item.stock}
-                      className="h-7 w-7 rounded-full bg-emerald-700 text-white hover:bg-emerald-600 disabled:opacity-40"
+                      className="h-7 w-7 rounded-full bg-brand-strong text-white hover:bg-brand-strong disabled:opacity-40"
                     >
                       <Plus className="h-3 w-3" />
                     </Button>
                   </div>
 
-                  <span className="w-20 text-right text-sm font-semibold text-slate-100">
+                  <span className="w-20 text-right text-sm font-semibold text-fg">
                     {formatCurrency(item.price * item.quantity)}
                   </span>
 
@@ -468,24 +468,24 @@ export default function PosPage() {
         </div>
 
         {/* Bottom Section */}
-        <div className="border-t border-slate-700 px-4 py-3">
+        <div className="border-t border-line/60 px-4 py-3">
           <div className="flex items-center justify-between py-2">
-            <span className="text-sm text-slate-400">Subtotal</span>
-            <span className="text-lg font-bold text-slate-100">
+            <span className="text-sm text-fg-muted">Subtotal</span>
+            <span className="text-lg font-bold text-fg">
               {formatCurrency(totalAmount)}
             </span>
           </div>
           <Separator className="my-2" />
 
           <div className="py-2">
-            <label className="mb-1.5 block text-xs font-medium text-slate-400">
+            <label className="mb-1.5 block text-xs font-medium text-fg-muted">
               Método de pago
             </label>
             <Select
               value={selectedPaymentMethodId}
               onValueChange={setSelectedPaymentMethodId}
             >
-              <SelectTrigger className="w-full border-slate-600 bg-slate-900 text-slate-100">
+              <SelectTrigger className="w-full border-line-strong bg-surface text-fg">
                 <SelectValue placeholder="Seleccionar método" />
               </SelectTrigger>
               <SelectContent>
@@ -502,7 +502,7 @@ export default function PosPage() {
             size="lg"
             disabled={count === 0}
             onClick={() => setCheckoutOpen(true)}
-            className="mt-2 w-full bg-emerald-600 py-6 text-base font-bold text-white hover:bg-emerald-500"
+            className="mt-2 w-full bg-brand-strong py-6 text-base font-bold text-white hover:bg-brand"
           >
             Cobrar — {formatCurrency(totalAmount)}
           </Button>
@@ -513,7 +513,7 @@ export default function PosPage() {
       <Dialog open={checkoutOpen} onOpenChange={setCheckoutOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-slate-100">
+            <DialogTitle className="flex items-center gap-2 text-fg">
               🛒 Confirmar Venta
             </DialogTitle>
             <DialogDescription>
@@ -522,17 +522,17 @@ export default function PosPage() {
           </DialogHeader>
 
           <div className="space-y-4">
-            <div className="rounded-lg border border-slate-700 bg-slate-800/50 p-4">
+            <div className="rounded-lg bg-surface-2/50 p-4">
               <div className="flex justify-between text-sm">
-                <span className="text-slate-400">Artículos</span>
-                <span className="text-slate-100 font-medium">
+                <span className="text-fg-muted">Artículos</span>
+                <span className="text-fg font-medium">
                   {count} {count === 1 ? 'producto' : 'productos'}
                 </span>
               </div>
               <Separator className="my-2" />
               <div className="flex justify-between text-sm">
-                <span className="text-slate-400">Método de pago</span>
-                <span className="text-slate-100 font-medium">
+                <span className="text-fg-muted">Método de pago</span>
+                <span className="text-fg font-medium">
                   {paymentMethods.find(
                     (pm) => String(pm.id) === selectedPaymentMethodId
                   )?.name || '—'}
@@ -540,28 +540,28 @@ export default function PosPage() {
               </div>
               <Separator className="my-2" />
               <div className="flex justify-between text-base font-bold">
-                <span className="text-slate-300">Total</span>
-                <span className="text-emerald-400">{formatCurrency(totalAmount)}</span>
+                <span className="text-fg-muted">Total</span>
+                <span className="text-brand">{formatCurrency(totalAmount)}</span>
               </div>
             </div>
 
             <div>
-              <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
+              <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-fg-subtle">
                 Productos
               </h4>
               <div className="max-h-40 space-y-1 overflow-y-auto">
                 {cart.map((item) => (
                   <div
                     key={item.productId}
-                    className="flex items-center justify-between rounded-md bg-slate-800/30 px-3 py-1.5 text-sm"
+                    className="flex items-center justify-between rounded-md bg-surface-2/30 px-3 py-1.5 text-sm"
                   >
-                    <span className="truncate text-slate-200">
+                    <span className="truncate text-fg">
                       {item.name}
-                      <span className="ml-1.5 text-xs text-slate-500">
+                      <span className="ml-1.5 text-xs text-fg-subtle">
                         x{item.quantity}
                       </span>
                     </span>
-                    <span className="ml-2 shrink-0 text-slate-100">
+                    <span className="ml-2 shrink-0 text-fg">
                       {formatCurrency(item.price * item.quantity)}
                     </span>
                   </div>
@@ -579,7 +579,7 @@ export default function PosPage() {
             <Button
               onClick={handleCheckout}
               disabled={checkingOut}
-              className="bg-emerald-600 hover:bg-emerald-500"
+              className="bg-brand-strong hover:bg-brand"
             >
               {checkingOut ? (
                 <span className="flex items-center gap-2">

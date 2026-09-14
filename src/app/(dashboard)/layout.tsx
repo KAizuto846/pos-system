@@ -8,6 +8,22 @@ import Sidebar from '@/components/layout/Sidebar';
 import Header from '@/components/layout/Header';
 import { Skeleton } from '@/components/ui/skeleton';
 
+const TITLES: Record<string, string> = {
+  '/': 'Dashboard',
+  '/pos': 'Punto de Venta',
+  '/products': 'Productos',
+  '/suppliers': 'Proveedores',
+  '/departments': 'Departamentos',
+  '/payment-methods': 'Métodos de Pago',
+  '/sales': 'Ventas',
+  '/orders': 'Pedidos',
+  '/reports': 'Reportes',
+  '/finance': 'Finanzas',
+  '/users': 'Usuarios',
+  '/vencimientos': 'Vencimientos',
+  '/importar': 'Importar Datos',
+};
+
 function DashboardLayoutContent({ children }: { children: React.ReactNode }) {
   const { data: session, status } = useSession();
   const router = useRouter();
@@ -32,10 +48,10 @@ function DashboardLayoutContent({ children }: { children: React.ReactNode }) {
 
   if (status === 'loading') {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-900">
+      <div className="flex min-h-screen items-center justify-center bg-canvas">
         <div className="space-y-4 text-center">
-          <Skeleton className="mx-auto h-12 w-12 rounded-full bg-slate-800" />
-          <Skeleton className="mx-auto h-4 w-48 bg-slate-800" />
+          <Skeleton className="mx-auto h-10 w-10 rounded-xl" />
+          <Skeleton className="mx-auto h-3 w-40" />
         </div>
       </div>
     );
@@ -45,16 +61,18 @@ function DashboardLayoutContent({ children }: { children: React.ReactNode }) {
     return null;
   }
 
+  const title =
+    TITLES[pathname] ??
+    Object.entries(TITLES).find(([href]) => href !== '/' && pathname.startsWith(href))?.[1] ??
+    'POS System';
+
   return (
-    <div className="flex min-h-screen bg-slate-900">
+    <div className="flex min-h-screen bg-canvas">
       <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
-      <div className="flex flex-1 flex-col">
-        <Header
-          title="POS System"
-          onMenuClick={() => setSidebarOpen(true)}
-        />
-        <main className="flex-1 overflow-y-auto p-4 lg:p-6">
-          {children}
+      <div className="flex flex-1 flex-col overflow-x-hidden">
+        <Header title={title} onMenuClick={() => setSidebarOpen(true)} />
+        <main className="flex-1 p-5 lg:p-8">
+          <div className="mx-auto w-full max-w-[1400px]">{children}</div>
         </main>
       </div>
     </div>

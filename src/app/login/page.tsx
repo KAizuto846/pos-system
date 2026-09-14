@@ -6,14 +6,6 @@ import { signIn } from 'next-auth/react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Card,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-  CardContent,
-  CardFooter,
-} from '@/components/ui/card';
 import Link from 'next/link';
 
 export default function LoginPage() {
@@ -68,57 +60,79 @@ export default function LoginPage() {
   };
 
   return (
-    <Card className="border-slate-700 bg-slate-800">
-      <CardHeader>
-        <CardTitle className="text-xl text-slate-100">Sign In</CardTitle>
-        <CardDescription>Enter your credentials to access the system</CardDescription>
-      </CardHeader>
-      <form onSubmit={handleSubmit}>
-        <CardContent className="space-y-4">
-          {error && (
-            <div className="rounded-md bg-red-600/20 border border-red-600/50 px-4 py-3 text-sm text-red-400">
-              {error}
-            </div>
-          )}
-          <div className="space-y-2">
-            <Label htmlFor="username">Username</Label>
-            <Input
-              id="username"
-              type="text"
-              placeholder="Enter your username"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              required
-              disabled={loading}
-            />
+    <div className="relative flex min-h-screen items-center justify-center bg-canvas px-4">
+      <div
+        aria-hidden
+        className="pointer-events-none absolute left-1/2 top-0 h-[420px] w-[720px] -translate-x-1/2 -translate-y-1/3 rounded-full bg-brand/[0.07] blur-[120px]"
+      />
+
+      <div className="relative w-full max-w-sm">
+        <div className="mb-8 text-center">
+          <div className="mx-auto mb-5 flex h-12 w-12 items-center justify-center rounded-xl bg-brand-strong text-lg font-semibold text-white shadow-[0_8px_24px_-8px_rgba(16,185,129,0.6)]">
+            P
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="password">Password</Label>
-            <Input
-              id="password"
-              type="password"
-              placeholder="Enter your password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              disabled={loading}
-            />
-          </div>
-        </CardContent>
-        <CardFooter className="flex flex-col gap-4">
-          <Button type="submit" className="w-full" disabled={loading}>
-            {loading ? 'Signing in...' : 'Sign In'}
-          </Button>
-          {hasAdmin === false && (
-            <p className="text-sm text-slate-400">
-              No admin account found.{' '}
-              <Link href="/register" className="text-emerald-400 hover:underline">
-                Create the first admin
-              </Link>
+          <h1 className="text-[22px] font-medium tracking-tight text-fg">POS System</h1>
+          <p className="mt-1.5 text-[13px] text-fg-muted">
+            Punto de Venta — Gestión de inventario
+          </p>
+        </div>
+
+        <div className="rounded-2xl border border-line/70 bg-surface-2/40 p-6">
+          <div className="mb-6">
+            <h2 className="text-[15px] font-medium tracking-tight text-fg">Iniciar sesión</h2>
+            <p className="mt-1 text-[13px] text-fg-muted">
+              Ingresa tus credenciales para acceder al sistema
             </p>
-          )}
-        </CardFooter>
-      </form>
-    </Card>
+          </div>
+
+          <form onSubmit={handleSubmit} className="space-y-5">
+            {error && (
+              <div className="rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2.5 text-[12px] text-red-300">
+                {error}
+              </div>
+            )}
+
+            <div className="space-y-2">
+              <Label htmlFor="username">Usuario</Label>
+              <Input
+                id="username"
+                type="text"
+                placeholder="tu.usuario"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                required
+                disabled={loading}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="password">Contraseña</Label>
+              <Input
+                id="password"
+                type="password"
+                placeholder="••••••••"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                disabled={loading}
+              />
+            </div>
+
+            <Button type="submit" className="w-full" disabled={loading}>
+              {loading ? 'Entrando…' : 'Entrar'}
+            </Button>
+
+            {hasAdmin === false && (
+              <p className="text-center text-[12px] text-fg-subtle">
+                No hay cuenta de administrador.{' '}
+                <Link href="/register" className="text-brand hover:underline">
+                  Crear la primera
+                </Link>
+              </p>
+            )}
+          </form>
+        </div>
+      </div>
+    </div>
   );
 }

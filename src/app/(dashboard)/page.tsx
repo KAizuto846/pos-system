@@ -2,14 +2,9 @@
 
 import { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
-import { Users, Package, DollarSign, ShoppingCart } from 'lucide-react';
-import {
-  Card,
-  CardHeader,
-  CardTitle,
-  CardContent,
-} from '@/components/ui/card';
+import { Users, Package, DollarSign, ShoppingCart, AlertTriangle } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
+import { cn } from '@/lib/utils';
 
 interface Stats {
   totalUsers: number;
@@ -38,103 +33,112 @@ export default function DashboardPage() {
 
   const statCards = [
     {
-      title: 'Total Users',
+      title: 'Usuarios',
       value: stats?.totalUsers ?? 0,
       icon: Users,
-      color: 'text-blue-400',
-      bg: 'bg-blue-600/10',
+      accent: 'text-sky-400',
     },
     {
-      title: 'Total Products',
+      title: 'Productos',
       value: stats?.totalProducts ?? 0,
       icon: Package,
-      color: 'text-emerald-400',
-      bg: 'bg-emerald-600/10',
+      accent: 'text-brand',
     },
     {
-      title: "Today's Sales",
+      title: 'Ventas de hoy',
       value: stats?.todaySales ?? 0,
       icon: ShoppingCart,
-      color: 'text-amber-400',
-      bg: 'bg-amber-600/10',
+      accent: 'text-amber-400',
     },
     {
-      title: "Today's Revenue",
+      title: 'Ingresos de hoy',
       value: stats ? `$${(stats.todayRevenue || 0).toFixed(2)}` : '$0.00',
       icon: DollarSign,
-      color: 'text-purple-400',
-      bg: 'bg-purple-600/10',
+      accent: 'text-violet-400',
     },
   ];
 
+  const lowStock = stats?.lowStockProducts ?? [];
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <div>
-        <h2 className="text-2xl font-bold text-slate-100">
-          Welcome{session?.user?.name ? `, ${session.user.name}` : ''}!
+        <h2 className="text-[20px] font-medium tracking-tight text-fg">
+          {session?.user?.name ? `Hola, ${session.user.name}` : 'Bienvenido'}
         </h2>
-        <p className="text-sm text-slate-400 mt-1">
-          Here is an overview of your POS system
+        <p className="mt-1 text-[13px] text-fg-muted">
+          Resumen operativo del punto de venta
         </p>
       </div>
 
-      {/* Stats Grid */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {/* Métricas — separadas por líneas, no por cajas */}
+      <div className="grid divide-y divide-line/60 border-y border-line/60 sm:grid-cols-2 sm:divide-y-0 sm:divide-x lg:grid-cols-4">
         {loading
           ? Array.from({ length: 4 }).map((_, i) => (
-              <Card key={i} className="border-slate-700 bg-slate-800">
-                <CardHeader className="pb-2">
-                  <Skeleton className="h-4 w-24 bg-slate-700" />
-                </CardHeader>
-                <CardContent>
-                  <Skeleton className="h-8 w-16 bg-slate-700" />
-                </CardContent>
-              </Card>
+              <div key={i} className="px-0 py-5 sm:px-6">
+                <Skeleton className="h-3 w-24" />
+                <Skeleton className="mt-3 h-7 w-20" />
+              </div>
             ))
           : statCards.map((card) => {
               const Icon = card.icon;
               return (
-                <Card key={card.title} className="border-slate-700 bg-slate-800">
-                  <CardHeader className="flex flex-row items-center justify-between pb-2">
-                    <CardTitle className="text-sm font-medium text-slate-400">
+                <div
+                  key={card.title}
+                  className="flex items-start justify-between gap-4 px-0 py-5 sm:px-6"
+                >
+                  <div>
+                    <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-fg-subtle">
                       {card.title}
-                    </CardTitle>
-                    <div className={`rounded-lg p-2 ${card.bg}`}>
-                      <Icon className={`h-4 w-4 ${card.color}`} />
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-2xl font-bold text-slate-100">
+                    </p>
+                    <p className="mt-2 text-[24px] font-medium leading-none tracking-tight text-fg">
                       {card.value}
-                    </div>
-                  </CardContent>
-                </Card>
+                    </p>
+                  </div>
+                  <Icon className={cn('mt-0.5 h-4 w-4', card.accent)} />
+                </div>
               );
             })}
       </div>
 
-      {/* Low Stock Alerts */}
-      {stats && stats.lowStockProducts && stats.lowStockProducts.length > 0 && (
-        <Card className="border-slate-700 bg-slate-800">
-          <CardHeader>
-            <CardTitle className="text-slate-100">Low Stock Alerts</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2">
-              {stats.lowStockProducts.slice(0, 10).map((product) => (
+      {/* Alertas de stock bajo */}
+      {lowStock.length > 0 && (
+        <section>
+          <div className="mb-3 flex items-center gap-2">
+            <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />
+            <h3 className="text-[13px] font-medium text-fg">Stock bajo</h3>
+            <span className="text-[11px] text-fg-subtle">
+              {lowStock.length} producto{lowStock.length === 1 ? '' : 's'}
+            </span>
+          </div>
+
+          <div className="divide-y divide-line/50 overflow-hidden rounded-xl bg-surface-2/50">
+            {lowStock.slice(0, 10).map((product) => {
+              const ratio = product.minStock > 0
+                ? Math.min(100, Math.round((product.stock / product.minStock) * 100))
+                : 100;
+              return (
                 <div
                   key={product.id}
-                  className="flex items-center justify-between rounded-lg border border-slate-700 bg-slate-800/50 px-4 py-2"
+                  className="flex items-center justify-between gap-4 px-4 py-2.5 transition-colors hover:bg-white/[0.03]"
                 >
-                  <span className="text-sm text-slate-200">{product.name}</span>
-                  <span className="text-sm text-red-400 font-medium">
-                    {product.stock} / {product.minStock} min
-                  </span>
+                  <span className="truncate text-[13px] text-fg-muted">{product.name}</span>
+                  <div className="flex shrink-0 items-center gap-3">
+                    <div className="hidden h-1 w-24 overflow-hidden rounded-full bg-white/[0.07] sm:block">
+                      <div
+                        className="h-full rounded-full bg-amber-500/80"
+                        style={{ width: `${ratio}%` }}
+                      />
+                    </div>
+                    <span className="tabular-nums text-[12px] text-amber-300/90">
+                      {product.stock} / {product.minStock}
+                    </span>
+                  </div>
                 </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+              );
+            })}
+          </div>
+        </section>
       )}
     </div>
   );
