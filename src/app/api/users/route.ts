@@ -18,6 +18,7 @@ export async function GET() {
         name: true,
         role: true,
         active: true,
+        recoveryEmail: true,
         createdAt: true,
       },
       orderBy: { createdAt: "desc" },
@@ -76,6 +77,7 @@ export async function POST(request: Request) {
         name: data.name,
         role: data.role,
         active: data.active,
+        recoveryEmail: data.recoveryEmail || null,
       },
       select: {
         id: true,
@@ -83,6 +85,7 @@ export async function POST(request: Request) {
         name: true,
         role: true,
         active: true,
+        recoveryEmail: true,
         createdAt: true,
       },
     });

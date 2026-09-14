@@ -8,14 +8,17 @@ datasource db {
 }
 
 model User {
-  id        Int      @id @default(autoincrement())
-  username  String   @unique
-  password  String
-  name      String   @default("")
-  role      String   @default("CASHIER")
-  active    Boolean  @default(true)
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id                   Int       @id @default(autoincrement())
+  username             String    @unique
+  password             String
+  name                 String    @default("")
+  role                 String    @default("CASHIER")
+  active               Boolean   @default(true)
+  recoveryEmail        String?   @map("recovery_email")
+  passwordResetToken   String?   @unique @map("password_reset_token")
+  passwordResetExpires DateTime? @map("password_reset_expires")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
 
   accounts  Account[]
   sessions  Session[]

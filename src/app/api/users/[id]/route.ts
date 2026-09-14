@@ -39,6 +39,8 @@ export async function PUT(
     if (data.name !== undefined) updateData.name = data.name;
     if (data.role !== undefined) updateData.role = data.role;
     if (data.active !== undefined) updateData.active = data.active;
+    if (data.recoveryEmail !== undefined)
+      updateData.recoveryEmail = data.recoveryEmail || null;
     if (data.password) {
       updateData.password = await hash(data.password, 10);
     }
@@ -52,6 +54,7 @@ export async function PUT(
         name: true,
         role: true,
         active: true,
+        recoveryEmail: true,
         createdAt: true,
       },
     });

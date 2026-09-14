@@ -5,6 +5,28 @@ export const loginSchema = z.object({
   password: z.string().min(1, "Contraseña requerida"),
 });
 
+export const forgotPasswordSchema = z.object({
+  identifier: z.string().min(1, "Ingresa tu usuario o correo de recuperación"),
+});
+
+export const resetPasswordSchema = z.object({
+  token: z.string().min(10, "Token inválido"),
+  password: z.string().min(6, "Mínimo 6 caracteres").max(100),
+});
+
+export const recoveryEmailSchema = z.object({
+  recoveryEmail: z
+    .string()
+    .trim()
+    .max(254)
+    .optional()
+    .or(z.literal(""))
+    .refine(
+      (v) => !v || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v),
+      "Correo inválido"
+    ),
+});
+
 export const registerSchema = z.object({
   username: z.string().min(3, "Mínimo 3 caracteres").max(50),
   password: z.string().min(6, "Mínimo 6 caracteres").max(100),
@@ -18,6 +40,16 @@ export const userSchema = z.object({
   name: z.string().min(1).max(100),
   role: z.enum(["ADMIN", "CASHIER"]),
   active: z.boolean().default(true),
+  recoveryEmail: z
+    .string()
+    .trim()
+    .max(254)
+    .optional()
+    .or(z.literal(""))
+    .refine(
+      (v) => !v || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v),
+      "Correo inválido"
+    ),
 });
 
 export const productSchema = z.object({

@@ -45,6 +45,7 @@ interface User {
   name: string;
   role: string;
   active: boolean;
+  recoveryEmail: string | null;
   createdAt: string;
 }
 
@@ -60,6 +61,7 @@ export default function UsersPage() {
   const [formName, setFormName] = useState('');
   const [formUsername, setFormUsername] = useState('');
   const [formPassword, setFormPassword] = useState('');
+  const [formRecoveryEmail, setFormRecoveryEmail] = useState('');
   const [formRole, setFormRole] = useState('CASHIER');
   const [formError, setFormError] = useState('');
   const [formLoading, setFormLoading] = useState(false);
@@ -83,6 +85,7 @@ export default function UsersPage() {
     setFormName('');
     setFormUsername('');
     setFormPassword('');
+    setFormRecoveryEmail('');
     setFormRole('CASHIER');
     setFormError('');
   };
@@ -99,6 +102,7 @@ export default function UsersPage() {
         name: formName,
         username: formUsername,
         password: formPassword,
+        recoveryEmail: formRecoveryEmail || '',
         role: formRole,
         active: true,
       }),
@@ -126,6 +130,7 @@ export default function UsersPage() {
     const body: Record<string, unknown> = {
       name: formName,
       username: formUsername,
+      recoveryEmail: formRecoveryEmail || '',
       role: formRole,
     };
     if (formPassword) body.password = formPassword;
@@ -179,6 +184,7 @@ export default function UsersPage() {
     setFormName(user.name);
     setFormUsername(user.username);
     setFormPassword('');
+    setFormRecoveryEmail(user.recoveryEmail || '');
     setFormRole(user.role);
     setEditOpen(true);
   };
@@ -227,6 +233,11 @@ export default function UsersPage() {
                   <Input id="create-password" type="password" value={formPassword} onChange={(e) => setFormPassword(e.target.value)} required />
                 </div>
                 <div className="space-y-2">
+                  <Label htmlFor="create-recoveryEmail">Correo de recuperación (opcional)</Label>
+                  <Input id="create-recoveryEmail" type="email" placeholder="tu@correo.com" value={formRecoveryEmail} onChange={(e) => setFormRecoveryEmail(e.target.value)} />
+                  <p className="text-[11px] text-fg-subtle">Servirá para recuperar tu contraseña en /forgot-password</p>
+                </div>
+                <div className="space-y-2">
                   <Label>Role</Label>
                   <Select value={formRole} onValueChange={setFormRole}>
                     <SelectTrigger>
@@ -256,6 +267,7 @@ export default function UsersPage() {
               <TableRow>
                 <TableHead>Name</TableHead>
                 <TableHead>Username</TableHead>
+                <TableHead>Recuperación</TableHead>
                 <TableHead>Role</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
@@ -265,7 +277,7 @@ export default function UsersPage() {
               {loading ? (
                 Array.from({ length: 5 }).map((_, i) => (
                   <TableRow key={i}>
-                    {Array.from({ length: 5 }).map((_, j) => (
+                    {Array.from({ length: 6 }).map((_, j) => (
                       <TableCell key={j}>
                         <Skeleton className="h-4 w-full bg-line" />
                       </TableCell>
@@ -274,7 +286,7 @@ export default function UsersPage() {
                 ))
               ) : users.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center text-fg-muted py-8">
+                  <TableCell colSpan={6} className="text-center text-fg-muted py-8">
                     No users found
                   </TableCell>
                 </TableRow>
@@ -283,6 +295,7 @@ export default function UsersPage() {
                   <TableRow key={user.id}>
                     <TableCell className="font-medium text-fg">{user.name}</TableCell>
                     <TableCell className="text-fg-muted">{user.username}</TableCell>
+                    <TableCell className="text-fg-muted text-xs truncate max-w-[180px]">{user.recoveryEmail || <span className="text-fg-subtle">— sin correo</span>}</TableCell>
                     <TableCell>
                       <Badge variant={user.role === 'ADMIN' ? 'default' : 'secondary'} className="uppercase">
                         {user.role}
@@ -339,6 +352,10 @@ export default function UsersPage() {
               <div className="space-y-2">
                 <Label htmlFor="edit-password">Password (leave blank to keep current)</Label>
                 <Input id="edit-password" type="password" value={formPassword} onChange={(e) => setFormPassword(e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-recoveryEmail">Correo de recuperación (opcional)</Label>
+                <Input id="edit-recoveryEmail" type="email" placeholder="tu@correo.com" value={formRecoveryEmail} onChange={(e) => setFormRecoveryEmail(e.target.value)} />
               </div>
               <div className="space-y-2">
                 <Label>Role</Label>
