@@ -119,6 +119,9 @@ export default function ProductsPage() {
 
   // Stock adjust
   const [stockAdjust, setStockAdjust] = useState('');
+  const [stockExpiryDate, setStockExpiryDate] = useState('');
+  const [stockBatchCode, setStockBatchCode] = useState('');
+  const [batchInfo, setBatchInfo] = useState<Record<number, { nearestExpiry: string | null }>>({});
 
   const LIMIT = 50;
 
@@ -179,6 +182,28 @@ export default function ProductsPage() {
     }, 300);
     return () => clearTimeout(timer);
   }, [search, filterDepartment, filterSupplier]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Fetch batch expiry info
+  useEffect(() => {
+    const fetchBatchInfo = async () => {
+      try {
+        const res = await fetch('/api/stock-batches/expiry-summary');
+        if (res.ok) {
+          const data = await res.json();
+          const map: Record<number, { nearestExpiry: string | null }> = {};
+          for (const group of [...(data.expiringToday || []), ...(data.nearExpiry || []), ...(data.expired || [])]) {
+            if (!map[group.product.id]) {
+              map[group.product.id] = { nearestExpiry: group.nearestExpiry };
+            }
+          }
+          setBatchInfo(map);
+        }
+      } catch {}
+    };
+    fetchBatchInfo();
+    const interval = setInterval(fetchBatchInfo, 30000);
+    return () => clearInterval(interval);
+  }, []);
 
   const loadMore = () => {
     if (!hasMore || loadingMore || loading) return;
@@ -394,17 +419,36 @@ export default function ProductsPage() {
     e.preventDefault();
     if (!selectedProduct) return;
     setFormLoading(true);
-    const res = await fetch(`/api/products/${selectedProduct.id}/stock`, {
+    const res = await fetch('/api/stock-batches', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ quantity: parseInt(stockAdjust) }),
+      body: JSON.stringify({
+        productId: selectedProduct.id,
+        quantity: parseInt(stockAdjust),
+        expiryDate: stockExpiryDate || null,
+        batchCode: stockBatchCode,
+        receivedVia: 'manual',
+      }),
     });
     setFormLoading(false);
     if (res.ok) {
       setStockOpen(false);
       setStockAdjust('');
+      setStockExpiryDate('');
+      setStockBatchCode('');
       setSelectedProduct(null);
       fetchProducts(1);
+      // Refresh batch info
+      fetch('/api/stock-batches/expiry-summary').then(r => r.json()).then(data => {
+        const map: Record<number, { nearestExpiry: string | null }> = {};
+        for (const group of [...(data.expiringToday || []), ...(data.nearExpiry || []), ...(data.expired || [])]) {
+          if (!map[group.product.id]) map[group.product.id] = { nearestExpiry: group.nearestExpiry };
+        }
+        setBatchInfo(map);
+      }).catch(() => {});
+    } else {
+      const err = await res.json().catch(() => ({ error: 'Error desconocido' }));
+      alert('Error al ajustar stock: ' + (err.error || 'Error del servidor'));
     }
   };
 
@@ -685,6 +729,7 @@ export default function ProductsPage() {
                 <TableHead>Departamento</TableHead>
                 <TableHead>Proveedor</TableHead>
                 <TableHead>Estado</TableHead>
+                <TableHead>Vence</TableHead>
                 <TableHead className="text-right">Acciones</TableHead>
               </TableRow>
             </TableHeader>
@@ -723,11 +768,27 @@ export default function ProductsPage() {
                         {product.active ? 'Activo' : 'Inactivo'}
                       </Badge>
                     </TableCell>
+                    <TableCell>
+                      {batchInfo[product.id]?.nearestExpiry ? (
+                        (() => {
+                          const expiry = batchInfo[product.id].nearestExpiry!;
+                          const daysLeft = Math.ceil((new Date(expiry).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+                          return (
+                            <Badge variant={daysLeft <= 7 ? 'destructive' : 'secondary'} className="whitespace-nowrap">
+                              {new Date(expiry).toLocaleDateString('es-MX')}
+                              {daysLeft <= 7 && ` (${daysLeft}d)`}
+                            </Badge>
+                          );
+                        })()
+                      ) : (
+                        <span className="text-slate-500">—</span>
+                      )}
+                    </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                         <Button
                           variant="ghost" size="icon"
-                          onClick={() => { setSelectedProduct(product); setStockAdjust('0'); setStockOpen(true); }}
+                          onClick={() => { setSelectedProduct(product); setStockAdjust('0'); setStockExpiryDate(''); setStockBatchCode(''); setStockOpen(true); }}
                           title="Ajustar stock"
                         >
                           <PackageOpen className="h-4 w-4 text-amber-400" />
@@ -917,8 +978,16 @@ export default function ProductsPage() {
           <form onSubmit={handleStockAdjust}>
             <div className="space-y-4 py-4">
               <div className="space-y-2">
-                <Label>Ajuste (usa negativo para reducir)</Label>
-                <Input type="number" value={stockAdjust} onChange={(e) => setStockAdjust(e.target.value)} placeholder="ej. 10 o -5" required />
+                <Label>Cantidad a agregar</Label>
+                <Input type="number" value={stockAdjust} onChange={(e) => setStockAdjust(e.target.value)} placeholder="ej. 10" required min="1" />
+              </div>
+              <div className="space-y-2">
+                <Label>Fecha de vencimiento <span className="text-slate-500 text-xs">(opcional)</span></Label>
+                <Input type="date" value={stockExpiryDate} onChange={(e) => setStockExpiryDate(e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label>Código de lote <span className="text-slate-500 text-xs">(opcional)</span></Label>
+                <Input type="text" value={stockBatchCode} onChange={(e) => setStockBatchCode(e.target.value)} placeholder="ej. LOTE-001" />
               </div>
             </div>
             <DialogFooter>

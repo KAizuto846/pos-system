@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter, usePathname } from 'next/navigation';
 import {
@@ -19,6 +19,8 @@ import {
   LogOut,
   X,
   ClipboardCheck,
+  AlertTriangle,
+  Bell,
 } from 'lucide-react';
 import { signOut, useSession } from 'next-auth/react';
 import { cn } from '@/lib/utils';
@@ -56,6 +58,7 @@ const adminLinks = [
 
 const extraLinks = [
   { href: '/orders', label: 'Pedidos', icon: ClipboardList },
+  { href: '/vencimientos', label: 'Vencimientos', icon: AlertTriangle },
   { href: '/reports', label: 'Reportes', icon: BarChart3 },
   { href: '/importar', label: 'Importar Datos', icon: Upload },
 ];
@@ -68,6 +71,22 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
   const canCloseShift = session?.user?.role === 'CASHIER' || isAdmin;
   const [closingShift, setClosingShift] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [unreadNotifs, setUnreadNotifs] = useState(0);
+
+  useEffect(() => {
+    const fetchNotifs = async () => {
+      try {
+        const res = await fetch('/api/notifications');
+        if (res.ok) {
+          const data = await res.json();
+          setUnreadNotifs(data.unreadCount || 0);
+        }
+      } catch {}
+    };
+    fetchNotifs();
+    const interval = setInterval(fetchNotifs, 60000);
+    return () => clearInterval(interval);
+  }, []);
 
   const isActive = (href: string) => {
     if (href === '/') return pathname === '/';
@@ -145,6 +164,19 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
 
         {/* Bottom Actions */}
         <div className="border-t border-slate-700 p-3 space-y-2">
+          {unreadNotifs > 0 && (
+            <Link
+              href="/vencimientos"
+              onClick={onClose}
+              className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-yellow-400 hover:bg-slate-700/50 transition-colors"
+            >
+              <Bell className="h-5 w-5 flex-shrink-0" />
+              <span className="flex-1">Notificaciones</span>
+              <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-red-600 px-1.5 text-xs font-bold text-white">
+                {unreadNotifs}
+              </span>
+            </Link>
+          )}
           {canCloseShift && (
             <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
               <DialogTrigger asChild>

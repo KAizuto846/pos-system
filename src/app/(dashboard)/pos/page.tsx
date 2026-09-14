@@ -95,6 +95,7 @@ export default function PosPage() {
   const [selectedPaymentMethodId, setSelectedPaymentMethodId] = useState<string>('');
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [checkingOut, setCheckingOut] = useState(false);
+  const [batchInfo, setBatchInfo] = useState<Record<number, { nearestExpiry: string | null }>>({});
 
   const debouncedSearch = useDebounce(searchTerm, 300);
 
@@ -167,6 +168,28 @@ export default function PosPage() {
         }
       })
       .catch(() => toast.error('Error al cargar métodos de pago'));
+  }, []);
+
+  // Fetch batch expiry info
+  useEffect(() => {
+    const fetchBatchInfo = async () => {
+      try {
+        const res = await fetch('/api/stock-batches/expiry-summary');
+        if (res.ok) {
+          const data = await res.json();
+          const map: Record<number, { nearestExpiry: string | null }> = {};
+          for (const group of [...(data.expiringToday || []), ...(data.nearExpiry || []), ...(data.expired || [])]) {
+            if (!map[group.product.id]) {
+              map[group.product.id] = { nearestExpiry: group.nearestExpiry };
+            }
+          }
+          setBatchInfo(map);
+        }
+      } catch {}
+    };
+    fetchBatchInfo();
+    const interval = setInterval(fetchBatchInfo, 30000);
+    return () => clearInterval(interval);
   }, []);
 
   // Keyboard shortcuts
@@ -304,14 +327,24 @@ export default function PosPage() {
                       <span className="text-lg font-bold text-emerald-400">
                         {formatCurrency(product.price)}
                       </span>
-                      <Badge
-                        variant={product.stock <= 0 ? 'destructive' : product.stock <= (product.minStock || 5) ? 'secondary' : 'outline'}
-                        className="w-fit text-xs"
-                      >
-                        {product.stock <= 0
-                          ? 'Sin stock'
-                          : `${product.stock} uds.`}
-                      </Badge>
+                      <div className="flex items-center gap-1">
+                        <Badge
+                          variant={product.stock <= 0 ? 'destructive' : product.stock <= (product.minStock || 5) ? 'secondary' : 'outline'}
+                          className="text-xs"
+                        >
+                          {product.stock <= 0
+                            ? 'Sin stock'
+                            : `${product.stock} uds.`}
+                        </Badge>
+                        {batchInfo[product.id]?.nearestExpiry && (
+                          (() => {
+                            const days = Math.ceil((new Date(batchInfo[product.id].nearestExpiry!).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+                            if (days <= 0) return <Badge variant="destructive" className="text-[10px]">VENCIDO</Badge>;
+                            if (days <= 7) return <Badge variant="destructive" className="text-[10px]">{days}d</Badge>;
+                            return null;
+                          })()
+                        )}
+                      </div>
                     </CardContent>
                   </Card>
                 ))}

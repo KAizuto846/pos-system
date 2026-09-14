@@ -130,6 +130,8 @@ model Product {
   supplier     Supplier?  @relation(fields: [supplierId], references: [id])
 
   productLines    ProductLine[]
+  stockBatches    StockBatch[]
+  notifications   Notification[]
   saleItems       SaleItem[]
   orderItems      SupplierOrderItem[]
   refunds         Refund[]
@@ -224,6 +226,37 @@ model SupplierOrderItem {
   @@index([supplierOrderId])
   @@index([productId])
   @@map("supplier_order_items")
+}
+
+model StockBatch {
+  id          Int      @id @default(autoincrement())
+  productId   Int      @map("product_id")
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  quantity    Int
+  expiryDate  DateTime? @map("expiry_date")
+  batchCode   String   @default("") @map("batch_code")
+  receivedVia String   @default("manual") @map("received_via")
+  notes       String   @default("")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([productId, expiryDate])
+  @@map("stock_batches")
+}
+
+model Notification {
+  id        Int      @id @default(autoincrement())
+  type      String   // EXPIRY_WARNING, LOW_STOCK, EXPIRY_TODAY
+  title     String
+  message   String
+  productId Int?     @map("product_id")
+  product   Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  severity  String   @default("warning") // info, warning, danger
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([read, createdAt])
+  @@index([productId])
+  @@map("notifications")
 }
 
 model CashEntry {
