@@ -1,6 +1,7 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { saleSchema } from "@/lib/validations";
+import { checkAndNotifyExpiry } from "@/lib/expiry-checker";
 
 export async function GET() {
   try {
@@ -95,8 +96,35 @@ export async function POST(request: Request) {
         },
       });
 
-      // Decrement stock for each product
+      // Deduct stock using FEFO (First Expiry, First Out)
       for (const item of data.items) {
+        let remaining = item.quantity;
+
+        // Get batches sorted by expiry date (nulls last), then by oldest first
+        const batches = await tx.stockBatch.findMany({
+          where: { productId: item.productId, quantity: { gt: 0 } },
+          orderBy: [
+            { expiryDate: { sort: "asc", nulls: "last" } },
+            { createdAt: "asc" },
+          ],
+        });
+
+        for (const batch of batches) {
+          if (remaining <= 0) break;
+          const toDeduct = Math.min(remaining, batch.quantity);
+          remaining -= toDeduct;
+
+          if (toDeduct >= batch.quantity) {
+            await tx.stockBatch.delete({ where: { id: batch.id } });
+          } else {
+            await tx.stockBatch.update({
+              where: { id: batch.id },
+              data: { quantity: { decrement: toDeduct } },
+            });
+          }
+        }
+
+        // Decrement total product stock
         await tx.product.update({
           where: { id: item.productId },
           data: { stock: { decrement: item.quantity } },
@@ -118,6 +146,11 @@ export async function POST(request: Request) {
 
       return newSale;
     });
+
+    // Check for expiry warnings after sale
+    checkAndNotifyExpiry().catch((err) =>
+      console.error("Error checking expiry after sale:", err)
+    );
 
     return Response.json(sale, { status: 201 });
   } catch (error) {

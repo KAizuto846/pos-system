@@ -132,6 +132,8 @@ export default function OrdersPage() {
   const [exportOpen, setExportOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [receiveQuantities, setReceiveQuantities] = useState<Record<number, number>>({});
+  const [receiveExpiryDates, setReceiveExpiryDates] = useState<Record<string, string>>({});
+  const [receiveBatchCodes, setReceiveBatchCodes] = useState<Record<string, string>>({});
   const [receiveLoading, setReceiveLoading] = useState(false);
 
   // ── Create form ──
@@ -330,8 +332,10 @@ export default function OrdersPage() {
   const openReceiveDialog = (order: Order) => {
     setSelectedOrder(order);
     const init: Record<number, number> = {};
-    order.items.forEach(i => { init[i.id] = i.receivedQuantity; });
+    order.items.forEach(i => { init[i.id] = i.quantity; }); // Default: received = ordered
     setReceiveQuantities(init);
+    setReceiveExpiryDates({});
+    setReceiveBatchCodes({});
     setReceiveOpen(true);
   };
 
@@ -349,6 +353,10 @@ export default function OrdersPage() {
             quantity: i.quantity,
             receivedQuantity: receiveQuantities[i.id] || 0,
             notes: i.notes,
+            batch: {
+              expiryDate: receiveExpiryDates[i.id] || null,
+              batchCode: receiveBatchCodes[i.id] || '',
+            },
           })),
         }),
       });
@@ -356,8 +364,15 @@ export default function OrdersPage() {
         setReceiveOpen(false);
         setSelectedOrder(null);
         fetchOrders();
+        fetch('/api/stock-batches/check-expiry', { method: 'POST' }).catch(() => {});
+      } else {
+        const err = await res.json().catch(() => ({ error: 'Error desconocido' }));
+        alert('Error al recibir: ' + (err.error || 'Error del servidor'));
       }
-    } catch {}
+    } catch (e) {
+      alert('Error de conexión al recibir pedido');
+      console.error('Receive error:', e);
+    }
     setReceiveLoading(false);
   };
 
@@ -848,37 +863,67 @@ export default function OrdersPage() {
             <div className="space-y-4 py-2">
               <div className="text-sm text-slate-400 mb-2">
                 Proveedor: <span className="text-slate-200 font-medium">{selectedOrder.supplier?.name}</span>
+                <span className="text-xs text-slate-500 ml-2">(cada producto tiene su propia fecha y lote)</span>
               </div>
+
               <div className="overflow-x-auto border border-slate-700 rounded-md">
                 <Table>
                   <TableHeader>
                     <TableRow className="bg-slate-800/80">
-                      <TableHead>Código</TableHead>
-                      <TableHead>Nombre</TableHead>
-                      <TableHead className="text-center">Pedido</TableHead>
-                      <TableHead className="text-center w-28">Recibido</TableHead>
-                      <TableHead className="text-center">Pendiente</TableHead>
+                      <TableHead>Producto</TableHead>
+                      <TableHead className="text-center w-20">Pedido</TableHead>
+                      <TableHead className="text-center w-24">Recibido</TableHead>
+                      <TableHead className="text-center w-36">Vence</TableHead>
+                      <TableHead className="text-center w-28">Lote</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {selectedOrder.items.map(item => {
-                      const received = receiveQuantities[item.id] ?? item.receivedQuantity;
-                      const pending = Math.max(0, item.quantity - received);
+                    {selectedOrder.items.map((item, idx) => {
+                      const received = receiveQuantities[item.id] ?? item.quantity;
                       return (
                         <TableRow key={item.id}>
-                          <TableCell className="font-mono text-xs text-slate-400">{item.product?.barcode || '—'}</TableCell>
-                          <TableCell className="text-sm font-medium text-slate-200">{item.product?.name || `#${item.productId}`}</TableCell>
-                          <TableCell className="text-center text-slate-300">{item.quantity}</TableCell>
-                          <TableCell className="text-center">
+                          <TableCell>
+                            <div className="text-sm font-medium text-slate-200">{item.product?.name || `#${item.productId}`}</div>
+                            <div className="text-xs text-slate-500">{item.product?.barcode || ''}</div>
+                          </TableCell>
+                          <TableCell className="text-center text-slate-300 align-middle">{item.quantity}</TableCell>
+                          <TableCell className="text-center align-middle">
                             <Input
                               type="number" min="0" max={item.quantity}
                               value={received}
                               onChange={e => setReceiveQuantities(prev => ({ ...prev, [item.id]: Math.min(item.quantity, Math.max(0, parseInt(e.target.value) || 0)) }))}
-                              className="w-20 h-8 text-center mx-auto"
+                              className="w-20 h-9 text-center mx-auto"
                             />
                           </TableCell>
-                          <TableCell className="text-center">
-                            {pending > 0 ? <Badge variant="secondary" className="bg-amber-900/40 text-amber-400">{pending}</Badge> : <span className="text-emerald-400">✓</span>}
+                          <TableCell className="text-center align-middle">
+                            <Input
+                              type="date"
+                              value={receiveExpiryDates[item.id] || ''}
+                              placeholder={idx > 0 ? `← ${receiveExpiryDates[selectedOrder.items[idx-1].id] || ''}` : ''}
+                              onChange={e => setReceiveExpiryDates(prev => ({ ...prev, [item.id]: e.target.value }))}
+                              onFocus={e => {
+                                // Auto-inherit from previous row if empty
+                                if (!receiveExpiryDates[item.id] && idx > 0 && receiveExpiryDates[selectedOrder.items[idx-1].id]) {
+                                  setReceiveExpiryDates(prev => ({ ...prev, [item.id]: receiveExpiryDates[selectedOrder.items[idx-1].id] }));
+                                }
+                              }}
+                              className="w-36 h-9 text-xs mx-auto"
+                            />
+                          </TableCell>
+                          <TableCell className="text-center align-middle">
+                            <Input
+                              type="text"
+                              value={receiveBatchCodes[item.id] || ''}
+                              placeholder={idx > 0 ? `← ${receiveBatchCodes[selectedOrder.items[idx-1].id] || ''}` : 'LOTE'}
+                              onChange={e => setReceiveBatchCodes(prev => ({ ...prev, [item.id]: e.target.value }))}
+                              onFocus={e => {
+                                // Auto-inherit from previous row if empty
+                                if (!receiveBatchCodes[item.id] && idx > 0 && receiveBatchCodes[selectedOrder.items[idx-1].id]) {
+                                  setReceiveBatchCodes(prev => ({ ...prev, [item.id]: receiveBatchCodes[selectedOrder.items[idx-1].id] }));
+                                }
+                              }}
+                              className="w-28 h-9 text-xs mx-auto"
+                            />
                           </TableCell>
                         </TableRow>
                       );
