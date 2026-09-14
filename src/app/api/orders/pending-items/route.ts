@@ -36,14 +36,28 @@ export async function GET(request: Request) {
             product: {
               include: {
                 department: true,
+<<<<<<< HEAD
+=======
+                productLines: {
+                  select: { supplierId: true, supplierPrice: true, isPrimary: true },
+                },
+>>>>>>> origin/master
               },
             },
           },
         },
       },
+<<<<<<< HEAD
     });
 
     // Agrupar por producto y sumar cantidades pendientes
+=======
+      orderBy: { createdAt: "desc" },
+    });
+
+    // Gestión de cajas: los items en cajas se acumulan en su unidad base
+    // (piezas) para no romper la suma con productos por pieza.
+>>>>>>> origin/master
     const pendingMap = new Map<
       number,
       {
@@ -54,12 +68,21 @@ export async function GET(request: Request) {
         price: number;
         cost: number;
         department: { id: number; name: string } | null;
+<<<<<<< HEAD
         pendingQuantity: number;
+=======
+        supplierPrice: number | null;
+        pendingQuantity: number;
+        soldByBox?: boolean;
+        unitsPerBox?: number | null;
+        boxRemainder?: number;
+>>>>>>> origin/master
       }
     >();
 
     for (const order of orders) {
       for (const item of order.items) {
+<<<<<<< HEAD
         const pending = item.quantity - item.receivedQuantity;
         if (pending <= 0) continue;
 
@@ -68,6 +91,23 @@ export async function GET(request: Request) {
         if (existing) {
           existing.pendingQuantity += pending;
         } else {
+=======
+        const unitPending =
+          item.isBox && item.unitsPerBox
+            ? (item.quantity - item.receivedQuantity) * item.unitsPerBox
+            : item.quantity - item.receivedQuantity;
+        if (unitPending <= 0) continue;
+
+        const pid = item.productId;
+        if (!pid || !item.product) continue;
+        const existing = pendingMap.get(pid);
+        if (existing) {
+          existing.pendingQuantity += unitPending;
+        } else {
+          const lines = item.product.productLines || [];
+          const line = lines.find(l => l.supplierId === sid && l.isPrimary)
+            ?? lines.find(l => l.supplierId === sid);
+>>>>>>> origin/master
           pendingMap.set(pid, {
             productId: pid,
             name: item.product.name,
@@ -76,7 +116,15 @@ export async function GET(request: Request) {
             price: item.product.price,
             cost: item.product.cost,
             department: item.product.department,
+<<<<<<< HEAD
             pendingQuantity: pending,
+=======
+            supplierPrice: line?.supplierPrice ?? null,
+            pendingQuantity: unitPending,
+            soldByBox: item.product.soldByBox,
+            unitsPerBox: item.product.unitsPerBox,
+            boxRemainder: item.product.boxRemainder,
+>>>>>>> origin/master
           });
         }
       }
@@ -92,8 +140,13 @@ export async function GET(request: Request) {
     return Response.json({
       supplierId: sid,
       supplierName,
+<<<<<<< HEAD
       totalOrdersWithPending: orders.filter((o: any) =>
         o.items.some((i: any) => i.quantity > i.receivedQuantity)
+=======
+      totalOrdersWithPending: orders.filter((o) =>
+        o.items.some((i) => (i.quantity - i.receivedQuantity) * (i.isBox && i.unitsPerBox ? i.unitsPerBox : 1) > 0)
+>>>>>>> origin/master
       ).length,
       products,
     });

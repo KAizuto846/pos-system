@@ -4,8 +4,11 @@ import * as path from 'path';
 import * as os from 'os';
 import { prisma } from '@/lib/prisma';
 import { auth } from '@/lib/auth';
+import { decodeTextBuffer } from '@/lib/import-decode';
+import { logAudit, getClientIp } from '@/lib/audit';
+import type { Prisma } from '@prisma/client';
 
-export const maxDuration = 120;
+export const maxDuration = 300;
 export const runtime = 'nodejs';
 
 interface FieldMapping {
@@ -19,6 +22,18 @@ const FIELD_TARGETS = {
   departments: ['name', 'description'],
 } as const;
 
+const MAX_FILE_SIZE = 10 * 1024 * 1024;
+const MAX_ROWS = 20_000;
+const BATCH_SIZE = 200;
+
+interface ImportResults {
+  imported: number;
+  updated: number;
+  skipped: number;
+  errors: number;
+  errorDetails: string[];
+}
+
 export async function POST(request: NextRequest) {
   try {
     const session = await auth();
@@ -30,7 +45,17 @@ export async function POST(request: NextRequest) {
     const file = formData.get('file') as File | null;
     const entityType = formData.get('entityType') as string || 'products';
     let fieldMappings: FieldMapping[] = [];
-    let options = { updateExisting: false, createMissingSuppliers: true, createMissingDepartments: true };
+    let options: {
+      updateExisting: boolean;
+      createMissingSuppliers: boolean;
+      createMissingDepartments: boolean;
+      matchBy: 'barcode' | 'name';
+    } = {
+      updateExisting: true,
+      createMissingSuppliers: true,
+      createMissingDepartments: true,
+      matchBy: 'barcode',
+    };
 
     try {
       const mappingsRaw = formData.get('fieldMappings') as string;
@@ -38,19 +63,22 @@ export async function POST(request: NextRequest) {
       const optionsRaw = formData.get('options') as string;
       if (optionsRaw) options = JSON.parse(optionsRaw);
     } catch {
-      return NextResponse.json({ error: 'Configuración inválida' }, { status: 400 });
+      return NextResponse.json({ error: 'Configuracion invalida' }, { status: 400 });
     }
 
     if (!file) {
-      return NextResponse.json({ error: 'No se envió ningún archivo' }, { status: 400 });
+      return NextResponse.json({ error: 'No se envio ningun archivo' }, { status: 400 });
+    }
+
+    if (file.size > MAX_FILE_SIZE) {
+      return NextResponse.json({ error: 'El archivo excede el limite de 10 MB' }, { status: 413 });
     }
 
     const validEntities = Object.keys(FIELD_TARGETS);
     if (!validEntities.includes(entityType)) {
-      return NextResponse.json({ error: `Tipo de entidad no válido: ${entityType}` }, { status: 400 });
+      return NextResponse.json({ error: `Tipo de entidad no valido: ${entityType}` }, { status: 400 });
     }
 
-    // Build source->target mapping
     const mapping = new Map<string, string>();
     for (const m of fieldMappings) {
       if (m.sourceField && m.targetField) {
@@ -58,12 +86,13 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Parse the file
     const fileName = file.name.toLowerCase();
     const isDBF = fileName.endsWith('.dbf');
     const isCSV = fileName.endsWith('.csv');
+    const isXLSX = fileName.endsWith('.xlsx') || fileName.endsWith('.xls');
+    const isJSON = fileName.endsWith('.json');
 
-    if (!isDBF && !isCSV) {
+    if (!isDBF && !isCSV && !isXLSX && !isJSON) {
       return NextResponse.json({ error: 'Formato no soportado' }, { status: 400 });
     }
 
@@ -77,14 +106,13 @@ export async function POST(request: NextRequest) {
       try {
         const { DBFFile } = await import('dbffile');
         const dbf = await DBFFile.open(tempPath);
-        allRows = await dbf.readRecords(20000);
+        allRows = await dbf.readRecords(MAX_ROWS + 1);
 
-        // Clean data
         allRows = allRows.map((r: Record<string, unknown>) => {
           const cleaned: Record<string, unknown> = {};
           for (const [key, val] of Object.entries(r)) {
             if (Buffer.isBuffer(val)) {
-              cleaned[key] = val.toString('utf8').trim();
+              cleaned[key] = decodeTextBuffer(val).trim();
             } else if (val instanceof Date) {
               cleaned[key] = val.toISOString().split('T')[0];
             } else if (typeof val === 'string') {
@@ -98,10 +126,27 @@ export async function POST(request: NextRequest) {
       } finally {
         try { fs.unlinkSync(tempPath); } catch { /* ignore */ }
       }
-    } else {
+    } else if (isXLSX) {
+      const buffer = Buffer.from(await file.arrayBuffer());
+      const XLSX = await import('xlsx');
+      const workbook = XLSX.read(buffer, { type: 'buffer' });
+      const sheetName = workbook.SheetNames[0];
+      const sheet = workbook.Sheets[sheetName];
+      const data = XLSX.utils.sheet_to_json(sheet);
+      allRows = data as Record<string, unknown>[];
+    } else if (isJSON) {
       const text = await file.text();
+      const parsed = JSON.parse(text);
+      const data = Array.isArray(parsed)
+        ? parsed
+        : Array.isArray(parsed.products)
+          ? parsed.products
+          : [];
+      allRows = data as Record<string, unknown>[];
+    } else {
+      const buffer = Buffer.from(await file.arrayBuffer());
+      const text = decodeTextBuffer(buffer);
       const Papa = await import('papaparse');
-      // Auto-detect delimiter but prefer pipe for Aspel-exported files
       const detectDelimiter = (content: string): string => {
         const firstLine = content.split('\n')[0];
         const pipeCount = (firstLine.match(/\|/g) || []).length;
@@ -116,18 +161,41 @@ export async function POST(request: NextRequest) {
       allRows = result.data as Record<string, unknown>[];
     }
 
-    // Process rows
-    const results = { imported: 0, updated: 0, skipped: 0, errors: 0, errorDetails: [] as string[] };
+    if (allRows.length > MAX_ROWS) {
+      return NextResponse.json(
+        { error: `El archivo excede el limite de ${MAX_ROWS} filas` },
+        { status: 413 }
+      );
+    }
+
+    const results: ImportResults = {
+      imported: 0,
+      updated: 0,
+      skipped: 0,
+      errors: 0,
+      errorDetails: [],
+    };
+
+    // Pre-cache departments and suppliers for fast product processing
+    const [deptList, suppList] = await Promise.all([
+      prisma.department.findMany({ select: { id: true, name: true } }),
+      prisma.supplier.findMany({ select: { id: true, name: true } }),
+    ]);
+    const deptCache = new Map<string, number>(deptList.map(d => [d.name, d.id]));
+    const suppCache = new Map<string, number>(suppList.map(s => [s.name, s.id]));
+
+    const createBatch: Prisma.ProductCreateManyInput[] = [];
+    const seenKeys = new Set<string>();
+    const seenProducts = new Map<string, Prisma.ProductCreateManyInput>();
 
     for (let i = 0; i < allRows.length; i++) {
       const row = allRows[i];
       const rowNum = i + 2;
 
       try {
-        // Map fields
         const mapped: Record<string, unknown> = {};
         for (const [sourceField, targetField] of mapping) {
-          let value = row[sourceField];
+          const value = row[sourceField];
           if (value !== undefined && value !== null && value !== '') {
             mapped[targetField] = value;
           }
@@ -140,7 +208,7 @@ export async function POST(request: NextRequest) {
 
         switch (entityType) {
           case 'products':
-            await processProduct(mapped, options, results);
+            await processProductBatch(mapped, options, results, deptCache, suppCache, seenKeys, seenProducts, createBatch, BATCH_SIZE);
             break;
           case 'suppliers':
             await processSupplier(mapped, results);
@@ -155,6 +223,26 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Flush remaining batch
+    if (seenProducts.size > 0) {
+      await flushProductBatch(seenProducts, results, options.matchBy);
+    }
+    if (createBatch.length > 0) {
+      await flushCreateBatch(createBatch, results);
+    }
+
+    void logAudit({
+      userId: parseInt(session.user.id, 10),
+      userName: session.user.name,
+      userRole: session.user.role,
+      action: "create",
+      entity: "import",
+      entityId: null,
+      description: `Importación de ${entityType}: ${results.imported} importados, ${results.updated} actualizados, ${results.errors} errores`,
+      details: { entityType, imported: results.imported, updated: results.updated, skipped: results.skipped, errors: results.errors },
+      ip: getClientIp(request),
+    });
+
     return NextResponse.json({
       success: true,
       imported: results.imported,
@@ -166,123 +254,244 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('Import error:', error);
     return NextResponse.json(
-      { error: `Error de importación: ${error instanceof Error ? error.message : 'Error desconocido'}` },
+      { error: `Error de importacion: ${error instanceof Error ? error.message : 'Error desconocido'}` },
       { status: 500 }
     );
   }
 }
 
-async function processProduct(
+async function processProductBatch(
   mapped: Record<string, unknown>,
-  opts: { updateExisting: boolean; createMissingSuppliers: boolean; createMissingDepartments: boolean },
-  results: { imported: number; updated: number; skipped: number; errors: number; errorDetails: string[] }
+  opts: {
+    updateExisting: boolean;
+    createMissingSuppliers: boolean;
+    createMissingDepartments: boolean;
+    matchBy: 'barcode' | 'name';
+  },
+  results: ImportResults,
+  deptCache: Map<string, number>,
+  suppCache: Map<string, number>,
+  seenKeys: Set<string>,
+  seenProducts: Map<string, Prisma.ProductCreateManyInput>,
+  createBatch: Prisma.ProductCreateManyInput[],
+  batchSize: number
 ) {
   const name = String(mapped.name || '').trim();
   if (!name) { results.skipped++; return; }
 
-  // Resolve department by name
   let departmentId: number | null = null;
   if (mapped.department) {
     const deptName = String(mapped.department).trim();
-    let dept = await prisma.department.findFirst({
-      where: { name: { contains: deptName } },
-    });
-    if (!dept && opts.createMissingDepartments) {
-      dept = await prisma.department.create({ data: { name: deptName } });
+    let deptId = deptCache.get(deptName);
+    if (!deptId && opts.createMissingDepartments) {
+      const dept = await prisma.department.create({ data: { name: deptName } });
+      deptCache.set(deptName, dept.id);
+      deptId = dept.id;
     }
-    if (dept) departmentId = dept.id;
+    if (deptId) departmentId = deptId;
   }
 
-  // Resolve supplier by name
   let supplierId: number | null = null;
   if (mapped.supplier) {
     const suppName = String(mapped.supplier).trim();
-    let supp = await prisma.supplier.findFirst({
-      where: { name: { contains: suppName } },
-    });
-    if (!supp && opts.createMissingSuppliers) {
-      supp = await prisma.supplier.create({ data: { name: suppName } });
+    let suppId = suppCache.get(suppName);
+    if (!suppId && opts.createMissingSuppliers) {
+      const supp = await prisma.supplier.create({ data: { name: suppName } });
+      suppCache.set(suppName, supp.id);
+      suppId = supp.id;
     }
-    if (supp) supplierId = supp.id;
+    if (suppId) supplierId = suppId;
   }
 
   let barcode = String(mapped.barcode || '').trim();
-  // Sanitize barcode: remove non-ASCII, non-printable, and problematic chars
   barcode = barcode.replace(/[^\x20-\x7E]/g, '').trim();
-  // If barcode looks like a name (mostly letters/spaces/punctuation, too long, or contains ñ/áéíóú)
   if (barcode && (
     barcode.length > 25 ||
-    barcode.length > 3 && /^[A-Za-zÁÉÍÓÚÑáéíóúñ\s\.\,\-]+$/.test(barcode) ||
+    barcode.length > 3 && /^[A-Za-z]\s\.\,\\-]+$/.test(barcode) ||
     [...barcode].filter(c => /\d/.test(c)).length < barcode.length * 0.3
   )) {
     barcode = '';
-  }
-
-  // Find existing
-  let existing = barcode
-    ? await prisma.product.findFirst({ where: { barcode } })
-    : null;
-  if (!existing) {
-    existing = await prisma.product.findFirst({ where: { name } });
   }
 
   const price = parseFloat(String(mapped.price ?? 0)) || 0;
   const cost = parseFloat(String(mapped.cost ?? 0)) || 0;
   const stock = parseInt(String(mapped.stock ?? 0), 10) || 0;
   const minStock = parseInt(String(mapped.minStock ?? 5), 10) || 5;
+  const active = mapped.active !== undefined
+    ? String(mapped.active).toLowerCase() === 'si' || String(mapped.active).toLowerCase() === 'true' || String(mapped.active) === '1'
+    : true;
 
-  if (existing && opts.updateExisting) {
-    await prisma.product.update({
-      where: { id: existing.id },
-      data: {
-        name,
-        barcode: barcode || existing.barcode,
-        price,
-        cost,
-        stock,
-        minStock,
-        departmentId: departmentId ?? existing.departmentId,
-        supplierId: supplierId ?? existing.supplierId,
-      },
-    });
-    results.updated++;
+  const data: Prisma.ProductCreateManyInput = {
+    name, barcode, price, cost, stock, minStock, active,
+    departmentId: departmentId || null,
+    supplierId: supplierId || null,
+  };
 
-    // Update supplier price if provided and supplier exists
-    if (supplierId && mapped.supplierPrice) {
-      const sp = parseFloat(String(mapped.supplierPrice));
-      if (!isNaN(sp) && sp > 0) {
-        await prisma.productLine.upsert({
-          where: { productId_supplierId: { productId: existing.id, supplierId } },
-          create: { productId: existing.id, supplierId, supplierPrice: sp, isPrimary: true },
-          update: { supplierPrice: sp },
-        });
-      }
+  // Upsert: el criterio de coincidencia lo elige el usuario (código de barras o
+  // nombre exacto). Si se elige código de barras y la fila no trae código,
+  // se cae al nombre exacto.
+  const matchByName = opts.matchBy === 'name';
+  const key = matchByName
+    ? `name:${name.toLowerCase()}`
+    : barcode || `name:${name.toLowerCase()}`;
+  if (opts.updateExisting) {
+    if (seenKeys.has(key)) {
+      seenProducts.set(key, data);
+      results.updated++;
+      return;
     }
-  } else if (!existing) {
-    const product = await prisma.product.create({
-      data: { name, barcode, price, cost, stock, minStock, departmentId, supplierId },
-    });
-    results.imported++;
-
-    // Create ProductLine with supplier price
-    if (supplierId && mapped.supplierPrice) {
-      const sp = parseFloat(String(mapped.supplierPrice));
-      if (!isNaN(sp) && sp > 0) {
-        await prisma.productLine.upsert({
-          where: { productId_supplierId: { productId: product.id, supplierId } },
-          create: { productId: product.id, supplierId, supplierPrice: sp, isPrimary: true },
-          update: { supplierPrice: sp },
-        });
-      }
+    seenKeys.add(key);
+    seenProducts.set(key, data);
+    if (seenProducts.size >= batchSize) {
+      await flushProductBatch(seenProducts, results, opts.matchBy);
     }
-  } else {
+    return;
+  }
+
+  if (seenKeys.has(key)) {
     results.skipped++;
+    return;
+  }
+  seenKeys.add(key);
+  createBatch.push(data);
+  if (createBatch.length >= batchSize) {
+    await flushCreateBatch(createBatch, results);
+  }
+}
+
+async function flushProductBatch(
+  seenProducts: Map<string, Prisma.ProductCreateManyInput>,
+  results: ImportResults,
+  matchBy: 'barcode' | 'name'
+) {
+  if (seenProducts.size === 0) return;
+  const batch = Array.from(seenProducts.values());
+  seenProducts.clear();
+
+  const matchByName = matchBy === 'name';
+  const barcodes = matchByName
+    ? []
+    : batch.filter(b => b.barcode).map(b => b.barcode as string);
+  const names = batch.map(b => b.name);
+
+  const existing = await prisma.product.findMany({
+    where: {
+      OR: [
+        ...(barcodes.length > 0 ? [{ barcode: { in: barcodes } }] : []),
+        { name: { in: names } },
+      ],
+    },
+    select: { id: true, barcode: true, name: true },
+  });
+  const byBarcode = matchByName
+    ? new Map<string, typeof existing[number]>()
+    : new Map(existing.filter(e => e.barcode).map(e => [e.barcode, e]));
+  const byName = new Map(existing.map(e => [e.name, e]));
+
+  const toCreate: Prisma.ProductCreateManyInput[] = [];
+  for (const data of batch) {
+    const existingRow = matchByName
+      ? byName.get(data.name)
+      : (data.barcode && byBarcode.get(data.barcode)) || byName.get(data.name);
+    if (existingRow) {
+      try {
+        await prisma.product.update({
+          where: { id: existingRow.id },
+          data: {
+            name: data.name,
+            ...(data.barcode ? { barcode: data.barcode } : {}),
+            price: data.price,
+            cost: data.cost,
+            stock: data.stock,
+            minStock: data.minStock,
+            active: data.active,
+            ...(data.departmentId !== undefined && data.departmentId !== null ? { departmentId: data.departmentId } : {}),
+            ...(data.supplierId !== undefined && data.supplierId !== null ? { supplierId: data.supplierId } : {}),
+          },
+        });
+
+        // Sincronizar productLines: el proveedor importado queda como línea primaria
+        if (data.supplierId) {
+          await prisma.$transaction([
+            prisma.productLine.updateMany({
+              where: { productId: existingRow.id, isPrimary: true },
+              data: { isPrimary: false },
+            }),
+            prisma.productLine.upsert({
+              where: {
+                productId_supplierId: { productId: existingRow.id, supplierId: data.supplierId },
+              },
+              create: { productId: existingRow.id, supplierId: data.supplierId, isPrimary: true },
+              update: { isPrimary: true },
+            }),
+          ]);
+        }
+        results.updated++;
+      } catch (error) {
+        results.errors++;
+        results.errorDetails.push(`Producto "${data.name}": ${error instanceof Error ? error.message : 'Error al actualizar'}`);
+      }
+    } else {
+      toCreate.push(data);
+    }
+  }
+
+  if (toCreate.length > 0) {
+    try {
+      const inserted = await prisma.product.createMany({ data: toCreate });
+      results.imported += inserted.count;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Error al insertar lote';
+      results.errors += toCreate.length;
+      results.errorDetails.push(`Lote de ${toCreate.length} productos: ${message}`);
+      console.error('Product import batch failed:', error);
+    }
+  }
+}
+
+async function flushCreateBatch(
+  createBatch: Prisma.ProductCreateManyInput[],
+  results: ImportResults
+) {
+  const batch = createBatch.splice(0, createBatch.length);
+  try {
+    const inserted = await prisma.product.createMany({ data: batch });
+    results.imported += inserted.count;
+
+    // Crear productLines primarias para los productos nuevos con proveedor
+    const withSupplier = batch.filter(b => b.supplierId);
+    if (withSupplier.length > 0) {
+      const created = await prisma.product.findMany({
+        where: {
+          OR: withSupplier.map(b => ({
+            ...(b.barcode ? { barcode: b.barcode } : { name: b.name }),
+          })),
+        },
+        select: { id: true, barcode: true, name: true, supplierId: true },
+      });
+      for (const p of created) {
+        if (p.supplierId) {
+          await prisma.productLine.upsert({
+            where: {
+              productId_supplierId: { productId: p.id, supplierId: p.supplierId },
+            },
+            create: { productId: p.id, supplierId: p.supplierId, isPrimary: true },
+            update: {},
+          });
+        }
+      }
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Error al insertar lote';
+    results.errors += batch.length;
+    results.errorDetails.push(`Lote de ${batch.length} productos: ${message}`);
+    console.error('Product import batch failed:', error);
   }
 }
 
 async function processSupplier(
   mapped: Record<string, unknown>,
-  results: { imported: number; updated: number; skipped: number; errors: number; errorDetails: string[] }
+  results: ImportResults
 ) {
   const name = String(mapped.name || '').trim();
   if (!name) { results.skipped++; return; }
@@ -316,7 +525,7 @@ async function processSupplier(
 
 async function processDepartment(
   mapped: Record<string, unknown>,
-  results: { imported: number; updated: number; skipped: number; errors: number; errorDetails: string[] }
+  results: ImportResults
 ) {
   const name = String(mapped.name || '').trim();
   if (!name) { results.skipped++; return; }

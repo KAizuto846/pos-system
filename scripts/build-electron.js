@@ -10,6 +10,8 @@ const path = require('path');
 
 const args = process.argv.slice(2);
 const platform = args.includes('--win') ? 'win' : args.includes('--linux') ? 'linux' : args.includes('--all') ? 'all' : 'win';
+const publishIndex = args.indexOf('--publish');
+const publishMode = publishIndex >= 0 && args[publishIndex + 1] ? args[publishIndex + 1] : 'never';
 
 console.log('╔══════════════════════════════════════════════════════════════╗');
 console.log('║  POS System - Electron Build Script                         ║');
@@ -99,18 +101,14 @@ if (fs.existsSync(prismaCliSrc)) {
 // Step 3: Build with electron-builder
 console.log('\n📦 Paso 3: Building with electron-builder...');
 
-const builderArgs = ['electron-builder'];
 if (platform === 'win' || platform === 'all') {
-  builderArgs.push('--win', '--x64');
-}
-if (platform === 'linux' || platform === 'all') {
-  builderArgs.push('--linux');
-}
-if (platform === 'all') {
-  // Build for both platforms
+  console.log('\n📦 Building Windows NSIS installer...');
+  run('npx', ['electron-builder', 'build', '--win', '--x64', '--publish', publishMode]);
 }
 
-run('npx', builderArgs);
+if (platform === 'linux' || platform === 'all') {
+  run('npx', ['electron-builder', 'build', '--linux', '--publish', publishMode]);
+}
 
 console.log('\n╔══════════════════════════════════════════════════════════════╗');
 console.log('║  ✅ Build completed successfully!                           ║');

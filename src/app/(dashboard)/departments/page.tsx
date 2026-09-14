@@ -167,7 +167,7 @@ export default function DepartmentsPage() {
             <form onSubmit={handleCreate}>
               <div className="space-y-4 py-4">
                 {formError && (
-                  <div className="rounded-lg border border-red-500/25 bg-red-500/10 px-4 py-3 text-[13px] text-red-300">
+                  <div className="rounded-lg border border-red-500/25 bg-red-500/10 px-4 py-3 text-sm text-red-400">
                     {formError}
                   </div>
                 )}
@@ -190,7 +190,7 @@ export default function DepartmentsPage() {
         </Dialog>
       </div>
 
-      <Card className="bg-surface-2/50">
+      <Card className="border-line bg-surface-2">
         <CardContent className="p-0">
           <Table>
             <TableHeader>
@@ -256,7 +256,7 @@ export default function DepartmentsPage() {
           <form onSubmit={handleEdit}>
             <div className="space-y-4 py-4">
               {formError && (
-                <div className="rounded-lg border border-red-500/25 bg-red-500/10 px-4 py-3 text-[13px] text-red-300">
+                <div className="rounded-lg border border-red-500/25 bg-red-500/10 px-4 py-3 text-sm text-red-400">
                   {formError}
                 </div>
               )}

@@ -1,5 +1,6 @@
 import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/db";
+import { initializePrisma, prisma } from "@/lib/db";
+import type { Prisma } from "@prisma/client";
 
 interface ImportDepartment {
   name: string;
@@ -48,7 +49,8 @@ export async function POST(request: Request) {
       );
     }
 
-    const result = await prisma.$transaction(async (tx: any) => {
+    await initializePrisma();
+    const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const departmentMap = new Map<string, number>();
       let departmentsCreated = 0;
       let departmentsSkipped = 0;

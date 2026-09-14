@@ -27,6 +27,13 @@ export default function SetupPage() {
   // Business config
   const [businessName, setBusinessName] = useState('Mi Negocio');
   const [deviceName, setDeviceName] = useState('');
+  useEffect(() => {
+    setDeviceName(
+      typeof window !== 'undefined' && window.location.hostname && !['localhost', '127.0.0.1'].includes(window.location.hostname)
+        ? window.location.hostname
+        : 'Equipo-1'
+    );
+  }, []);
 
   // Admin config
   const [adminUsername, setAdminUsername] = useState('');
@@ -35,9 +42,8 @@ export default function SetupPage() {
   const [adminConfirmPassword, setAdminConfirmPassword] = useState('');
 
   // Network config
-  const [serverMode, setServerMode] = useState<'server' | 'client' | 'auto'>('server');
+  const [serverMode, setServerMode] = useState<'server'>('server');
   const [serverPort, setServerPort] = useState('3000');
-  const [serverIP, setServerIP] = useState('');
 
   // Check if setup is needed
   useEffect(() => {
@@ -49,10 +55,6 @@ export default function SetupPage() {
         }
       })
       .catch(() => {});
-
-    // Get device hostname
-    setDeviceName(window.navigator.userAgent.includes('Windows') ? 
-      window.location.hostname || 'PC-Caja' : 'Server');
   }, [router]);
 
   const handleBusinessSubmit = (e: React.FormEvent) => {
@@ -109,11 +111,24 @@ export default function SetupPage() {
         throw new Error(data.error || 'Error al crear usuario');
       }
 
-      // Save network config (if we had an API for it)
-      // For now, this is handled by the Electron config
+      // Persist business/device config in the database (works in web and desktop)
+      const cfgRes = await fetch('/api/setup/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          businessName,
+          deviceName: deviceName || window.location.hostname || 'Equipo-1',
+          serverPort,
+        }),
+      });
+      if (!cfgRes.ok) {
+        const data = await cfgRes.json().catch(() => null);
+        throw new Error(data?.error || 'Error al guardar la configuracion');
+      }
+
       localStorage.setItem('pos-business-name', businessName);
-      localStorage.setItem('pos-device-name', deviceName);
-      localStorage.setItem('pos-server-mode', serverMode);
+      localStorage.setItem('pos-device-name', deviceName || window.location.hostname || 'Equipo-1');
+      localStorage.setItem('pos-server-mode', 'server');
       localStorage.setItem('pos-server-port', serverPort);
 
       router.push('/login');
@@ -134,7 +149,7 @@ export default function SetupPage() {
   const currentStepIndex = steps.findIndex((s) => s.key === step);
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-canvas p-4">
+    <div className="min-h-screen flex items-center justify-center bg-slate-950 p-4">
       <div className="w-full max-w-md">
         {/* Progress indicator */}
         <div className="flex items-center justify-center gap-2 mb-6">
@@ -143,8 +158,8 @@ export default function SetupPage() {
               <div
                 className={`flex items-center justify-center w-8 h-8 rounded-full text-sm font-medium ${
                   i <= currentStepIndex
-                    ? 'bg-brand-strong text-white'
-                    : 'bg-line text-fg-muted'
+                    ? 'bg-emerald-600 text-white'
+                    : 'bg-slate-700 text-slate-400'
                 }`}
               >
                 {i < currentStepIndex ? (
@@ -156,7 +171,7 @@ export default function SetupPage() {
               {i < steps.length - 1 && (
                 <div
                   className={`w-8 h-0.5 mx-1 ${
-                    i < currentStepIndex ? 'bg-brand-strong' : 'bg-line'
+                    i < currentStepIndex ? 'bg-emerald-600' : 'bg-slate-700'
                   }`}
                 />
               )}
@@ -166,32 +181,32 @@ export default function SetupPage() {
 
         {/* Welcome step */}
         {step === 'welcome' && (
-          <Card className="bg-surface-2/50">
+          <Card className="border-slate-700 bg-slate-800">
             <CardHeader className="text-center">
-              <div className="mx-auto w-16 h-16 bg-brand-strong rounded-full flex items-center justify-center mb-4">
+              <div className="mx-auto w-16 h-16 bg-emerald-600 rounded-full flex items-center justify-center mb-4">
                 <Store className="h-8 w-8 text-white" />
               </div>
-              <CardTitle className="text-2xl text-fg">Bienvenido a POS System</CardTitle>
-              <CardDescription className="text-fg-muted">
+              <CardTitle className="text-2xl text-slate-100">Bienvenido a POS System</CardTitle>
+              <CardDescription className="text-slate-400">
                 Configura tu sistema de punto de venta en unos simples pasos
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid grid-cols-2 gap-4 text-sm">
-                <div className="flex items-center gap-2 text-fg-muted">
-                  <Monitor className="h-4 w-4 text-brand" />
+                <div className="flex items-center gap-2 text-slate-300">
+                  <Monitor className="h-4 w-4 text-emerald-500" />
                   Multi-dispositivo
                 </div>
-                <div className="flex items-center gap-2 text-fg-muted">
-                  <Server className="h-4 w-4 text-brand" />
+                <div className="flex items-center gap-2 text-slate-300">
+                  <Server className="h-4 w-4 text-emerald-500" />
                   Sincronizacion en tiempo real
                 </div>
-                <div className="flex items-center gap-2 text-fg-muted">
-                  <Settings className="h-4 w-4 text-brand" />
+                <div className="flex items-center gap-2 text-slate-300">
+                  <Settings className="h-4 w-4 text-emerald-500" />
                   Actualizaciones automaticas
                 </div>
-                <div className="flex items-center gap-2 text-fg-muted">
-                  <CheckCircle className="h-4 w-4 text-brand" />
+                <div className="flex items-center gap-2 text-slate-300">
+                  <CheckCircle className="h-4 w-4 text-emerald-500" />
                   Facil de usar
                 </div>
               </div>
@@ -206,17 +221,17 @@ export default function SetupPage() {
 
         {/* Business info step */}
         {step === 'business' && (
-          <Card className="bg-surface-2/50">
+          <Card className="border-slate-700 bg-slate-800">
             <CardHeader>
-              <CardTitle className="text-xl text-fg">Informacion del Negocio</CardTitle>
-              <CardDescription className="text-fg-muted">
+              <CardTitle className="text-xl text-slate-100">Informacion del Negocio</CardTitle>
+              <CardDescription className="text-slate-400">
                 Configura los datos basicos de tu negocio
               </CardDescription>
             </CardHeader>
             <form onSubmit={handleBusinessSubmit}>
               <CardContent className="space-y-4">
                 {error && (
-                  <div className="rounded-lg border border-red-500/25 bg-red-500/10 px-4 py-3 text-[13px] text-red-300">
+                  <div className="rounded-md bg-red-600/20 border border-red-600/50 px-4 py-3 text-sm text-red-400">
                     {error}
                   </div>
                 )}
@@ -240,7 +255,7 @@ export default function SetupPage() {
                     value={deviceName}
                     onChange={(e) => setDeviceName(e.target.value)}
                   />
-                  <p className="text-xs text-fg-subtle">
+                  <p className="text-xs text-slate-500">
                     Identifica este dispositivo en la red (ej: PC-Caja, Terminal-1)
                   </p>
                 </div>
@@ -257,17 +272,17 @@ export default function SetupPage() {
 
         {/* Admin account step */}
         {step === 'admin' && (
-          <Card className="bg-surface-2/50">
+          <Card className="border-slate-700 bg-slate-800">
             <CardHeader>
-              <CardTitle className="text-xl text-fg">Crear Usuario Administrador</CardTitle>
-              <CardDescription className="text-fg-muted">
+              <CardTitle className="text-xl text-slate-100">Crear Usuario Administrador</CardTitle>
+              <CardDescription className="text-slate-400">
                 Este usuario tendra acceso total al sistema
               </CardDescription>
             </CardHeader>
             <form onSubmit={handleAdminSubmit}>
               <CardContent className="space-y-4">
                 {error && (
-                  <div className="rounded-lg border border-red-500/25 bg-red-500/10 px-4 py-3 text-[13px] text-red-300">
+                  <div className="rounded-md bg-red-600/20 border border-red-600/50 px-4 py-3 text-sm text-red-400">
                     {error}
                   </div>
                 )}
@@ -331,68 +346,36 @@ export default function SetupPage() {
 
         {/* Network config step */}
         {step === 'network' && (
-          <Card className="bg-surface-2/50">
+          <Card className="border-slate-700 bg-slate-800">
             <CardHeader>
-              <CardTitle className="text-xl text-fg">Configuracion de Red</CardTitle>
-              <CardDescription className="text-fg-muted">
+              <CardTitle className="text-xl text-slate-100">Configuracion de Red</CardTitle>
+              <CardDescription className="text-slate-400">
                 Define como se conectara este dispositivo a la red
               </CardDescription>
             </CardHeader>
             <form onSubmit={handleNetworkSubmit}>
               <CardContent className="space-y-4">
                 {error && (
-                  <div className="rounded-lg border border-red-500/25 bg-red-500/10 px-4 py-3 text-[13px] text-red-300">
+                  <div className="rounded-md bg-red-600/20 border border-red-600/50 px-4 py-3 text-sm text-red-400">
                     {error}
                   </div>
                 )}
                 <div className="space-y-3">
                   <Label>Modo de Operacion</Label>
                   <div className="space-y-2">
-                    <label className="flex items-center gap-3 p-3 rounded-lg bg-line/50 cursor-pointer transition-colors hover:bg-line">
+                    <label className="flex items-center gap-3 p-3 rounded-lg border border-slate-600 bg-slate-700/50 cursor-pointer hover:bg-slate-700 transition-colors">
                       <input
                         type="radio"
                         name="mode"
                         value="server"
                         checked={serverMode === 'server'}
                         onChange={() => setServerMode('server')}
-                        className="text-brand-strong"
+                        className="text-emerald-600"
                       />
                       <div>
-                        <div className="text-sm font-medium text-fg">Servidor</div>
-                        <div className="text-xs text-fg-muted">
-                          Ejecuta la base de datos local. Otros dispositivos se conectan a este.
-                        </div>
-                      </div>
-                    </label>
-                    <label className="flex items-center gap-3 p-3 rounded-lg bg-line/50 cursor-pointer transition-colors hover:bg-line">
-                      <input
-                        type="radio"
-                        name="mode"
-                        value="client"
-                        checked={serverMode === 'client'}
-                        onChange={() => setServerMode('client')}
-                        className="text-brand-strong"
-                      />
-                      <div>
-                        <div className="text-sm font-medium text-fg">Cliente</div>
-                        <div className="text-xs text-fg-muted">
-                          Se conecta a otro servidor existente en la red.
-                        </div>
-                      </div>
-                    </label>
-                    <label className="flex items-center gap-3 p-3 rounded-lg bg-line/50 cursor-pointer transition-colors hover:bg-line">
-                      <input
-                        type="radio"
-                        name="mode"
-                        value="auto"
-                        checked={serverMode === 'auto'}
-                        onChange={() => setServerMode('auto')}
-                        className="text-brand-strong"
-                      />
-                      <div>
-                        <div className="text-sm font-medium text-fg">Automatico</div>
-                        <div className="text-xs text-fg-muted">
-                          Detecta automaticamente si hay un servidor en la red.
+                        <div className="text-sm font-medium text-slate-200">Sincronizacion P2P</div>
+                        <div className="text-xs text-slate-400">
+                          Este dispositivo ejecuta su propia base de datos y se sincroniza de igual a igual con los demas equipos en la red.
                         </div>
                       </div>
                     </label>
@@ -412,30 +395,11 @@ export default function SetupPage() {
                   />
                 </div>
 
-                {serverMode === 'client' && (
-                  <div className="space-y-2">
-                    <Label htmlFor="serverIP">IP del Servidor</Label>
-                    <Input
-                      id="serverIP"
-                      type="text"
-                      placeholder="192.168.1.100"
-                      value={serverIP}
-                      onChange={(e) => setServerIP(e.target.value)}
-                    />
+                {serverMode === 'server' && (
+                  <div className="rounded-md bg-blue-600/20 border border-blue-600/50 px-4 py-3 text-sm text-blue-400">
+                    <p>Este dispositivo ejecutara su propia base de datos y se sincronizara automaticamente (P2P) con los demas equipos de la red.</p>
                   </div>
                 )}
-
-                <div className="rounded-lg border border-sky-500/25 bg-sky-500/10 px-4 py-3 text-[13px] text-sky-300">
-                  {serverMode === 'server' && (
-                    <p>Este dispositivo ejecutara el servidor. Los demas se conectaran a el.</p>
-                  )}
-                  {serverMode === 'client' && (
-                    <p>Ingrese la IP del dispositivo que ejecuta el servidor.</p>
-                  )}
-                  {serverMode === 'auto' && (
-                    <p>El sistema detectara automaticamente los servidores disponibles en la red.</p>
-                  )}
-                </div>
               </CardContent>
               <CardFooter className="flex justify-between">
                 <Button type="button" variant="outline" onClick={() => setStep('admin')}>
@@ -449,35 +413,35 @@ export default function SetupPage() {
 
         {/* Complete step */}
         {step === 'complete' && (
-          <Card className="bg-surface-2/50">
+          <Card className="border-slate-700 bg-slate-800">
             <CardHeader className="text-center">
-              <div className="mx-auto w-16 h-16 bg-brand-strong rounded-full flex items-center justify-center mb-4">
+              <div className="mx-auto w-16 h-16 bg-emerald-600 rounded-full flex items-center justify-center mb-4">
                 <CheckCircle className="h-8 w-8 text-white" />
               </div>
-              <CardTitle className="text-2xl text-fg">Configuracion Completa</CardTitle>
-              <CardDescription className="text-fg-muted">
+              <CardTitle className="text-2xl text-slate-100">Configuracion Completa</CardTitle>
+              <CardDescription className="text-slate-400">
                 Tu sistema POS esta listo para usar
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="rounded-lg bg-line/50 p-4 space-y-2">
+              <div className="rounded-lg bg-slate-700/50 p-4 space-y-2">
                 <div className="flex justify-between text-sm">
-                  <span className="text-fg-muted">Negocio:</span>
-                  <span className="text-fg">{businessName}</span>
+                  <span className="text-slate-400">Negocio:</span>
+                  <span className="text-slate-200">{businessName}</span>
                 </div>
                 <div className="flex justify-between text-sm">
-                  <span className="text-fg-muted">Dispositivo:</span>
-                  <span className="text-fg">{deviceName}</span>
+                  <span className="text-slate-400">Dispositivo:</span>
+                  <span className="text-slate-200">{deviceName}</span>
                 </div>
                 <div className="flex justify-between text-sm">
-                  <span className="text-fg-muted">Modo:</span>
-                  <Badge variant="outline" className="text-brand border-brand/50">
-                    {serverMode === 'server' ? 'Servidor' : serverMode === 'client' ? 'Cliente' : 'Automatico'}
+                  <span className="text-slate-400">Modo:</span>
+                  <Badge variant="outline" className="text-emerald-400 border-emerald-500/50">
+                    P2P (Sincronizacion entre equipos)
                   </Badge>
                 </div>
                 <div className="flex justify-between text-sm">
-                  <span className="text-fg-muted">Puerto:</span>
-                  <span className="text-fg">{serverPort}</span>
+                  <span className="text-slate-400">Puerto:</span>
+                  <span className="text-slate-200">{serverPort}</span>
                 </div>
               </div>
             </CardContent>

@@ -2,6 +2,9 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { supplierSchema } from "@/lib/validations";
 import { broadcast } from "@/lib/broadcast";
+import { logChange } from "@/lib/sync-engine";
+import { logAudit, getClientIp } from "@/lib/audit";
+import { getDeviceId } from "@/lib/sync-utils";
 
 export async function GET() {
   try {
@@ -52,6 +55,26 @@ export async function POST(request: Request) {
     });
 
     broadcast("supplier:change", { id: supplier.id });
+    void logChange(getDeviceId(), "CREATE", "supplier", supplier.id, {
+      id: supplier.id,
+      name: supplier.name,
+      contact: supplier.contact,
+      phone: supplier.phone,
+      email: supplier.email,
+      address: supplier.address,
+      active: supplier.active,
+    });
+    void logAudit({
+      userId: parseInt(session.user.id, 10),
+      userName: session.user.name,
+      userRole: session.user.role,
+      action: "create",
+      entity: "supplier",
+      entityId: supplier.id,
+      description: `Proveedor creado: ${supplier.name}`,
+      details: { name: supplier.name, phone: supplier.phone },
+      ip: getClientIp(request),
+    });
     return Response.json(supplier, { status: 201 });
   } catch (error) {
     console.error("Error creating supplier:", error);

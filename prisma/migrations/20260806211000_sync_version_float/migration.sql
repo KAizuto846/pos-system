@@ -1,0 +1,2 @@
+-- syncVersion se interpreta como Float (double 64-bit) para admitir Date.now() (~1.78e12).
+-- SQLite no valida tipos: la columna INTEGER de 64-bit ya almacena los valores sin perdida.

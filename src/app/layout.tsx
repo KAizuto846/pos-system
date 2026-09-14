@@ -1,13 +1,11 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { ToasterProvider } from "@/components/ui/toast";
 import SessionProvider from "@/components/SessionProvider";
 import QueryProvider from "@/components/QueryProvider";
 import { RealtimeProvider } from "@/components/RealtimeProvider";
-
-const inter = Inter({ subsets: ["latin"], variable: "--font-sans" });
-const mono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-mono" });
+import { UpdateNotification } from "@/components/UpdateNotification";
+import { ThemeApplier } from "@/components/ThemeApplier";
 
 export const metadata: Metadata = {
   title: "POS System - Punto de Venta",
@@ -17,7 +15,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#08090a",
+  themeColor: "#059669",
 };
 
 export default function RootLayout({
@@ -26,19 +24,21 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="es" className={`dark ${inter.variable} ${mono.variable}`}>
+    <html lang="es" className="dark">
       <head>
         <link rel="apple-touch-icon" href="/icons/icon-192.png" />
       </head>
-      <body className="font-sans antialiased">
+      <body>
         <SessionProvider>
           <QueryProvider>
             <RealtimeProvider>
+              <UpdateNotification />
               {children}
               <ToasterProvider />
             </RealtimeProvider>
           </QueryProvider>
         </SessionProvider>
+        <ThemeApplier />
       </body>
     </html>
   );

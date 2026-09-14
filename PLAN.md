@@ -4,41 +4,35 @@
 
 Sistema de Punto de Venta (POS) para pequenas y medianas empresas. Stack: Next.js 16 + React 19 + Prisma + SQLite + Electron. Escrito en espanol, interfaz oscura por defecto.
 
-**Objetivo:** Integrar a Windows con instalador unico + auto-update, y soporte multi-dispositivo con sincronizacion en tiempo real.
+**Objetivo:** Aplicacion de escritorio Windows/Linux con instalador unico + auto-update, y sincronizacion multi-dispositivo P2P (peer-to-peer) sin servidor central.
 
 ---
 
 ## Arquitectura Final
 
 ```
-┌─────────────────────────────────────────────────────┐
-│              SERVIDOR (PC Windows o Debian)          │
-│  ┌─────────────┐  ┌──────────┐  ┌───────────────┐  │
-│  │  Next.js    │  │  SQLite  │  │  SSE Events   │  │
-│  │  API Server │──│  (WAL)   │──│  Broadcaster  │  │
-│  └──────┬──────┘  └──────────┘  └───────┬───────┘  │
-│         │                               │           │
-│  ┌──────┴──────┐                        │           │
-│  │  Electron   │                        │           │
-│  │  (Server)   │                        │           │
-│  └─────────────┘                        │           │
-└─────────┬───────────────────────────────┬───────────┘
-          │ HTTP (port 3000)              │ SSE Stream
-          │                               │
-    ┌─────┴─────┐                  ┌──────┴──────┐
-    │  Phone    │                  │  PC Client  │
-    │  (PWA)    │◄────────────────►│  (Electron) │
-    │  Browser  │   Same API       │  Mode: client│
-    └───────────┘                  └─────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│                     RED LOCAL (P2P mesh)                       │
+│                                                                │
+│   PC-1 (Electron)           PC-2 (Electron)        PC-3        │
+│  ┌─────────────────┐      ┌─────────────────┐      (PWA/Browser)│
+│  │ Next.js  Standalone │   │                  │      │          │
+│  │ API + SQLite (WAL) │   │ API + SQLite    │      │          │
+│  │ SSE Broadcaster    │   │                 │      │          │
+│  │ Electron shell     │   │ Electron shell  │      │          │
+│  └────────┬──────────┘   └────────┬─────────┘      │          │
+│           │   UDP discovery :9876  │                │          │
+│           └────────────────────────┼────────────────┘          │
+│           HTTP sync pull/push ◄────┘                          │
+│           (cada 30 s, por malla)                              │
+└────────────────────────────────────────────────────────────────┘
 ```
 
-**Modelo:** Servidor compartido. Un dispositivo ejecuta el servidor, los demas se conectan como clientes. Todos comparten la misma base de datos SQLite via API REST.
+**Modelo: P2P (malla).** No hay servidor central ni "PC proveedora". Cada dispositivo electron ejecuta su propia instancia Next.js standalone con su propio archivo SQLite (`pos.db` en `userData`) y su propia tabla `SyncLog`. Todos los equipos son pares iguales: cada uno anuncia su presencia por UDP multicast/broadcast (puerto 9876), descubren a los demas, y se sincronizan bidireccionalmente cada 30 segundos via HTTP (`/api/sync/pull` y `/api/sync/push`).
 
-**Acceso por internet:** Cloudflare Tunnel o ngrok (documentacion en `docs/INTERNET-ACCESS.md`).
+**Datos compartidos:** Todo (inventario, ventas, usuarios, proveedores, reportes, metodos de pago, clientes, finanzas).
 
-**Datos compartidos:** Todo (inventario, ventas, usuarios, proveedores, reportes, metodos de pago).
-
-**Maximo dispositivos:** <10. SSE en memoria es suficiente.
+**Maximo dispositivos:** <10. SSE en memoria y SQLite WAL son suficientes.
 
 ---
 
@@ -172,7 +166,7 @@ useRealtimeSync({
 
 ---
 
-### Fase 2: Correccion de Condiciones de Carrera
+### Fase 2: Correccion de Condiciones de Carrera y Robustez del Engine P2P
 
 **Prioridad:** ALTA - Seguridad de datos.
 
@@ -254,6 +248,16 @@ await prisma.product.update({
 ```
 
 **Nota:** Despues de agregar el campo, ejecutar `npx prisma db push` para actualizar la DB.
+
+#### 2.3 Robustez del protocolo P2P
+
+**Archivo:** `src/lib/sync-engine.ts`, `src/app/api/sync/` , `electron/main.js`
+
+- **Cursors por peer (`since`):** cada peer trackea `pullSince`/`pushSince` (mayor `syncVersion` recibido/enviado) y usa ese valor como curs del endpoint. El flag global `synced` deja de ser la fuente de verdad (rompia la convergencia multi-peer); ahora solo es un indicador de "enviado al menos una vez".
+- **Acks:** tras un push exitoso a un peer, se llama `POST /api/sync/ack { ids }` para marcar el log local y no reenviar.
+- **Idempotencia:** las operaciones CREATE de ventas, reembolsos, entradas de caja y ordenes verifican existencia antes de insertar (`findUnique`), evitando errores de constraint al re-aplicar cambios.
+- **Self-filtering:** UDP multicast/broadcast puede devolver el propio anuncio; se filtra por `localhost`, direcciones loopback y `deviceId`.
+- **Concurrencia stock:** sigue protegido con `UPDATE products SET stock = stock - ? WHERE id = ? AND stock >= ?` (atomico). La carrera cross-device queda cubierta con LWW en el engine; pendiente vector clocks (sala adicional).
 
 ---
 
@@ -505,7 +509,7 @@ Pagina que se muestra solo la primera vez (si no hay configuracion). Wizard con 
 1. **Bienvenida** - Descripcion del sistema
 2. **Datos del negocio** - Nombre, moneda, timezone
 3. **Crear usuario admin** - Username, password, nombre
-4. **Configuracion de red** - Modo (servidor/cliente), puerto, IP
+4. **Configuracion de red** - Modo P2P (todos los equipos son pares), puerto
 5. **Completado** - Resumen y boton para ir al dashboard
 
 **Verificacion:** Si ya existe un usuario admin, redirigir a `/login`.
@@ -515,15 +519,91 @@ Pagina que se muestra solo la primera vez (si no hay configuracion). Wizard con 
 **Archivo nuevo o modificar existente:** `src/app/(dashboard)/settings/page.tsx`
 
 Seccion "Red y Sincronizacion":
-- Modo actual (servidor/cliente/auto)
+- Modo actual (P2P - siempre)
 - Estado de conexion
-- Dispositivos conectados (si SSE esta activo)
-- Boton "Cambiar modo"
-- Configuracion de Puerto e IP
+- Cambios totales / pendientes
+- Ultimo cambio
+- Enlace a la pagina de Sincronizacion
+
+#### 5.3 Pagina de sincronizacion
+
+**Archivo nuevo:** `src/app/(dashboard)/sync/page.tsx`
+
+Pagina de la barra lateral ("Sincronizacion"):
+- Lista de dispositivos detectados via UDP (nombre, IP:puerto, estado)
+- Boton "Sincronizar ahora" (IPC `trigger-sync`)
+- Resultado de la ultima sincronizacion (cambios por peer)
+- Estadisticas del SyncLog (totales, pendientes, ultimo cambio)
+- Ayuda sobre el modelo P2P
 
 ---
 
-### Fase 6: Offline Support
+### Fase 5b: Sync por Internet via Relay Central
+
+**Prioridad:** ALTA - Permite sincronizar equipos en redes distintas (sin depender de estar en la misma LAN).
+
+#### 5b.1 Servidor relay (VPS)
+
+**Directorio nuevo:** `relay/`
+
+Servidor independiente (express + better-sqlite3) que actua como buzon central:
+- `GET /health` - Health check, devuelve `storedChanges` y `time`
+- `POST /api/sync/pull` - Entrega cambios de otros dispositivos desde el cursor del equipo
+- `POST /api/sync/push` - Guarda cambios propios (`INSERT OR IGNORE` idempotente por `device_id + sync_version`)
+- Autenticacion: header `x-sync-secret` (secreto compartido via env `SYNC_SECRET`)
+- Tabla `device_cursors`: min cursor por device para limpieza de cambios viejos (hourly)
+- Requiere nodejs + npm, se despliega con systemd + Caddy/nginx (HTTPS)
+
+#### 5b.2 Cliente relay en la app
+
+**Archivo nuevo:** `src/lib/relay-sync.ts`
+
+- Config persistida en `AppSetting` (key/value): `relayUrl`, `relaySecret`, `relayPullSince`, `relayPushSince`
+- `testRelayConnection()` - prueba `GET /health` con timeout 10s
+- `runRelaySync()` - flujo completo:
+  1. `relayPull` (cambios de otros) -> `localPush` al engine local (con `synced: false`)
+  2. `localPull` (cambios propios) -> `relayPush`
+  3. Actualiza cursors `relayPullSince`/`relayPushSince` con el max `syncVersion`
+- Guarda `relaySyncInProgress` para evitar solapamiento del loop
+
+**Archivo nuevo:** `src/instrumentation.ts` + `src/lib/relay-loop.ts`
+
+- En `register()`: setInterval cada 30s -> `runRelaySync()` solo si hay relay configurado
+- Log: `[relay] Sync: +N recibidos, +M enviados`
+
+#### 5b.3 API routes
+
+- `POST /api/sync/relay/config` - GET/POST configuracion relay (guarda + prueba conexion)
+- `POST /api/sync/relay/test` - Prueba conexion sin guardar
+- `POST /api/sync/relay/trigger` - Ejecuta `runRelaySync()` manual (boton "Sincronizar ahora" en web)
+
+#### 5b.4 UI
+
+**Modificar:** `src/app/(dashboard)/sync/page.tsx`
+
+- Card "Relay por internet": inputs URL + secreto, botones "Probar conexion" y "Guardar"
+- Badge de estado (conectado/no configurado), ultimo resultado de sync relay
+- Boton "Sincronizar ahora" funciona tambien en web (fetch a `/api/sync/relay/trigger`)
+
+**Modificar:** `electron/setup.html` + `electron/main.js`
+
+- Seccion relay opcional en el wizard de primer arranque
+- `saveFirstRunConfig(mode, relayUrl, relaySecret)` guarda via `/api/setup/config` + `/api/sync/relay/config`
+
+#### 5b.5 DeviceId estable
+
+**Modificar:** `src/lib/sync-utils.ts`, `src/app/api/sync/pull/route.ts`, `src/app/api/sync/push/route.ts`
+
+- `resolveServerDeviceId()`: DEVICE_ID (Electron) -> AppSetting `deviceName` (setup web) -> hostname
+- Los routes pull/push usan `resolveServerDeviceId()` en vez de `process.env.DEVICE_ID || "unknown"`
+
+#### 5b.6 Nota sobre sync_version (BigInt)
+
+`syncVersion` usa `BigInt` en Prisma (columna SQLite BIGINT). Motivo: se escribe `Date.now()` (~1.78e12), que excede int32. Prisma valida los valores contra el tipo declarado de la columna y lanza P2023 ("does not fit in an INT column") si la columna es INTEGER (int32) - ver issue prisma/prisma#25920. La columna debe crearse como `BIGINT` (SQLite INTEGER es 64-bit, no requiere ALTER de datos; la migracion recrea la tabla con el tipo correcto).
+
+---
+
+
 
 **Prioridad:** BAJA - Funcionalidad futura.
 
@@ -614,13 +694,13 @@ src/
 │   │   ├── orders/             # Ordenes a proveedores
 │   │   ├── users/              # CRUD usuarios
 │   │   ├── payment-methods/    # Metodos de pago
-│   │   ├── sync/               # Health check + export
+│   │   ├── sync/               # P2P: pull, push, ack, stats, health
 │   │   ├── import/             # Importacion Excel/CSV
 │   │   ├── reports/            # Reportes
 │   │   ├── finance/            # Finanzas
 │   │   ├── stats/              # Estadisticas
 │   │   └── shift-reports/      # Reportes de turno
-│   ├── (dashboard)/            # Paginas del dashboard
+│   ├── (dashboard)/            # Paginas del dashboard (incluye sync/)
 │   ├── login/                  # Login
 │   ├── register/               # Registro
 │   └── setup/                  # NUEVO: Setup inicial
@@ -803,11 +883,11 @@ try {
 
 3. **El `server.js` en la raiz es LEGACY.** No modificar. El servidor real es el standalone de Next.js en `.next/standalone/server.js`.
 
-4. **El updater custom actual (`electron/updater.js`) NO usa `electron-updater`.** Solo hace fetch a la API de GitHub y abre el navegador. Reescribir completamente.
+4. **El updater usa `electron-updater`.** Ver `electron/updater.js`. Cada dispositivo electron se actualiza de forma independiente desde los GitHub Releases.
 
-5. **El NSIS script actual (`electron/nsis/installer.nsi`) referencia archivos `.ico` y `.bmp` que NO existen.** Crear estos archivos primero.
+5. **El NSIS script (`electron/nsis/installer.nsi`) referencia archivos `.ico` y `.bmp` generados** por `scripts/create-icon.js`.
 
-6. **El campo `version` no existe en el schema de Prisma.** Agregarlo a Product y Sale antes de implementar optimistic locking.
+6. **El sync es P2P y no requiere config manual.** Los centros/dispositivos se descubren solos. El flag `synced` del SyncLog es solo informativo (el control real es el cursor `since` por peer).
 
 7. **El SSE endpoint debe ser compatible con el standalone de Next.js.** Verificar que `ReadableStream` funcione correctamente en el entorno standalone.
 
@@ -820,12 +900,27 @@ try {
 | Fase | Estado | Notas |
 |------|--------|-------|
 | Fase 1: SSE | COMPLETADA | broadcast.ts, /api/events, hooks, providers |
-| Fase 2: Condiciones de carrera | COMPLETADA | Updates atomicos en sales, stock, refunds |
+| Fase 2: Condiciones de carrera + P2P | COMPLETADA | Updates atomicos, cursors `since`, acks, idempotencia |
 | Fase 3: Auto-update | COMPLETADA | electron-updater integrado en main.js |
 | Fase 4: NSIS installer | COMPLETADA | Wizard con 8 paginas + create-icon.js |
-| Fase 5: Setup web | COMPLETADA | Pagina /setup con wizard multi-paso |
+| Fase 5: Setup web | COMPLETADA | /setup wizard + pagina /sync en la barra lateral |
+| Fase 5b: Relay internet | COMPLETADA | relay/ standalone, relay-sync.ts, loop 30s, /api/sync/relay/*, sync_version BigInt |
 | Fase 6: Offline | PENDIENTE | Futuro |
 | Fase 7: Documentacion | COMPLETADA | INTERNET-ACCESS.md + DEBIAN-SETUP.md |
+
+---
+
+## Notas de Arquitectura Actualizada (P2P)
+
+1. **NO existe el modo "Cliente" ni "Servidor"** en el sentido de PC proveedora. Todos los dispositivos ejecutan `mode: 'server'` internamente: arrancan su propio Next.js standalone, anuncian su presencia y sincronizan por malla.
+
+2. **La ventana siempre apunta a `http://localhost:PORT`.** Ya no se conecta a la IP de otra PC para servirse de su base de datos.
+
+3. **Discovery:** UDP multicast (`230.185.192.108`) + broadcast (`255.255.255.255`) en puerto 9876, anuncio `pos-server-announce` cada 5s con `{ port, name, deviceId }`.
+
+4. **Sync:** loop cada 30s. Cross-admix del orphan `since—cursor por peer. Los endpoints `pull`/`push`/`ack` filtran/ookean por `syncVersion` y luego se con radio.
+
+5. **Codigo legacy:** `getTargetURL`, `setMode`, cortes de "modo cliente" en tray, `setup.html` y `setup page` fueron eliminados. Un config viejo con `mode: 'client'` queda ignorado (siempre arranca como peer).
 
 ---
 

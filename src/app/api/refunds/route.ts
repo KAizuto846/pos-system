@@ -1,7 +1,11 @@
 import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/db";
+import { initializePrisma, prisma } from "@/lib/db";
 import { refundSchema } from "@/lib/validations";
 import { broadcast } from "@/lib/broadcast";
+import { logChange } from "@/lib/sync-engine";
+import { getDeviceId } from "@/lib/sync-utils";
+import { logAudit, getClientIp } from "@/lib/audit";
+import type { Prisma } from "@prisma/client";
 
 export async function POST(request: Request) {
   try {
@@ -23,7 +27,8 @@ export async function POST(request: Request) {
     const data = parsed.data;
     const userId = parseInt(session.user.id, 10);
 
-    const refund = await prisma.$transaction(async (tx: any) => {
+    await initializePrisma();
+    const refund = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       // Verify the sale exists
       const sale = await tx.sale.findUnique({
         where: { id: data.saleId },
@@ -43,6 +48,8 @@ export async function POST(request: Request) {
       if (!saleItem) {
         throw new Error("El producto no pertenece a esta venta");
       }
+
+      const salePaymentMethodId = sale.paymentMethodId ?? null;
 
       // Calculate already refunded quantity using atomic SQL
       // This prevents race conditions between concurrent refunds
@@ -100,6 +107,8 @@ export async function POST(request: Request) {
       `;
 
       // Create cash entry for the refund (expense)
+      // Se asigna el método de pago de la venta original para que el reembolso
+      // revierta el apartado correspondiente y la caja.
       await tx.cashEntry.create({
         data: {
           type: "EXPENSE",
@@ -107,6 +116,7 @@ export async function POST(request: Request) {
           amount: data.amount,
           description: `Reembolso Venta #${data.saleId} - ${product.name} x${data.quantity}`,
           saleId: data.saleId,
+          paymentMethodId: salePaymentMethodId,
           userId,
         },
       });
@@ -115,6 +125,26 @@ export async function POST(request: Request) {
     });
 
     broadcast("refund:create", { id: refund.id, saleId: refund.saleId });
+    void logChange(getDeviceId(), "CREATE", "refund", refund.id, {
+      id: refund.id,
+      saleId: refund.saleId,
+      productId: refund.productId,
+      quantity: refund.quantity,
+      amount: refund.amount,
+      reason: refund.reason,
+      userId: refund.userId,
+    });
+    void logAudit({
+      userId,
+      userName: session.user.name,
+      userRole: session.user.role,
+      action: "create",
+      entity: "refund",
+      entityId: refund.id,
+      description: `Reembolso #${refund.id} de la venta #${refund.saleId}`,
+      details: { saleId: refund.saleId, amount: refund.amount, quantity: refund.quantity, reason: refund.reason },
+      ip: getClientIp(request),
+    });
     return Response.json(refund, { status: 201 });
   } catch (error) {
     const message =

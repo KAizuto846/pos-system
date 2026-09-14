@@ -2,6 +2,9 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { supplierSchema } from "@/lib/validations";
 import { broadcast } from "@/lib/broadcast";
+import { logChange } from "@/lib/sync-engine";
+import { getDeviceId } from "@/lib/sync-utils";
+import { logAudit, getClientIp } from "@/lib/audit";
 
 export async function PUT(
   request: Request,
@@ -46,6 +49,18 @@ export async function PUT(
     });
 
     broadcast("supplier:change", { id: supplierId });
+    void logChange(getDeviceId(), "UPDATE", "supplier", supplierId, updateData);
+    void logAudit({
+      userId: parseInt(session.user.id, 10),
+      userName: session.user.name,
+      userRole: session.user.role,
+      action: "update",
+      entity: "supplier",
+      entityId: supplierId,
+      description: `Proveedor modificado: ${supplier.name || '#' + supplierId}`,
+      details: updateData,
+      ip: getClientIp(request),
+    });
     return Response.json(supplier);
   } catch (error) {
     console.error("Error updating supplier:", error);
@@ -54,7 +69,7 @@ export async function PUT(
 }
 
 export async function DELETE(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
@@ -70,11 +85,28 @@ export async function DELETE(
       return Response.json({ error: "ID inválido" }, { status: 400 });
     }
 
+    const existing = await prisma.supplier.findUnique({
+      where: { id: supplierId },
+      select: { name: true },
+    });
+
     await prisma.supplier.delete({
       where: { id: supplierId },
     });
 
     broadcast("supplier:change", { id: supplierId });
+    void logChange(getDeviceId(), "DELETE", "supplier", supplierId, {});
+    void logAudit({
+      userId: parseInt(session.user.id, 10),
+      userName: session.user.name,
+      userRole: session.user.role,
+      action: "delete",
+      entity: "supplier",
+      entityId: supplierId,
+      description: `Proveedor eliminado: ${existing?.name || '#' + supplierId}`,
+      details: { name: existing?.name },
+      ip: getClientIp(request),
+    });
     return Response.json({ success: true });
   } catch (error) {
     console.error("Error deleting supplier:", error);

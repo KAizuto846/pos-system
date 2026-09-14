@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
-import { Upload, FileSpreadsheet, Database, Check, AlertCircle, Loader2, ArrowLeft, Table2, Settings2, Play } from 'lucide-react';
+import { Upload, FileSpreadsheet, Database, Check, AlertCircle, Loader2, ArrowLeft, Table2, Settings2, Play, Download, Trash2, Archive, Clock, FolderOpen } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -11,6 +11,8 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 
 interface PreviewData {
@@ -18,7 +20,7 @@ interface PreviewData {
   totalRows: number;
   previewRows: Record<string, unknown>[];
   fileName: string;
-  fileType: 'dbf' | 'csv';
+  fileType: 'dbf' | 'csv' | 'xlsx' | 'json';
 }
 
 interface FieldMapping {
@@ -40,6 +42,7 @@ const FIELD_OPTIONS: Record<string, Array<{ value: string; label: string; requir
     { value: 'cost', label: 'Costo' },
     { value: 'stock', label: 'Stock actual' },
     { value: 'minStock', label: 'Stock mínimo' },
+    { value: 'active', label: 'Activo (si/no)' },
     { value: 'department', label: 'Departamento' },
     { value: 'supplier', label: 'Proveedor' },
     { value: 'supplierPrice', label: 'Precio proveedor' },
@@ -70,6 +73,7 @@ const ASPEL_AUTO_MAP: Record<string, Record<string, string>> = {
   existencia: { name: 'stock', note: '' },
   codigo_barras: { name: 'barcode', note: '' },
   precio_venta: { name: 'price', note: '' },
+  activo: { name: 'active', note: 'si/no' },
   precio: { name: 'price', note: '' },
   costo_promedio: { name: 'cost', note: '' },
   costo_ultimo: { name: 'cost', note: '' },
@@ -102,9 +106,10 @@ export default function ImportPage() {
   const [entityType, setEntityType] = useState<string>('products');
   const [fieldMappings, setFieldMappings] = useState<FieldMapping[]>([]);
   const [options, setOptions] = useState({
-    updateExisting: false,
+    updateExisting: true,
     createMissingSuppliers: true,
     createMissingDepartments: true,
+    matchBy: 'barcode',
   });
   const [importing, setImporting] = useState(false);
   const [importProgress, setImportProgress] = useState(0);
@@ -116,13 +121,102 @@ export default function ImportPage() {
     errorDetails: string[];
   } | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deletePassword, setDeletePassword] = useState('');
+  const [deleting, setDeleting] = useState(false);
+  const [exporting, setExporting] = useState(false);
+
+  // ── Respaldo de datos ──
+  const [backupConfig, setBackupConfig] = useState<{
+    enabled: boolean;
+    intervalHours: number;
+    retentionDays: number;
+    folder: string;
+    lastRunAt?: string | null;
+    lastResult?: string | null;
+  }>({ enabled: false, intervalHours: 24, retentionDays: 30, folder: '' });
+  const [backupFiles, setBackupFiles] = useState<Array<{ name: string; size: number; mtime: string }>>([]);
+  const [backupLoading, setBackupLoading] = useState(true);
+  const [backupRunning, setBackupRunning] = useState(false);
+  const [backupSaving, setBackupSaving] = useState(false);
+
+  const loadBackupState = useCallback(async () => {
+    try {
+      const res = await fetch('/api/backup');
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.config) setBackupConfig(data.config);
+      if (Array.isArray(data.files)) setBackupFiles(data.files);
+    } catch {
+      // sin conexión o sin permisos
+    } finally {
+      setBackupLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    queueMicrotask(() => { loadBackupState(); });
+  }, [loadBackupState]);
+
+  const handleRunBackup = useCallback(async () => {
+    setBackupRunning(true);
+    try {
+      const res = await fetch('/api/backup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'run' }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Error al crear respaldo');
+      toast.success('Respaldo creado correctamente');
+      setBackupFiles(data.files || []);
+      loadBackupState();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al crear respaldo');
+    } finally {
+      setBackupRunning(false);
+    }
+  }, [loadBackupState]);
+
+  const handleSaveBackupConfig = useCallback(async () => {
+    setBackupSaving(true);
+    try {
+      const res = await fetch('/api/backup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'save',
+          config: {
+            enabled: backupConfig.enabled,
+            intervalHours: Number(backupConfig.intervalHours) || 24,
+            retentionDays: Number(backupConfig.retentionDays) || 30,
+            folder: backupConfig.folder,
+          },
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Error al guardar');
+      setBackupConfig(data.config);
+      toast.success(backupConfig.enabled ? 'Respaldos automáticos activados' : 'Respaldos automáticos desactivados');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al guardar');
+    } finally {
+      setBackupSaving(false);
+    }
+  }, [backupConfig]);
+
+  const formatBytes = (n: number) => {
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    return `${(n / (1024 * 1024)).toFixed(2)} MB`;
+  };
 
   const handleFileSelect = useCallback(async (selectedFile: File | null) => {
     if (!selectedFile) return;
 
     const ext = selectedFile.name.split('.').pop()?.toLowerCase();
-    if (ext !== 'dbf' && ext !== 'csv') {
-      toast.error('Solo se aceptan archivos .dbf o .csv');
+    if (ext !== 'dbf' && ext !== 'csv' && ext !== 'xlsx' && ext !== 'xls' && ext !== 'json') {
+      toast.error('Solo se aceptan archivos .dbf, .csv, .xlsx o .json');
       return;
     }
 
@@ -156,8 +250,16 @@ export default function ImportPage() {
       for (const col of data.columns) {
         const colLower = col.toLowerCase().replace(/\s+/g, '_');
         const aspelMatch = ASPEL_AUTO_MAP[colLower];
-        if (aspelMatch && fieldKeys.includes(aspelMatch.name)) {
-          autoMappings.push({ sourceField: col, targetField: aspelMatch.name });
+        let targetName = aspelMatch?.name;
+        // 'proveedor' es el proveedor del producto en importaciones de productos
+        if (colLower === 'proveedor' && entityType === 'products') {
+          targetName = 'supplier';
+        }
+        if (targetName && fieldKeys.includes(targetName)) {
+          autoMappings.push({ sourceField: col, targetField: targetName });
+        } else if (fieldKeys.includes(colLower)) {
+          // Coincidencia directa (ej. export JSON del propio sistema)
+          autoMappings.push({ sourceField: col, targetField: colLower });
         }
       }
 
@@ -186,6 +288,52 @@ export default function ImportPage() {
     e.preventDefault();
     setDragOver(false);
   }, []);
+
+  const handleExport = useCallback(async () => {
+    setExporting(true);
+    try {
+      const res = await fetch('/api/products/export');
+      if (!res.ok) throw new Error('Error al exportar');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `inventario-${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast.success('Inventario exportado correctamente');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al exportar');
+    } finally {
+      setExporting(false);
+    }
+  }, []);
+
+  const handleDeleteAll = useCallback(async () => {
+    if (!deletePassword) {
+      toast.error('Ingresa la contrasena');
+      return;
+    }
+    setDeleting(true);
+    try {
+      const res = await fetch('/api/products/delete-all', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: deletePassword }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Error');
+      toast.success(data.message || 'Inventario eliminado');
+      setShowDeleteModal(false);
+      setDeletePassword('');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al eliminar');
+    } finally {
+      setDeleting(false);
+    }
+  }, [deletePassword]);
 
   const updateMapping = useCallback((sourceField: string, targetField: string) => {
     setFieldMappings(prev => {
@@ -265,29 +413,148 @@ export default function ImportPage() {
         <div>
           <h1 className="text-2xl font-bold text-fg">Importar Datos</h1>
           <p className="mt-1 text-sm text-fg-muted">
-            Importa productos, proveedores y departamentos desde archivos DBF (Aspel) o CSV
+            Importa productos, proveedores y departamentos desde archivos DBF (Aspel), CSV o Excel
           </p>
         </div>
-        {importResult && (
-          <Button variant="outline" onClick={resetAll} className="border-line text-fg-muted">
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            Nueva importación
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={handleExport} disabled={exporting} className="border-line text-fg-muted">
+            <Download className="mr-2 h-4 w-4" />
+            {exporting ? 'Exportando...' : 'Exportar'}
           </Button>
-        )}
+          <Button variant="outline" onClick={() => setShowDeleteModal(true)} className="border-red-800 text-red-400 hover:bg-red-900/30">
+            <Trash2 className="mr-2 h-4 w-4" />
+            Eliminar todo
+          </Button>
+          {importResult && (
+            <Button variant="outline" onClick={resetAll} className="border-line text-fg-muted">
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Nueva importacion
+            </Button>
+          )}
+        </div>
       </div>
+
+      {/* Respaldo de datos */}
+      <Card className="border-line bg-surface-2/50">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-lg text-fg">
+            <Archive className="h-5 w-5 text-amber-400" />
+            Respaldos de datos
+          </CardTitle>
+          <CardDescription className="text-fg-muted">
+            Exporta TODA la base de datos (productos, ventas, clientes, proveedores, etc.) a un archivo JSON.
+            Puedes programarlo cada cierto tiempo, elegir cuántos días conservar y dónde guardarlo.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Configuración */}
+          <div className="grid gap-4 md:grid-cols-3">
+            <div className="space-y-2">
+              <Label className="flex items-center gap-1 text-xs text-fg-muted">
+                <Clock className="h-3.5 w-3.5" /> Cada cuántas horas
+              </Label>
+              <Input
+                type="number"
+                min={1}
+                max={8760}
+                value={backupConfig.intervalHours}
+                onChange={(e) => setBackupConfig(c => ({ ...c, intervalHours: parseInt(e.target.value) || 0 }))}
+                className="border-line-strong bg-surface text-fg"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="flex items-center gap-1 text-xs text-fg-muted">
+                <Clock className="h-3.5 w-3.5" /> Conservar (días)
+              </Label>
+              <Input
+                type="number"
+                min={1}
+                max={3650}
+                value={backupConfig.retentionDays}
+                onChange={(e) => setBackupConfig(c => ({ ...c, retentionDays: parseInt(e.target.value) || 0 }))}
+                className="border-line-strong bg-surface text-fg"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="flex items-center gap-1 text-xs text-fg-muted">
+                <FolderOpen className="h-3.5 w-3.5" /> Carpeta de destino
+              </Label>
+              <Input
+                value={backupConfig.folder}
+                onChange={(e) => setBackupConfig(c => ({ ...c, folder: e.target.value }))}
+                placeholder="(dejar vacío usa la carpeta por defecto del sistema)"
+                className="border-line-strong bg-surface text-fg"
+              />
+            </div>
+          </div>
+
+          {/* Controles */}
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" onClick={handleRunBackup} disabled={backupRunning} className="border-line text-fg-muted">
+              <Download className="mr-2 h-4 w-4" />
+              {backupRunning ? 'Creando...' : 'Crear respaldo ahora'}
+            </Button>
+            <Button variant="outline" onClick={handleSaveBackupConfig} disabled={backupSaving} className="border-line text-fg-muted">
+              <Settings2 className="mr-2 h-4 w-4" />
+              {backupSaving ? 'Guardando...' : 'Guardar configuración'}
+            </Button>
+            <Badge variant={backupConfig.enabled ? 'default' : 'outline'} className={backupConfig.enabled ? 'bg-brand/40 text-brand border-brand-strong' : 'border-line-strong text-fg-subtle'}>
+              {backupConfig.enabled ? 'Automático activado' : 'Automático desactivado'}
+            </Badge>
+          </div>
+
+          {backupConfig.lastResult && (
+            <div className="rounded-md border border-line bg-surface/50 px-3 py-2 text-xs text-fg-muted">
+              <span className="text-fg-muted font-medium">Último respaldo:</span> {backupConfig.lastResult}
+            </div>
+          )}
+
+          {/* Lista de archivos */}
+          <div>
+            <p className="mb-2 text-xs font-medium text-fg-muted">Archivos de respaldo ({backupFiles.length})</p>
+            {backupLoading ? (
+              <p className="text-sm text-fg-subtle">Cargando...</p>
+            ) : backupFiles.length === 0 ? (
+              <p className="rounded-md border border-dashed border-line px-3 py-4 text-center text-sm text-fg-subtle">
+                No hay respaldos todavía. Crea uno con el botón &quot;Crear respaldo ahora&quot;.
+              </p>
+            ) : (
+              <div className="max-h-48 space-y-1.5 overflow-y-auto pr-1">
+                {backupFiles.map((f) => (
+                  <div key={f.name} className="flex items-center justify-between rounded-md border border-line bg-surface/40 px-3 py-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-fg">{f.name}</p>
+                      <p className="text-[11px] text-fg-subtle">
+                        {formatBytes(f.size)} · {new Date(f.mtime).toLocaleString('es-MX')}
+                      </p>
+                    </div>
+                    <a
+                      href={`/api/backup?download=${encodeURIComponent(f.name)}`}
+                      className="flex h-8 w-8 items-center justify-center rounded-md border border-line-strong text-fg-muted transition-colors hover:bg-line hover:text-fg"
+                      title="Descargar respaldo"
+                    >
+                      <Download className="h-4 w-4" />
+                    </a>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
       {!importResult ? (
         <>
           {/* Step 1: File Upload */}
-          <Card className="bg-surface-2/50/50">
+          <Card className="border-line bg-surface-2/50">
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-lg text-fg">
                 <Upload className="h-5 w-5 text-brand" />
                 1. Selecciona el archivo
               </CardTitle>
-              <CardDescription className="text-fg-muted">
-                Arrastra un archivo .DBF (Aspel) o .CSV, o haz clic para seleccionarlo
-              </CardDescription>
+                <CardDescription className="text-fg-muted">
+                    Arrastra un archivo .DBF (Aspel), .CSV o .XLSX, o haz clic para seleccionarlo
+                  </CardDescription>
             </CardHeader>
             <CardContent>
               <div
@@ -306,7 +573,7 @@ export default function ImportPage() {
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".dbf,.csv"
+                  accept=".dbf,.csv,.xlsx,.xls,.json"
                   className="hidden"
                   onChange={(e) => handleFileSelect(e.target.files?.[0] ?? null)}
                 />
@@ -333,7 +600,7 @@ export default function ImportPage() {
                     <p className="mt-3 text-sm font-medium text-fg-muted">
                       Arrastra o haz clic para subir
                     </p>
-                    <p className="mt-1 text-xs text-line-strong">DBF (Aspel SAE/INVENTARIOS) o CSV</p>
+                        <p className="mt-1 text-xs text-line-strong">DBF (Aspel SAE/INVENTARIOS), CSV, Excel o JSON exportado</p>
                   </>
                 )}
               </div>
@@ -343,7 +610,7 @@ export default function ImportPage() {
           {/* Step 2: Entity Type & Preview */}
           {preview && (
             <>
-              <Card className="bg-surface-2/50/50">
+              <Card className="border-line bg-surface-2/50">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2 text-lg text-fg">
                     <Database className="h-5 w-5 text-brand" />
@@ -378,6 +645,28 @@ export default function ImportPage() {
                         onCheckedChange={(v) => setOptions(o => ({ ...o, updateExisting: v }))}
                       />
                     </div>
+                    {entityType === 'products' && (
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="space-y-0.5">
+                          <Label className="text-sm text-fg-muted">Actualizar por</Label>
+                          <p className="text-[11px] text-fg-subtle">
+                            Criterio para reemplazar un producto del inventario: mismo código de barras o mismo nombre.
+                          </p>
+                        </div>
+                        <Select
+                          value={options.matchBy}
+                          onValueChange={(v) => setOptions(o => ({ ...o, matchBy: v }))}
+                        >
+                          <SelectTrigger className="w-44 border-line-strong bg-surface-2 text-fg">
+                            <SelectValue placeholder="Criterio" />
+                          </SelectTrigger>
+                          <SelectContent className="border-line-strong bg-surface-2 text-fg">
+                            <SelectItem value="barcode">Código de barras</SelectItem>
+                            <SelectItem value="name">Nombre del producto</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
                     <div className="flex items-center justify-between">
                       <Label className="text-sm text-fg-muted">Crear proveedores faltantes automáticamente</Label>
                       <Switch
@@ -397,7 +686,7 @@ export default function ImportPage() {
               </Card>
 
               {/* Preview Table */}
-              <Card className="bg-surface-2/50/50">
+              <Card className="border-line bg-surface-2/50">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2 text-lg text-fg">
                     <Table2 className="h-5 w-5 text-brand" />
@@ -410,7 +699,7 @@ export default function ImportPage() {
                 <CardContent className="overflow-x-auto">
                   <table className="w-full text-left text-sm">
                     <thead>
-                      <tr className="border-b border-line/60">
+                      <tr className="border-b border-line">
                         <th className="py-2 pr-4 text-xs font-medium uppercase text-fg-subtle">#</th>
                         {preview.columns.map((col) => (
                           <th key={col} className="px-2 py-2 text-xs font-medium uppercase text-fg-subtle">
@@ -426,7 +715,7 @@ export default function ImportPage() {
                     </thead>
                     <tbody>
                       {preview.previewRows.slice(0, 10).map((row, i) => (
-                        <tr key={i} className="border-b border-line/50 hover:bg-surface-2/50">
+                        <tr key={i} className="border-b border-surface-2 hover:bg-surface-2/50">
                           <td className="py-2 pr-4 text-xs text-line-strong">{i + 1}</td>
                           {preview.columns.map((col) => (
                             <td key={col} className="max-w-[200px] truncate px-2 py-2 text-fg-muted">
@@ -441,7 +730,7 @@ export default function ImportPage() {
               </Card>
 
               {/* Step 4: Field Mapping */}
-              <Card className="bg-surface-2/50/50">
+              <Card className="border-line bg-surface-2/50">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2 text-lg text-fg">
                     <Settings2 className="h-5 w-5 text-brand" />
@@ -505,7 +794,7 @@ export default function ImportPage() {
                     const missingRequired = requiredFields.filter(f => !mappedTargets.includes(f));
                     if (missingRequired.length > 0) {
                       return (
-                        <div className="flex items-center gap-2 rounded-lg bg-amber-500/10 p-3 text-[13px] text-amber-300">
+                        <div className="flex items-center gap-2 rounded-lg border border-amber-700/50 bg-amber-900/20 p-3 text-sm text-amber-400">
                           <AlertCircle className="h-4 w-4 flex-shrink-0" />
                           <span>
                             Campos requeridos faltantes:{' '}
@@ -557,7 +846,7 @@ export default function ImportPage() {
         </>
       ) : (
         /* Results */
-        <Card className="bg-surface-2/50/50">
+        <Card className="border-line bg-surface-2/50">
           <CardHeader>
             <CardTitle className="text-lg text-fg">📊 Resultado de importación</CardTitle>
           </CardHeader>
@@ -584,7 +873,7 @@ export default function ImportPage() {
             </div>
 
             {importResult.errorDetails.length > 0 && (
-              <div className="rounded-lg bg-red-500/10 p-4">
+              <div className="rounded-lg border border-red-800/50 bg-red-900/20 p-4">
                 <p className="mb-2 text-sm font-medium text-red-400">
                   Detalles de errores ({importResult.errorDetails.length})
                 </p>
@@ -608,6 +897,53 @@ export default function ImportPage() {
           </CardContent>
         </Card>
       )}
+
+      {/* Delete all inventory modal */}
+      <Dialog open={showDeleteModal} onOpenChange={setShowDeleteModal}>
+        <DialogContent className="border-line bg-surface-2 text-fg">
+          <DialogHeader>
+            <DialogTitle className="text-red-400 flex items-center gap-2">
+              <Trash2 className="h-5 w-5" />
+              Eliminar todo el inventario
+            </DialogTitle>
+            <DialogDescription className="text-fg-muted">
+              Esta accion eliminara TODO el negocio: productos, ventas, reembolsos,
+              pedidos a proveedores, clientes, movimientos de caja y reportes de turno.
+              Se conservan usuarios, métodos de pago, departamentos y proveedores.
+              Esta operacion NO se puede deshacer.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-4">
+            <div className="rounded-lg border border-red-800/50 bg-red-900/20 p-3 text-sm text-red-400">
+              Se requiere la contrasena de un administrador para confirmar.
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="deletePassword">Contrasena de administrador</Label>
+              <Input
+                id="deletePassword"
+                type="password"
+                placeholder="Ingresa tu contrasena"
+                value={deletePassword}
+                onChange={(e) => setDeletePassword(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleDeleteAll(); }}
+                className="border-line-strong bg-line text-fg"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setShowDeleteModal(false); setDeletePassword(''); }} className="border-line-strong text-fg-muted">
+              Cancelar
+            </Button>
+            <Button onClick={handleDeleteAll} disabled={deleting || !deletePassword} className="bg-red-600 text-white hover:bg-red-500">
+              {deleting ? (
+                <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Eliminando...</>
+              ) : (
+                'Confirmar eliminacion'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

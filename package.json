@@ -1,9 +1,9 @@
 {
   "name": "pos-system-new",
-  "version": "1.0.0",
+  "version": "8.0.0",
   "description": "Sistema de Punto de Venta — POS System",
   "author": "KAizuto846",
-  "private": true,
+  "private": false,
   "main": "electron/main.js",
   "scripts": {
     "dev": "next dev",
@@ -30,6 +30,7 @@
     "@radix-ui/react-switch": "^1.2.6",
     "@radix-ui/react-tabs": "^1.1.13",
     "@tanstack/react-query": "^5.100.10",
+    "@zxing/library": "^0.21.3",
     "bcrypt-ts": "^8.0.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -45,13 +46,13 @@
     "next": "16.2.6",
     "next-auth": "^5.0.0-beta.31",
     "papaparse": "^5.5.3",
-    "prisma": "^5.22.0",
+    "qrcode": "^1.5.4",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "react-hot-toast": "^2.6.0",
     "recharts": "^3.8.1",
     "tailwind-merge": "^3.6.0",
-    "tesseract.js": "^5.1.1",
+    "xlsx": "^0.18.5",
     "zod": "^4.4.3",
     "zustand": "^5.0.13"
   },
@@ -60,6 +61,7 @@
     "@types/multer": "^2.1.0",
     "@types/node": "^20",
     "@types/papaparse": "^5.5.2",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "concurrently": "^9.2.1",
@@ -67,6 +69,7 @@
     "electron-builder": "^25.1.8",
     "eslint": "^9",
     "eslint-config-next": "16.2.6",
+    "prisma": "^5.22.0",
     "tailwindcss": "^4",
     "typescript": "^5",
     "wait-on": "^8.0.4"
@@ -96,18 +99,18 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
-        },
-        {
-          "target": "zip",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "public/icons/icon-512.png",
       "sign": null,
+      "signAndEditExecutable": false,
       "verifyUpdateCodeSignature": false
     },
     "nsis": {
+      "artifactName": "POS-System-Setup-${version}.${ext}",
       "oneClick": false,
       "perMachine": true,
       "allowToChangeInstallationDirectory": true,
@@ -119,7 +122,10 @@
       "license": "LICENSE"
     },
     "linux": {
-      "target": ["AppImage", "deb"],
+      "target": [
+        "AppImage",
+        "deb"
+      ],
       "icon": "public/icons",
       "category": "Office"
     },

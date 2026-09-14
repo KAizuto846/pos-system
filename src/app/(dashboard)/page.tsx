@@ -2,22 +2,96 @@
 
 import { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
-import { Users, Package, DollarSign, ShoppingCart, AlertTriangle } from 'lucide-react';
+import toast from 'react-hot-toast';
+import { Users, Package, DollarSign, ShoppingCart, CalendarClock, FileText, Download, Filter } from 'lucide-react';
+import {
+  Card,
+  CardHeader,
+  CardTitle,
+  CardContent,
+} from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { cn } from '@/lib/utils';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from '@/components/ui/select';
+
+// Descarga el contenido como archivo de texto plano
+function downloadTextFile(filename: string, content: string) {
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+interface LowStockProduct {
+  id: number;
+  name: string;
+  stock: number;
+  minStock: number;
+  supplierId: number | null;
+  supplierName: string | null;
+  departmentId: number | null;
+  departmentName: string | null;
+}
+
+interface ExpiringProduct {
+  productId: number;
+  name: string;
+  stock: number;
+  quantity: number;
+  expiresAt: string;
+  supplierId: number | null;
+  supplierName: string | null;
+  departmentId: number | null;
+  departmentName: string | null;
+}
 
 interface Stats {
   totalUsers: number;
   totalProducts: number;
   todaySales: number;
   todayRevenue: number;
-  lowStockProducts: { id: number; name: string; stock: number; minStock: number }[];
+  lowStockProducts: LowStockProduct[];
+  expiringProducts: ExpiringProduct[];
 }
+
+interface FilterOption {
+  id: number;
+  name: string;
+}
+
+const FILTER_KEYS = {
+  supplier: 'dashboard.supplierFilter',
+  department: 'dashboard.departmentFilter',
+} as const;
 
 export default function DashboardPage() {
   const { data: session } = useSession();
   const [stats, setStats] = useState<Stats | null>(null);
+  const [now, setNow] = useState(() => Date.now());
   const [loading, setLoading] = useState(true);
+  const [suppliers, setSuppliers] = useState<FilterOption[]>([]);
+  const [departments, setDepartments] = useState<FilterOption[]>([]);
+  const [filterSupplier, setFilterSupplier] = useState<string>('all');
+  const [filterDepartment, setFilterDepartment] = useState<string>('all');
+
+  useEffect(() => {
+    queueMicrotask(() => {
+      setFilterSupplier(localStorage.getItem(FILTER_KEYS.supplier) || 'all');
+      setFilterDepartment(localStorage.getItem(FILTER_KEYS.department) || 'all');
+    });
+  }, []);
 
   useEffect(() => {
     fetch('/api/stats')
@@ -25,120 +99,293 @@ export default function DashboardPage() {
       .then((data) => {
         if (data && typeof data.totalUsers === 'number') {
           setStats(data);
+          setNow(Date.now());
         }
         setLoading(false);
       })
       .catch(() => setLoading(false));
   }, []);
 
+  useEffect(() => {
+    fetch('/api/suppliers')
+      .then((res) => res.json())
+      .then((data) => {
+        if (Array.isArray(data)) setSuppliers(data);
+      })
+      .catch(() => {});
+    fetch('/api/departments')
+      .then((res) => res.json())
+      .then((data) => {
+        if (Array.isArray(data)) setDepartments(data);
+      })
+      .catch(() => {});
+  }, []);
+
+  const changeSupplierFilter = (value: string) => {
+    setFilterSupplier(value);
+    localStorage.setItem(FILTER_KEYS.supplier, value);
+  };
+
+  const changeDepartmentFilter = (value: string) => {
+    setFilterDepartment(value);
+    localStorage.setItem(FILTER_KEYS.department, value);
+  };
+
+  const clearFilters = () => {
+    changeSupplierFilter('all');
+    changeDepartmentFilter('all');
+  };
+
+  const filteredLowStock = stats?.lowStockProducts.filter((p) =>
+    (filterSupplier === 'all' || p.supplierId === Number(filterSupplier)) &&
+    (filterDepartment === 'all' || p.departmentId === Number(filterDepartment))
+  ) ?? [];
+
+  const filteredExpiring = stats?.expiringProducts.filter((p) =>
+    (filterSupplier === 'all' || p.supplierId === Number(filterSupplier)) &&
+    (filterDepartment === 'all' || p.departmentId === Number(filterDepartment))
+  ) ?? [];
+
   const statCards = [
     {
-      title: 'Usuarios',
+      title: 'Total Users',
       value: stats?.totalUsers ?? 0,
       icon: Users,
-      accent: 'text-sky-400',
+      color: 'text-blue-400',
+      bg: 'bg-blue-600/10',
     },
     {
-      title: 'Productos',
+      title: 'Total Products',
       value: stats?.totalProducts ?? 0,
       icon: Package,
-      accent: 'text-brand',
+      color: 'text-brand',
+      bg: 'bg-brand-strong/10',
     },
     {
-      title: 'Ventas de hoy',
+      title: "Today's Sales",
       value: stats?.todaySales ?? 0,
       icon: ShoppingCart,
-      accent: 'text-amber-400',
+      color: 'text-amber-400',
+      bg: 'bg-amber-600/10',
     },
     {
-      title: 'Ingresos de hoy',
+      title: "Today's Revenue",
       value: stats ? `$${(stats.todayRevenue || 0).toFixed(2)}` : '$0.00',
       icon: DollarSign,
-      accent: 'text-violet-400',
+      color: 'text-purple-400',
+      bg: 'bg-purple-600/10',
     },
   ];
 
-  const lowStock = stats?.lowStockProducts ?? [];
+  const exportLowStock = () => {
+    const lines: string[] = [
+      `LISTA DE PRODUCTOS BAJOS / SIN STOCK`,
+      `Generado: ${new Date().toLocaleString('es-MX')}`,
+      `Proveedor: ${filterSupplier === 'all' ? 'Todos' : (suppliers.find(s => s.id === Number(filterSupplier))?.name || 'Todos')}`,
+      `Departamento: ${filterDepartment === 'all' ? 'Todos' : (departments.find(d => d.id === Number(filterDepartment))?.name || 'Todos')}`,
+      '=======================================',
+      '',
+      `${'Producto'.padEnd(38)}Stock`,
+      '---------------------------------------',
+      ...(filteredLowStock.length > 0
+        ? filteredLowStock.map((p) => `${p.name.slice(0, 38).padEnd(38)}${p.stock}`)
+        : ['No hay productos bajos de stock.']),
+      '',
+      `Total de productos: ${filteredLowStock.length}`,
+    ];
+    downloadTextFile(`stock-bajo-${new Date().toISOString().slice(0, 10)}.txt`, lines.join('\n'));
+    toast('Archivo de stock bajo exportado');
+  };
+
+  const exportExpiring = () => {
+    const lines: string[] = [
+      `LISTA DE PRODUCTOS POR CADUCAR (60 dias)`,
+      `Generado: ${new Date().toLocaleString('es-MX')}`,
+      `Proveedor: ${filterSupplier === 'all' ? 'Todos' : (suppliers.find(s => s.id === Number(filterSupplier))?.name || 'Todos')}`,
+      `Departamento: ${filterDepartment === 'all' ? 'Todos' : (departments.find(d => d.id === Number(filterDepartment))?.name || 'Todos')}`,
+      '=======================================',
+      '',
+      `${'Producto'.padEnd(28)}${'Piezas'.padEnd(8)}Vence`,
+      '---------------------------------------',
+      ...(filteredExpiring.length > 0
+        ? filteredExpiring.map((b) => {
+            const d = new Date(b.expiresAt).toLocaleDateString('es-MX', { month: '2-digit', year: 'numeric' });
+            return `${b.name.slice(0, 28).padEnd(28)}${String(b.quantity).padEnd(8)}${d}`;
+          })
+        : ['No hay productos próximos a caducar.']),
+      '',
+      `Total de lotes: ${filteredExpiring.length}`,
+    ];
+    downloadTextFile(`por-caducar-${new Date().toISOString().slice(0, 10)}.txt`, lines.join('\n'));
+    toast('Archivo de productos por caducar exportado');
+  };
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <div>
-        <h2 className="text-[20px] font-medium tracking-tight text-fg">
-          {session?.user?.name ? `Hola, ${session.user.name}` : 'Bienvenido'}
+        <h2 className="text-2xl font-bold text-fg">
+          Welcome{session?.user?.name ? `, ${session.user.name}` : ''}!
         </h2>
-        <p className="mt-1 text-[13px] text-fg-muted">
-          Resumen operativo del punto de venta
+        <p className="text-sm text-fg-muted mt-1">
+          Here is an overview of your POS system
         </p>
       </div>
 
-      {/* Métricas — separadas por líneas, no por cajas */}
-      <div className="grid divide-y divide-line/60 border-y border-line/60 sm:grid-cols-2 sm:divide-y-0 sm:divide-x lg:grid-cols-4">
+      {/* Stats Grid */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {loading
           ? Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="px-0 py-5 sm:px-6">
-                <Skeleton className="h-3 w-24" />
-                <Skeleton className="mt-3 h-7 w-20" />
-              </div>
+              <Card key={i} className="border-line bg-surface-2">
+                <CardHeader className="pb-2">
+                  <Skeleton className="h-4 w-24 bg-line" />
+                </CardHeader>
+                <CardContent>
+                  <Skeleton className="h-8 w-16 bg-line" />
+                </CardContent>
+              </Card>
             ))
           : statCards.map((card) => {
               const Icon = card.icon;
               return (
-                <div
-                  key={card.title}
-                  className="flex items-start justify-between gap-4 px-0 py-5 sm:px-6"
-                >
-                  <div>
-                    <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-fg-subtle">
+                <Card key={card.title} className="border-line bg-surface-2">
+                  <CardHeader className="flex flex-row items-center justify-between pb-2">
+                    <CardTitle className="text-sm font-medium text-fg-muted">
                       {card.title}
-                    </p>
-                    <p className="mt-2 text-[24px] font-medium leading-none tracking-tight text-fg">
+                    </CardTitle>
+                    <div className={`rounded-lg p-2 ${card.bg}`}>
+                      <Icon className={`h-4 w-4 ${card.color}`} />
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-bold text-fg">
                       {card.value}
-                    </p>
-                  </div>
-                  <Icon className={cn('mt-0.5 h-4 w-4', card.accent)} />
-                </div>
+                    </div>
+                  </CardContent>
+                </Card>
               );
             })}
       </div>
 
-      {/* Alertas de stock bajo */}
-      {lowStock.length > 0 && (
-        <section>
-          <div className="mb-3 flex items-center gap-2">
-            <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />
-            <h3 className="text-[13px] font-medium text-fg">Stock bajo</h3>
-            <span className="text-[11px] text-fg-subtle">
-              {lowStock.length} producto{lowStock.length === 1 ? '' : 's'}
-            </span>
+      {/* Inventory Filters */}
+      <Card className="border-line bg-surface-2">
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-sm font-medium text-fg-muted">
+            <Filter className="h-4 w-4 text-brand" />
+            Filtros de inventario (caducan y stock bajo)
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-wrap items-end gap-4">
+          <div className="space-y-1.5">
+            <Label className="text-xs text-fg-subtle">Proveedor</Label>
+            <Select value={filterSupplier} onValueChange={changeSupplierFilter}>
+              <SelectTrigger className="w-56 border-line-strong bg-surface-2 text-fg">
+                <SelectValue placeholder="Todos los proveedores" />
+              </SelectTrigger>
+              <SelectContent className="border-line-strong bg-surface-2 text-fg">
+                <SelectItem value="all">Todos los proveedores</SelectItem>
+                {suppliers.map((s) => (
+                  <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs text-fg-subtle">Departamento</Label>
+            <Select value={filterDepartment} onValueChange={changeDepartmentFilter}>
+              <SelectTrigger className="w-56 border-line-strong bg-surface-2 text-fg">
+                <SelectValue placeholder="Todos los departamentos" />
+              </SelectTrigger>
+              <SelectContent className="border-line-strong bg-surface-2 text-fg">
+                <SelectItem value="all">Todos los departamentos</SelectItem>
+                {departments.map((d) => (
+                  <SelectItem key={d.id} value={String(d.id)}>{d.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          {(filterSupplier !== 'all' || filterDepartment !== 'all') && (
+            <Button variant="outline" size="sm" onClick={clearFilters} className="border-line-strong text-fg-muted">
+              Limpiar filtros
+            </Button>
+          )}
+        </CardContent>
+      </Card>
 
-          <div className="divide-y divide-line/50 overflow-hidden rounded-xl bg-surface-2/50">
-            {lowStock.slice(0, 10).map((product) => {
-              const ratio = product.minStock > 0
-                ? Math.min(100, Math.round((product.stock / product.minStock) * 100))
-                : 100;
-              return (
+      {/* Expiring Products Alerts */}
+      {stats && stats.expiringProducts && filteredExpiring.length > 0 && (
+        <Card className="border-red-900/60 bg-surface-2">
+          <CardHeader className="flex flex-row items-center justify-between">
+            <CardTitle className="flex items-center gap-2 text-fg">
+              <CalendarClock className="h-4 w-4 text-amber-400" />
+              Próximos a Caducar (60 días)
+              <span className="text-xs font-normal text-fg-muted">({filteredExpiring.length})</span>
+            </CardTitle>
+            <Button variant="outline" size="sm" onClick={exportExpiring} className="border-amber-700/50 text-amber-300 hover:bg-amber-900/20">
+              <FileText className="mr-2 h-3.5 w-3.5" />
+              Exportar .txt
+            </Button>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              {filteredExpiring.slice(0, 15).map((b) => {
+                const daysLeft = Math.ceil((new Date(b.expiresAt).getTime() - now) / (24 * 60 * 60 * 1000));
+                const critical = daysLeft <= 30;
+                return (
+                  <div
+                    key={`${b.productId}-${b.expiresAt}`}
+                    className={`flex items-center justify-between rounded-lg border px-4 py-2 ${
+                      critical
+                        ? 'border-red-800 bg-red-950/40'
+                        : 'border-amber-800/60 bg-amber-950/20'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="text-sm text-fg">{b.name}</span>
+                      <span className="text-xs text-fg-muted">Vence: {new Date(b.expiresAt).toLocaleDateString('es-MX', { month: '2-digit', year: 'numeric' })}</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-sm text-fg-muted">{b.quantity} piezas</span>
+                      <span className={`text-sm font-medium ${critical ? 'text-red-400' : 'text-amber-400'}`}>
+                        {daysLeft <= 0 ? 'VENCIDO' : `${daysLeft} días`}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Low Stock Alerts */}
+      {stats && stats.lowStockProducts && filteredLowStock.length > 0 && (
+        <Card className="border-line bg-surface-2">
+          <CardHeader className="flex flex-row items-center justify-between">
+            <CardTitle className="flex items-center gap-2 text-fg">
+              Low Stock Alerts
+              <span className="text-xs font-normal text-fg-muted">({filteredLowStock.length})</span>
+            </CardTitle>
+            <Button variant="outline" size="sm" onClick={exportLowStock} className="border-line-strong text-fg-muted hover:bg-line">
+              <Download className="mr-2 h-3.5 w-3.5" />
+              Exportar .txt
+            </Button>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              {filteredLowStock.slice(0, 10).map((product) => (
                 <div
                   key={product.id}
-                  className="flex items-center justify-between gap-4 px-4 py-2.5 transition-colors hover:bg-white/[0.03]"
+                  className="flex items-center justify-between rounded-lg bg-surface-2/50 px-4 py-2"
                 >
-                  <span className="truncate text-[13px] text-fg-muted">{product.name}</span>
-                  <div className="flex shrink-0 items-center gap-3">
-                    <div className="hidden h-1 w-24 overflow-hidden rounded-full bg-white/[0.07] sm:block">
-                      <div
-                        className="h-full rounded-full bg-amber-500/80"
-                        style={{ width: `${ratio}%` }}
-                      />
-                    </div>
-                    <span className="tabular-nums text-[12px] text-amber-300/90">
-                      {product.stock} / {product.minStock}
-                    </span>
-                  </div>
+                  <span className="text-sm text-fg">{product.name}</span>
+                  <span className="text-sm text-red-400 font-medium">
+                    {product.stock} / {product.minStock} min
+                  </span>
                 </div>
-              );
-            })}
-          </div>
-        </section>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
       )}
     </div>
   );

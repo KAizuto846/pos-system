@@ -3,6 +3,9 @@ import { prisma } from "@/lib/db";
 import { userSchema } from "@/lib/validations";
 import { hash } from "bcrypt-ts";
 import { broadcast } from "@/lib/broadcast";
+import { logChange } from "@/lib/sync-engine";
+import { getDeviceId } from "@/lib/sync-utils";
+import { logAudit, getClientIp } from "@/lib/audit";
 
 export async function PUT(
   request: Request,
@@ -39,8 +42,6 @@ export async function PUT(
     if (data.name !== undefined) updateData.name = data.name;
     if (data.role !== undefined) updateData.role = data.role;
     if (data.active !== undefined) updateData.active = data.active;
-    if (data.recoveryEmail !== undefined)
-      updateData.recoveryEmail = data.recoveryEmail || null;
     if (data.password) {
       updateData.password = await hash(data.password, 10);
     }
@@ -60,6 +61,24 @@ export async function PUT(
     });
 
     broadcast("user:change", { id: userId });
+    void logChange(getDeviceId(), "UPDATE", "user", userId, {
+      id: userId,
+      ...(data.username && { username: data.username }),
+      ...(data.name && { name: data.name }),
+      ...(data.role && { role: data.role }),
+      ...(data.active !== undefined && { active: data.active }),
+    });
+    void logAudit({
+      userId: parseInt(session.user.id, 10),
+      userName: session.user.name,
+      userRole: session.user.role,
+      action: "update",
+      entity: "user",
+      entityId: userId,
+      description: `Usuario modificado: ${user.name || '#' + userId}`,
+      details: updateData,
+      ip: getClientIp(request),
+    });
     return Response.json(user);
   } catch (error) {
     console.error("Error updating user:", error);
@@ -68,7 +87,7 @@ export async function PUT(
 }
 
 export async function DELETE(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
@@ -91,11 +110,28 @@ export async function DELETE(
       );
     }
 
+    const existing = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { name: true, username: true },
+    });
+
     await prisma.user.delete({
       where: { id: userId },
     });
 
     broadcast("user:change", { id: userId });
+    void logChange(getDeviceId(), "DELETE", "user", userId, {});
+    void logAudit({
+      userId: parseInt(session.user.id, 10),
+      userName: session.user.name,
+      userRole: session.user.role,
+      action: "delete",
+      entity: "user",
+      entityId: userId,
+      description: `Usuario eliminado: ${existing?.name || existing?.username || '#' + userId}`,
+      details: { name: existing?.name, username: existing?.username },
+      ip: getClientIp(request),
+    });
     return Response.json({ success: true });
   } catch (error) {
     console.error("Error deleting user:", error);

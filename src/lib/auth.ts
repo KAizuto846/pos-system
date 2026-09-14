@@ -4,10 +4,14 @@ import { PrismaAdapter } from "@auth/prisma-adapter";
 import { compare } from "bcrypt-ts";
 import { prisma } from "@/lib/db";
 import { loginSchema } from "@/lib/validations";
+import { logAudit } from "@/lib/audit";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   adapter: PrismaAdapter(prisma),
   session: { strategy: "jwt" },
+  // Deriva la URL base del Host de cada request: el login funciona tanto desde
+  // localhost como desde http://IP-LAN:PUERTO (acceso desde el teléfono).
+  trustHost: true,
   pages: {
     signIn: "/login",
   },
@@ -31,6 +35,17 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
         const isValid = await compare(password, user.password);
         if (!isValid) return null;
+
+        // Registrar el inicio de sesión en el registro de auditoría
+        void logAudit({
+          userId: user.id,
+          userName: user.name || user.username,
+          userRole: user.role,
+          action: "login",
+          entity: "user",
+          entityId: user.id,
+          description: `Inicio de sesión de ${user.name || user.username}`,
+        });
 
         return {
           id: String(user.id),

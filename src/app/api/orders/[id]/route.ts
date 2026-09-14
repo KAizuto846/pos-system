@@ -1,7 +1,10 @@
 import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/db";
+import { initializePrisma, prisma } from "@/lib/db";
+import { logChange } from "@/lib/sync-engine";
+import { getDeviceId } from "@/lib/sync-utils";
+import type { Prisma } from "@prisma/client";
 
-const VALID_STATUSES = ["pending", "sent", "partial", "received", "cancelled"];
+const VALID_STATUSES = ["pending", "sent", "partial", "received", "cancelled", "on_hold", "ready"];
 
 export async function PUT(
   request: Request,
@@ -21,51 +24,84 @@ export async function PUT(
     }
 
     const body = await request.json();
-    const { status, items, notes } = body;
+    const { status, items, notes, removedItemIds } = body;
 
-    // If items are provided, update them (editing quantities/notes) and create stock batches for received items
+    // If items are provided, update them (editing quantities/notes, adding or removing rows)
     if (items && Array.isArray(items)) {
-      await prisma.$transaction(async (tx: any) => {
+      await initializePrisma();
+
+      interface ItemChange {
+        op: "CREATE" | "UPDATE" | "DELETE";
+        id: number;
+        data: Record<string, unknown>;
+      }
+      const itemChanges: ItemChange[] = [];
+
+      await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
         for (const item of items) {
-          // Read current receivedQuantity BEFORE updating
-          const current = await tx.supplierOrderItem.findUnique({
-            where: { id: item.id },
-            select: { receivedQuantity: true },
-          });
-          const oldQty = current?.receivedQuantity ?? 0;
-          const newTotalQty = item.receivedQuantity ?? 0;
-          const deltaQty = Math.max(0, newTotalQty - oldQty);
-
-          await tx.supplierOrderItem.update({
-            where: { id: item.id },
-            data: {
-              quantity: item.quantity ?? undefined,
-              receivedQuantity: item.receivedQuantity ?? undefined,
-              notes: item.notes ?? undefined,
-            },
-          });
-
-          // Create stock batch for newly received quantity
-          const batchInfo = item.batch;
-          if (deltaQty > 0 && item.productId) {
-            await tx.stockBatch.create({
+          if (typeof item.id === "number" && Number.isFinite(item.id) && item.id > 0) {
+            await tx.supplierOrderItem.update({
+              where: { id: item.id },
               data: {
-                productId: item.productId,
-                quantity: deltaQty,
-                expiryDate: batchInfo?.expiryDate ? new Date(batchInfo.expiryDate) : null,
-                batchCode: batchInfo?.batchCode || '',
-                receivedVia: 'order',
-                notes: `Recibido en pedido #${orderId}`,
+                quantity: item.quantity ?? undefined,
+                receivedQuantity: item.receivedQuantity ?? undefined,
+                notes: item.notes ?? undefined,
               },
             });
-
-            await tx.product.update({
-              where: { id: item.productId },
-              data: { stock: { increment: deltaQty } },
+            itemChanges.push({
+              op: "UPDATE",
+              id: item.id,
+              data: {
+                quantity: item.quantity ?? undefined,
+                receivedQuantity: item.receivedQuantity ?? undefined,
+                notes: item.notes ?? undefined,
+              },
+            });
+          } else {
+            // Item nuevo (agregado desde el detalle del pedido)
+            const isGhost = typeof item.productId !== "number";
+            const created = await tx.supplierOrderItem.create({
+              data: {
+                supplierOrderId: orderId,
+                productId: isGhost ? null : item.productId,
+                productName: isGhost ? String(item.name || "").trim() : "",
+                productBarcode: isGhost ? String(item.barcode || "").trim() : "",
+                quantity: item.quantity ?? 1,
+                costPrice: typeof item.cost === "number" ? item.cost : null,
+                isBox: item.isBox === true ? true : undefined,
+                unitsPerBox: item.isBox === true ? item.unitsPerBox ?? null : undefined,
+              },
+            });
+            itemChanges.push({
+              op: "CREATE",
+              id: created.id,
+              data: {
+                id: created.id,
+                supplierOrderId: orderId,
+                productId: created.productId,
+                productName: created.productName,
+                productBarcode: created.productBarcode,
+                quantity: created.quantity,
+                costPrice: created.costPrice,
+                isBox: created.isBox,
+                unitsPerBox: created.unitsPerBox,
+              },
             });
           }
         }
+        if (Array.isArray(removedItemIds) && removedItemIds.length > 0) {
+          await tx.supplierOrderItem.deleteMany({
+            where: { id: { in: removedItemIds } },
+          });
+          for (const removedId of removedItemIds as number[]) {
+            itemChanges.push({ op: "DELETE", id: removedId, data: {} });
+          }
+        }
       });
+
+      for (const change of itemChanges) {
+        void logChange(getDeviceId(), change.op, "supplierorderitem", change.id, change.data);
+      }
 
       const order = await prisma.supplierOrder.findUnique({
         where: { id: orderId },
@@ -105,6 +141,7 @@ export async function PUT(
       },
     });
 
+    void logChange(getDeviceId(), "UPDATE", "order", orderId, updateData);
     return Response.json(order);
   } catch (error) {
     console.error("Error updating order:", error);
@@ -133,6 +170,7 @@ export async function DELETE(
       where: { id: orderId },
     });
 
+    void logChange(getDeviceId(), "DELETE", "order", orderId, {});
     return Response.json({ success: true });
   } catch (error) {
     console.error("Error deleting order:", error);

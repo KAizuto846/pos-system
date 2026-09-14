@@ -1,5 +1,6 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "windows"]
 }
 
 datasource db {
@@ -8,17 +9,17 @@ datasource db {
 }
 
 model User {
-  id                   Int       @id @default(autoincrement())
-  username             String    @unique
-  password             String
-  name                 String    @default("")
-  role                 String    @default("CASHIER")
+  id        Int      @id @default(autoincrement())
+  username  String   @unique
+  password  String
+  name      String   @default("")
+  role      String   @default("CASHIER")
   active               Boolean   @default(true)
   recoveryEmail        String?   @map("recovery_email")
   passwordResetToken   String?   @unique @map("password_reset_token")
   passwordResetExpires DateTime? @map("password_reset_expires")
   createdAt            DateTime  @default(now()) @map("created_at")
-  updatedAt            DateTime  @updatedAt @map("updated_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   accounts  Account[]
   sessions  Session[]
@@ -26,6 +27,8 @@ model User {
   cashEntries CashEntry[]
   shiftReports ShiftReport[]
   refunds   Refund[]
+  createdOrders  SupplierOrder[] @relation("OrderCreatedBy")
+  receivedOrders SupplierOrder[] @relation("OrderReceivedBy")
 
   @@map("users")
 }
@@ -89,8 +92,11 @@ model Supplier {
   phone     String   @default("")
   email     String   @default("")
   address   String   @default("")
-  active    Boolean  @default(true)
-  createdAt DateTime @default(now()) @map("created_at")
+  active               Boolean   @default(true)
+  recoveryEmail        String?   @map("recovery_email")
+  passwordResetToken   String?   @unique @map("password_reset_token")
+  passwordResetExpires DateTime? @map("password_reset_expires")
+  createdAt            DateTime  @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
   products       Product[]
@@ -116,35 +122,97 @@ model PaymentMethod {
 }
 
 model Product {
-  id           Int        @id @default(autoincrement())
-  name         String
-  barcode      String     @default("")
-  price        Float
-  cost         Float      @default(0)
-  stock        Int        @default(0)
-  minStock     Int        @default(5) @map("min_stock")
-  active       Boolean    @default(true)
-  createdAt    DateTime   @default(now()) @map("created_at")
-  updatedAt    DateTime   @updatedAt @map("updated_at")
+  id             Int        @id @default(autoincrement())
+  name           String
+  barcode        String     @default("")
+  price          Float
+  cost           Float      @default(0)
+  stock          Int        @default(0)
+  minStock       Int        @default(5) @map("min_stock")
+  active         Boolean    @default(true)
+  loyaltyDiscount Boolean   @default(false) @map("loyalty_discount")
+  createdAt      DateTime   @default(now()) @map("created_at")
+  updatedAt      DateTime   @updatedAt @map("updated_at")
 
-  departmentId Int?       @map("department_id")
-  department   Department? @relation(fields: [departmentId], references: [id])
-  supplierId   Int?       @map("supplier_id")
-  supplier     Supplier?  @relation(fields: [supplierId], references: [id])
+  departmentId   Int?       @map("department_id")
+  department     Department? @relation(fields: [departmentId], references: [id])
+  supplierId     Int?       @map("supplier_id")
+  supplier       Supplier?  @relation(fields: [supplierId], references: [id])
 
-  productLines    ProductLine[]
-  stockBatches    StockBatch[]
-  notifications   Notification[]
-  saleItems       SaleItem[]
-  orderItems      SupplierOrderItem[]
-  refunds         Refund[]
+  // Gestión de piezas: un producto caja ("Paracetamol CT/10") tiene piecesPerUnit;
+  // el producto "Pieza de..." apunta a su caja vía pieceOfProductId.
+  piecesPerUnit    Int?     @map("pieces_per_unit")
+  piecesTracked    Boolean  @default(false) @map("pieces_tracked")
+  pieceOfProductId Int?     @map("piece_of_product_id")
+  pieceOfProduct   Product? @relation("PiecesRelation", fields: [pieceOfProductId], references: [id], onDelete: SetNull)
+  pieceChildren    Product[] @relation("PiecesRelation")
+
+  // Gestión de cajas: el producto se vende por pieza en el POS pero en los
+  // pedidos a proveedores se pide por cajas. No crea ningún producto en
+  // inventario (las cajas no se venden al público). boxRemainder guarda las
+  // unidades que no completaron una caja en el último pedido y se acumulan
+  // para el siguiente.
+  soldByBox     Boolean @default(false) @map("sold_by_box")
+  unitsPerBox   Int?    @map("units_per_box")
+  boxRemainder  Int     @default(0) @map("box_remainder")
+
+  productLines   ProductLine[]
+  saleItems      SaleItem[]
+  orderItems     SupplierOrderItem[]
+  refunds        Refund[]
+  batches        ProductBatch[]
+  wishlistItems  CustomerWishlistItem[]
+  stockAlerts    StockAlert[]
+
+  piecesLog      PiecesLog[]
 
   @@index([barcode])
   @@index([departmentId])
   @@index([supplierId])
   @@index([name])
   @@index([createdAt])
+  @@index([pieceOfProductId])
   @@map("products")
+}
+
+// Lote de inventario con caducidad opcional. La suma de quantities de los lotes
+// nunca excede el stock total del producto; el sobrante es stock libre.
+model ProductBatch {
+  id        Int       @id @default(autoincrement())
+  productId Int       @map("product_id")
+  product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  quantity  Int
+  expiresAt DateTime? @map("expires_at")
+  costPrice Float     @default(0) @map("cost_price")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@index([productId])
+  @@index([expiresAt])
+  @@map("product_batches")
+}
+
+model Customer {
+  id              Int       @id @default(autoincrement())
+  name            String
+  fingerprintHash String?   @map("fingerprint_hash")
+  phone           String    @default("")
+  email           String    @default("")
+  totalSpent      Float     @default(0) @map("total_spent")
+  purchaseCount   Int       @default(0) @map("purchase_count")
+  lastPurchaseAt  DateTime? @map("last_purchase_at")
+  tier            String    @default("bronze")
+  active          Boolean   @default(true)
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  sales           Sale[]
+  wishlistItems   CustomerWishlistItem[]
+  deliveryNotices DeliveryNotice[]
+
+  @@index([name])
+  @@index([fingerprintHash])
+  @@index([tier])
+  @@map("customers")
 }
 
 model ProductLine {
@@ -159,27 +227,36 @@ model ProductLine {
   supplier Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
 
   @@unique([productId, supplierId])
+  @@index([supplierId, productId])
   @@map("product_lines")
 }
 
 model Sale {
   id              Int           @id @default(autoincrement())
   total           Float
+  discountTotal   Float         @default(0) @map("discount_total")
+  cashReceived    Float?        @map("cash_received")
+  change          Float?        @map("change")
   paymentMethodId Int?          @map("payment_method_id")
   paymentMethod   PaymentMethod? @relation(fields: [paymentMethodId], references: [id])
   userId          Int           @map("user_id")
   user            User          @relation(fields: [userId], references: [id])
+  customerId      Int?          @map("customer_id")
+  customer        Customer?     @relation(fields: [customerId], references: [id])
   createdAt       DateTime      @default(now()) @map("created_at")
 
-  items SaleItem[]
-  refunds Refund[]
+  items    SaleItem[]
+  refunds  Refund[]
+  stockAlerts StockAlert[]
 
   cashEntries CashEntry[]
 
   @@index([createdAt])
   @@index([userId])
+  @@index([userId, createdAt])
   @@index([paymentMethodId])
   @@index([total])
+  @@index([customerId])
   @@map("sales")
 }
 
@@ -193,6 +270,7 @@ model SaleItem {
   price     Float
 
   @@index([saleId, productId])
+  @@index([productId, saleId])
   @@map("sale_items")
 }
 
@@ -206,10 +284,19 @@ model SupplierOrder {
   updatedAt  DateTime @updatedAt @map("updated_at")
   sentAt     DateTime? @map("sent_at")
 
+  // Historial de cajeros: quién levantó el pedido y quién lo recibió.
+  createdById  Int?   @map("created_by_id")
+  createdBy    User?  @relation("OrderCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  receivedById Int?   @map("received_by_id")
+  receivedBy   User?  @relation("OrderReceivedBy", fields: [receivedById], references: [id], onDelete: SetNull)
+
   items SupplierOrderItem[]
+  deliveryNotices DeliveryNotice[]
 
   @@index([supplierId])
   @@index([status])
+  @@index([createdById])
+  @@index([receivedById])
   @@map("supplier_orders")
 }
 
@@ -217,49 +304,29 @@ model SupplierOrderItem {
   id                 Int           @id @default(autoincrement())
   supplierOrderId    Int           @map("supplier_order_id")
   supplierOrder      SupplierOrder @relation(fields: [supplierOrderId], references: [id], onDelete: Cascade)
-  productId          Int           @map("product_id")
-  product            Product       @relation(fields: [productId], references: [id])
+  productId          Int?          @map("product_id")
+  product            Product?      @relation(fields: [productId], references: [id])
+  // Snapshot para productos sin inventario (fantasma): se rellenan al crearlo
+  // y se usan para crearlo en inventario al confirmar la recepción.
+  productName        String        @default("") @map("product_name")
+  productBarcode     String        @default("") @map("product_barcode")
   quantity           Int
   receivedQuantity   Int           @default(0) @map("received_quantity")
   received           Boolean       @default(false)
+  extra              Boolean       @default(false)
+  costPrice          Float?        @map("cost_price")
   notes              String        @default("")
   createdAt          DateTime      @default(now()) @map("created_at")
   updatedAt          DateTime      @updatedAt @map("updated_at")
 
+  // Gestión de cajas: cuando el producto se pide por cajas, quantity/receivedQuantity
+  // están en número de cajas y unitsPerBox indica cuántas piezas trae cada una.
+  isBox       Boolean @default(false) @map("is_box")
+  unitsPerBox Int?    @map("units_per_box")
+
   @@index([supplierOrderId])
   @@index([productId])
   @@map("supplier_order_items")
-}
-
-model StockBatch {
-  id          Int      @id @default(autoincrement())
-  productId   Int      @map("product_id")
-  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
-  quantity    Int
-  expiryDate  DateTime? @map("expiry_date")
-  batchCode   String   @default("") @map("batch_code")
-  receivedVia String   @default("manual") @map("received_via")
-  notes       String   @default("")
-  createdAt   DateTime @default(now()) @map("created_at")
-
-  @@index([productId, expiryDate])
-  @@map("stock_batches")
-}
-
-model Notification {
-  id        Int      @id @default(autoincrement())
-  type      String   // EXPIRY_WARNING, LOW_STOCK, EXPIRY_TODAY
-  title     String
-  message   String
-  productId Int?     @map("product_id")
-  product   Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
-  severity  String   @default("warning") // info, warning, danger
-  read      Boolean  @default(false)
-  createdAt DateTime @default(now()) @map("created_at")
-
-  @@index([read, createdAt])
-  @@index([productId])
-  @@map("notifications")
 }
 
 model CashEntry {
@@ -279,6 +346,7 @@ model CashEntry {
 
   @@index([type])
   @@index([category])
+  @@index([type, category])
   @@index([recordedAt])
   @@index([paymentMethodId])
   @@index([userId])
@@ -300,6 +368,7 @@ model Refund {
 
   @@index([saleId])
   @@index([productId])
+  @@index([saleId, productId])
   @@index([createdAt])
   @@map("refunds")
 }
@@ -312,14 +381,179 @@ model ShiftReport {
   endDate         DateTime @map("end_date")
   totalSales      Int      @default(0) @map("total_sales")
   totalAmount     Float    @default(0) @map("total_amount")
+  totalCost       Float    @default(0) @map("total_cost")
   totalRefunds    Int      @default(0) @map("total_refunds")
   refundAmount    Float    @default(0) @map("refund_amount")
   netAmount       Float    @default(0) @map("net_amount")
   byPaymentMethod String   @default("{}") @map("by_payment_method")
+  details         String   @default("{}")
   notes           String   @default("")
   createdAt       DateTime @default(now()) @map("created_at")
 
   @@index([userId])
   @@index([createdAt])
+  @@unique([userId, startDate])
   @@map("shift_reports")
+}
+
+model SyncLog {
+  id          Int      @id @default(autoincrement())
+  deviceId    String   @map("device_id")
+  operation   String
+  entity      String
+  entityId    Int      @map("entity_id")
+  data        String
+  timestamp   DateTime @default(now())
+  synced      Boolean  @default(false)
+  syncVersion BigInt   @default(0) @map("sync_version")
+
+  @@index([deviceId, synced])
+  @@index([entity, entityId])
+  @@index([timestamp])
+  @@index([synced, timestamp])
+  @@map("sync_log")
+}
+
+// Simple key/value store for app-level settings (relay config, cursors, business info)
+model AppSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+
+  @@map("app_settings")
+}
+
+// Impuesto / recargo por horario: un aumento porcentual que se cobra
+// automaticamente cuando la hora actual esta dentro de la ventana
+// [applyTime, endTime) ("HH:MM"), sin tocar el precio base de los productos.
+// El precio publico siempre se redondea hacia arriba (ceil) al entero mas
+// cercano. Si endTime esta vacio, aplica desde applyTime en adelante (sin fin).
+// status: "schedule" (por horario) | "forced_on" (manual) | "forced_off" (manual)
+model TaxRule {
+  id         Int      @id @default(autoincrement())
+  name       String   @default("")
+  percentage Float
+  applyTime  String   @default("20:00") @map("apply_time")
+  endTime    String   @default("") @map("end_time") // vacio = sin hora de fin
+  scope      String   @default("ALL") // ALL | SUPPLIER | DEPARTMENT | MIN_PRICE
+  scopeValue Int?     @map("scope_value")
+  active     Boolean  @default(true)
+  status     String   @default("schedule")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@map("tax_rules")
+}
+
+// Historial de acciones manuales ("apply", "revert", "schedule", "config")
+model TaxLog {
+  id       Int      @id @default(autoincrement())
+  ruleId   Int?     @map("rule_id")
+  action   String
+  userName String   @default("") @map("user_name")
+  note     String   @default("")
+  at       DateTime @default(now())
+
+  @@map("tax_logs")
+}
+
+// Lista de medicamentos/productos que un cliente necesita.
+// productId nulo = texto libre (producto que aún no existe en inventario).
+model CustomerWishlistItem {
+  id         Int      @id @default(autoincrement())
+  customerId Int      @map("customer_id")
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  productId  Int?     @map("product_id")
+  product    Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  name       String   @default("")
+  quantity   Int?
+  notes      String   @default("")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([customerId])
+  @@index([productId])
+  @@map("customer_wishlist_items")
+}
+
+// Alerta de llegada: se crea al confirmar la recepción de un pedido si ese
+// pedido contiene algo de la lista de un cliente. No desaparece hasta que
+// alguien confirme que el pedido de ese cliente ya llegó.
+model DeliveryNotice {
+  id          Int           @id @default(autoincrement())
+  orderId     Int           @map("order_id")
+  order       SupplierOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  customerId  Int           @map("customer_id")
+  customer    Customer      @relation(fields: [customerId], references: [id])
+  items       String        @default("[]") // JSON: [{ name, quantity }]
+  status      String        @default("pending") // pending | confirmed
+  confirmedBy Int?          @map("confirmed_by")
+  confirmedAt DateTime?     @map("confirmed_at")
+  createdAt   DateTime      @default(now()) @map("created_at")
+
+  @@index([status])
+  @@index([customerId])
+  @@index([orderId])
+  @@map("delivery_notices")
+}
+
+// Registro de cajas abiertas para piezas: cada entrada = 1 caja consumida
+// (vendida o generada manualmente). Alimenta el cálculo del siguiente pedido.
+model PiecesLog {
+  id            Int      @id @default(autoincrement())
+  boxProductId  Int      @map("box_product_id")
+  boxProduct    Product  @relation(fields: [boxProductId], references: [id], onDelete: Cascade)
+  pieces        Int      @default(0)
+  source        String   @default("generated") // generated | sale
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([boxProductId])
+  @@index([createdAt])
+  @@map("pieces_log")
+}
+
+// Registro de auditoría: quién entró y qué modificaciones hizo cada usuario.
+// Solo los administradores pueden verlo. Incluye logins, creación/edición/
+// eliminación de registros (productos, ventas, usuarios, etc.).
+model AuditLog {
+  id         Int      @id @default(autoincrement())
+  userId     Int      @map("user_id")
+  userName   String   @default("") @map("user_name")
+  userRole   String   @default("") @map("user_role")
+  action     String   // login | create | update | delete | stock | receive | auth
+  entity     String   // product | sale | user | supplier | ...
+  entityId   Int?     @map("entity_id")
+  description String  @default("")
+  details    String   @default("{}")
+  ip         String   @default("") // IP desde la que se conectó
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([createdAt])
+  @@index([action])
+  @@index([entity])
+  @@map("audit_logs")
+}
+
+// Aviso de cobro sin existencia: se permite la venta pero se registra que el
+// producto se cobro sin el stock suficiente (o sin stock). No desaparece hasta
+// que alguien lo reconozca (status: pending | acked).
+model StockAlert {
+  id           Int      @id @default(autoincrement())
+  saleId       Int      @map("sale_id")
+  sale         Sale     @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  productId    Int      @map("product_id")
+  product      Product  @relation(fields: [productId], references: [id])
+  productName  String   @map("product_name")
+  quantitySold Int      @map("quantity_sold")
+  stockBefore  Int      @map("stock_before")
+  stockAfter   Int      @map("stock_after")
+  shortage     Int      @default(0) // unidades faltantes (lo que excedio al stock)
+  status       String   @default("pending") // pending | acked
+  ackedBy      Int?     @map("acked_by")
+  ackedAt      DateTime? @map("acked_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([status])
+  @@index([saleId])
+  @@index([productId])
+  @@map("stock_alerts")
 }

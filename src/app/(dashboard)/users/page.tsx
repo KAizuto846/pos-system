@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { Plus, Pencil, Trash2, Power, PowerOff } from 'lucide-react';
+import toast from 'react-hot-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -216,7 +217,7 @@ export default function UsersPage() {
             <form onSubmit={handleCreate}>
               <div className="space-y-4 py-4">
                 {formError && (
-                  <div className="rounded-lg border border-red-500/25 bg-red-500/10 px-4 py-3 text-[13px] text-red-300">
+                  <div className="rounded-lg border border-red-500/25 bg-red-500/10 px-4 py-3 text-sm text-red-400">
                     {formError}
                   </div>
                 )}
@@ -235,7 +236,7 @@ export default function UsersPage() {
                 <div className="space-y-2">
                   <Label htmlFor="create-recoveryEmail">Correo de recuperación (opcional)</Label>
                   <Input id="create-recoveryEmail" type="email" placeholder="tu@correo.com" value={formRecoveryEmail} onChange={(e) => setFormRecoveryEmail(e.target.value)} />
-                  <p className="text-[11px] text-fg-subtle">Servirá para recuperar tu contraseña en /forgot-password</p>
+                  <p className="text-[11px] text-fg-subtle">Para recuperar en /forgot-password</p>
                 </div>
                 <div className="space-y-2">
                   <Label>Role</Label>
@@ -260,7 +261,7 @@ export default function UsersPage() {
         </Dialog>
       </div>
 
-      <Card className="bg-surface-2/50">
+      <Card className="border-line bg-surface-2">
         <CardContent className="p-0">
           <Table>
             <TableHeader>
@@ -286,7 +287,7 @@ export default function UsersPage() {
                 ))
               ) : users.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center text-fg-muted py-8">
+                  <TableCell colSpan={5} className="text-center text-fg-muted py-8">
                     No users found
                   </TableCell>
                 </TableRow>
@@ -295,7 +296,6 @@ export default function UsersPage() {
                   <TableRow key={user.id}>
                     <TableCell className="font-medium text-fg">{user.name}</TableCell>
                     <TableCell className="text-fg-muted">{user.username}</TableCell>
-                    <TableCell className="text-fg-muted text-xs truncate max-w-[180px]">{user.recoveryEmail || <span className="text-fg-subtle">— sin correo</span>}</TableCell>
                     <TableCell>
                       <Badge variant={user.role === 'ADMIN' ? 'default' : 'secondary'} className="uppercase">
                         {user.role}
@@ -337,7 +337,7 @@ export default function UsersPage() {
           <form onSubmit={handleEdit}>
             <div className="space-y-4 py-4">
               {formError && (
-                <div className="rounded-lg border border-red-500/25 bg-red-500/10 px-4 py-3 text-[13px] text-red-300">
+                <div className="rounded-lg border border-red-500/25 bg-red-500/10 px-4 py-3 text-sm text-red-400">
                   {formError}
                 </div>
               )}

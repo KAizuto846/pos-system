@@ -79,13 +79,12 @@ function Get-UninstallKeyPath {
 }
 
 function Show-Banner {
-    Write-Host @"
-╔══════════════════════════════════════════════════════════════╗
-║                    POS System v$script:ProductVersion                     ║
-║              Instalador Profesional para Windows              ║
-║                         $script:Publisher                           ║
-╚══════════════════════════════════════════════════════════════╝
-"@ -Fore $Cyan
+    Write-Host "=========================================================" -Fore $Cyan
+    Write-Host "  POS System v$script:ProductVersion" -Fore $Cyan
+    Write-Host "  Instalador Profesional para Windows" -Fore $Cyan
+    Write-Host "  $script:Publisher" -Fore $Cyan
+    Write-Host "=========================================================" -Fore $Cyan
+    Write-Host ""
 }
 
 # ─── Verificación de Prerrequisitos ─────────────────────────────
