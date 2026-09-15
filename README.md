@@ -1,72 +1,80 @@
-# 🏪 POS System — Sistema de Punto de Venta
+# POS System — Sistema de Punto de Venta
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?style=flat&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Next.js](https://img.shields.io/badge/Next.js-16-000000?style=flat&logo=next.js&logoColor=white)](https://nextjs.org/)
 [![Prisma](https://img.shields.io/badge/Prisma-5-2D3748?style=flat&logo=prisma&logoColor=white)](https://www.prisma.io/)
-[![SQLite](https://img.shields.io/badge/SQLite-003B57?style=flat&logo=sqlite&logoColor=white)](https://www.sqlite.org/)
 [![Electron](https://img.shields.io/badge/Electron-47848F?style=flat&logo=electron&logoColor=white)](https://www.electronjs.org/)
-[![PWA](https://img.shields.io/badge/PWA-5A0FC8?style=flat&logo=pwa&logoColor=white)](https://web.dev/progressive-web-apps/)
-[![MIT License](https://img.shields.io/badge/License-MIT-green?style=flat)](LICENSE)
+[![MIT](https://img.shields.io/badge/License-MIT-green?style=flat)](LICENSE)
 
-Sistema de **Punto de Venta (POS)** moderno, rápido y robusto construido con **Next.js 16** y **TypeScript**, empaquetado como **aplicación de escritorio (Electron)** para Windows y Linux. Diseñado para pequeñas y medianas empresas que necesitan una solución completa de gestión de ventas, inventario, proveedores y reportes, con **sincronización P2P entre dispositivos** funcionando en la misma red local — sin servidor central.
+Sistema de punto de venta para pequeñas y medianas empresas.
 
-> 🌐 **Idioma:** Español  
-> 🖥️ **Escritorio:** Aplicación Electron auto-instalable con actualizaciones automáticas  
-> 📱 **PWA:** Instalable como aplicación nativa en dispositivos móviles y de escritorio  
-> 🔄 **Sincronización P2P:** Todos los equipos son pares iguales; cada uno guarda su propia base de datos y comparten cambios automaticamente  
-> 🔒 **Autenticación:** Segura con NextAuth + credenciales encriptadas
+Construido con Next.js 16, React 19, Prisma y SQLite. Empaquetado como aplicación de escritorio con Electron para Windows y Linux. Funciona offline con una base de datos por equipo y sincronización entre dispositivos en la misma red, sin servidor central.
 
----
 
-## ✨ Características
+## Arquitectura
 
-- 🛒 **Punto de Venta (POS)** — Interfaz rápida para registrar ventas con búsqueda de productos y carrito en tiempo real
-- 🔄 **Sincronización P2P** — Cada equipo ejecuta su propia base de datos y se sincroniza de igual a igual (malla) cada 30 segundos via UDP discovery + HTTP pull/push; página dedicada de "Sincronización" en la barra lateral
-- 📦 **Gestión de Productos** — CRUD completo con control de stock y precio por producto
-- 🏷️ **Departamentos** — Organización de productos por categorías
-- 🤝 **Proveedores** — Administración de contactos y órdenes de compra
-- 📋 **Órdenes a Proveedores** — Creación, envío y recepción parcial de pedidos
-- 👥 **Clientes** — Gestión de clientes con niveles (Bronce/Plata/Oro)
-- 💳 **Métodos de Pago** — Configuración flexible (efectivo, tarjeta, transferencia, etc.)
-- 👥 **Usuarios y Roles** — Sistema de autenticación con roles (ADMIN / CASHIER)
-- 🏦 **Finanzas** — Entradas y salidas de caja
-- 📊 **Reportes y Estadísticas** — Dashboard con métricas de ventas, productos más vendidos y tendencias
-- 🖥️ **Electron** — Aplicación nativa con actualizaciones automáticas desde GitHub Releases
-- 🎨 **Interfaz Moderna** — UI con TailwindCSS 4, shadcn/ui y modo oscuro
+![Arquitectura general](docs/images/01-arquitectura.png)
 
----
+Frontend en Next.js 16 con Material Design 3. API mediante Route Handlers. Datos en Prisma con SQLite en modo WAL. Electron orquesta el proceso principal, el descubrimiento por UDP y la sincronización. La interfaz incluye 22 rutas verificadas y un flujo de venta en cuatro pasos que termina con broadcast por SSE.
 
-## 🛠️ Stack Tecnológico
 
-| Tecnología | Versión | Propósito |
-|---|---|---|
-| **TypeScript** | ^5 | Tipado estático y seguridad en el código |
-| **Next.js** | 16.2.6 | Framework React full-stack con App Router (`output: standalone`) |
-| **Electron** | — | Shell + proceso principal (UDP discovery, P2P sync, updater, bandeja) |
-| **Prisma** | ^5.22.0 | ORM con esquema declarativo |
-| **SQLite** | — | Base de datos embebida sin servidor (WAL), una DB por equipo |
-| **TailwindCSS** | ^4 | Framework de estilos utilitario |
-| **shadcn/ui** | — | Componentes de UI reutilizables y accesibles |
-| **Zustand** | ^5.0.13 | Estado global ligero para el carrito POS |
-| **NextAuth** | ^5.0.0-beta.31 | Autenticación con JWT y adaptador Prisma |
-| **TanStack Query** | ^5.100.10 | Fetching y caché de datos del servidor |
-| **Recharts** | ^3.8.1 | Gráficos y visualizaciones para reportes |
-| **electron-builder** | ^26 | Empaquetado NSIS (Windows) y AppImage/deb (Linux) |
+## Modelo de datos
 
----
+![Modelo de datos](docs/images/02-modelo-datos.png)
 
-## 🚀 Inicio Rápido
+Esquema en `prisma/schema.prisma` con 18 modelos. Product gestiona precio, stock, código de barras y variantes por piezas y por caja. ProductBatch implementa FEFO con lotes ordenados por vencimiento. Sale y SaleItem registran cada ticket. Supplier y SupplierOrder cubren el ciclo de compras. Customer añade fidelización por niveles. SyncLog, AppSetting y AuditLog sostienen la sincronización y la trazabilidad.
 
-### Requisitos previos
 
-- **Node.js** 20 o superior
-- **npm** 10 o superior
+## Flujo de venta
 
-### Ejecutar la aplicación de escritorio (recomendado)
+![Flujo de venta](docs/images/03-flujo-venta.png)
 
-Descarga el instalador `.exe` desde los **GitHub Releases** del proyecto. La aplicación gestiona su propia instancia de Next.js, su base de datos y la sincronización P2P.
+El carrito valida contra ProductBatch aplicando FEFO: primero vence, primero sale. Al confirmar la venta, el sistema descuenta los lotes correspondientes, aplica TaxRule con redondeo hacia arriba y genera Sale, SaleItem, CashEntry y AuditLog. Si hay faltante, crea StockAlert. Finalmente emite un evento por SSE para actualizar las demás cajas en tiempo real.
 
-### Instalación local (desarrollo)
+
+## Sincronización
+
+![Sincronización](docs/images/04-sincronizacion.png)
+
+Cada equipo es un par igual. Se descubren por UDP multicast en el puerto 9876 y sincronizan cada 30 segundos mediante pull y push por HTTP. El cursor por dispositivo evita reenvíos y Last-Write-Wins resuelve conflictos.
+
+Cuando los equipos están en redes distintas, un relay opcional actúa como buzón central. Se despliega en un VPS con Express y better-sqlite3 y se configura en Sincronización → Relay con URL y secreto compartido.
+
+
+## Escritorio
+
+![Electron](docs/images/05-electron.png)
+
+Electron empaqueta la aplicación con electron-builder. El instalador es NSIS en Windows y AppImage o deb en Linux. En el primer arranque muestra el wizard de configuración. El proceso principal levanta Next.js en modo standalone, gestiona la base de datos y expone la bandeja del sistema con acciones de sincronización y actualización.
+
+Las actualizaciones se distribuyen desde GitHub Releases mediante electron-updater.
+
+
+## Interfaz
+
+![Interfaz](docs/images/06-interfaz.png)
+
+Diseño basado en Material Design 3 con Tailwind v4 y tokens definidos en `@theme`. Tipografía Roboto con tema claro y oscuro. Primitivos propios para Card, Button, Table, Dialog y Toast. Layout con Sidebar en rail y Header con indicador de sincronización. Dashboard con métricas, POS con lector de código de barras y OCR, y módulos dedicados para productos, finanzas, clientes y auditoría.
+
+
+## Estructura
+
+```
+pos-system/
+├── prisma/schema.prisma        # Esquema y migraciones
+├── electron/main.js            # Proceso principal
+├── src/app/(dashboard)/        # POS, productos, finanzas, reportes
+├── src/app/api/                # Route Handlers por módulo
+├── src/components/ui/          # Primitivos M3
+├── src/lib/sync-engine.ts      # Motor de sincronización
+├── relay/server.js             # Relay opcional
+└── docs/images/                # Diagramas del proyecto
+```
+
+
+## Instalación
+
+Requisitos: Node.js 20 y npm 10.
 
 ```bash
 git clone https://github.com/KAizuto846/pos-system.git
@@ -76,389 +84,32 @@ npx prisma migrate deploy
 npm run dev
 ```
 
-La aplicación web estará disponible en [http://localhost:3000](http://localhost:3000).
-
-### Variables de entorno
-
-Copia el archivo de ejemplo y ajústalo:
+La aplicación queda en http://localhost:3000. Para desarrollo con Electron:
 
 ```bash
-cp .env.example .env
+npm run electron:dev
 ```
 
-Variables disponibles:
+
+## Variables de entorno
+
+Copia `.env.example` a `.env` y ajusta:
 
 | Variable | Descripción | Ejemplo |
 |---|---|---|
-| `AUTH_SECRET` | Secreto para cifrar sesiones JWT | `cambiar-por-un-secreto-seguro` |
-| `DATABASE_URL` | Ruta al archivo SQLite | `file:./prisma/dev.db` |
-| `AUTH_URL` | URL base para autenticación | `http://localhost:3000` |
-| `NEXT_PUBLIC_APP_URL` | URL pública de la app | `http://localhost:3000` |
-| `SYNC_SECRET` | (Opcional) Secreto compartido para sincronización P2P | `mi-secreto-sync` |
+| `AUTH_SECRET` | Secreto para sesiones JWT | `cambiar-por-un-secreto-seguro` |
+| `DATABASE_URL` | Ruta a SQLite | `file:./prisma/dev.db` |
+| `AUTH_URL` | URL base | `http://localhost:3000` |
+| `SYNC_SECRET` | Secreto compartido para sync | `mi-secreto-sync` |
 
----
 
-## 🔄 Sincronización
+## Licencia
 
-El sistema usa **sincronización entre pares (P2P mesh)** de igual a igual, sin servidor central ni "PC proveedora". Cada dispositivo (Electron o PWA) ejecuta su propia instancia de Next.js y su propia base de datos SQLite.
-
-### P2P en red local
-
-1. **Descubrimiento:** cada equipo anuncia su presencia por **UDP multicast/broadcast** en el puerto `9876` (mensaje `pos-server-announce` con nombre, puerto y `deviceId`).
-2. **Sync automatico:** cada **30 segundos** el proceso principalmente Electron recorre los pares descubiertos y hace `pull/push` bidireccional de cambios via HTTP (`/api/sync/pull` y `/api/sync/push`).
-3. **Cursors:** cada par trackea el mayor `syncVersion` recibido/enviado (`pullSince`/`pushSince`) para solo transferir lo nuevo y hacer **acks** que eviten reenvíos.
-4. **Conflictos:** Last-Write-Wins por timestamp. Los CREATE se re-aplican de forma idempotente.
-5. **Página de control:** en la barra lateral → **Sincronización** puedes ver los dispositivos detectados, forzar un sync manual (bandeja o botón), y consultar el registro de cambios.
-
-> 💡 Todos los equipos deben estar en la misma red local (o con UDP habilitado). La sincronización no requiere configuración manual: se detectan solos.
-
-### Relay por internet (equipos en redes distintas)
-
-Cuando los dispositivos **no** están en la misma red, la app usa un **relay central** (buzón de cambios en la nube) como puente:
-
-1. Cada equipo configura en **Sincronización → Relay** la URL del relay y el secreto compartido.
-2. Un loop automático (30s) y el botón **Sincronizar ahora** hacen `pull` (cambios de otros equipos) y `push` (cambios propios) contra el relay.
-3. El relay funciona como buzón: guarda los cambios con `INSERT OR IGNORE` (idempotente por `device_id + sync_version`) y solo entrega a otros equipos lo que no han visto aún.
-4. Cualquier instancia con relay configurado sincroniza con todas las demás a través del relay, incluso estando en redes separadas.
-
-#### Desplegar el relay en un VPS (Debian)
-
-```bash
-# En el VPS
-apt install -y nodejs npm sqlite3
-mkdir -p /opt/pos-relay && cd /opt/pos-relay
-cp -r relay/ ./
-npm install
-# Configuración
-export PORT=8099
-export SYNC_SECRET="un-secreto-largo-y-seguro"   # igual en todos los equipos
-export DB_PATH="/opt/pos-relay/relay.db"
-node server.js
-```
-
-Para producción se recomienda **systemd** (mantener corriendo) + **Caddy o nginx** (HTTPS):
-
-```ini
-# /etc/systemd/system/pos-relay.service
-[Unit]
-Description=POS Relay Server
-After=network.target
-
-[Service]
-Environment=PORT=8099
-Environment=SYNC_SECRET=un-secreto-largo-y-seguro
-Environment=DB_PATH=/opt/pos-relay/relay.db
-WorkingDirectory=/opt/pos-relay
-ExecStart=/usr/bin/node server.js
-Restart=always
-User=www-data
-
-[Install]
-WantedBy=multi-user.target
-```
-
-```bash
-systemctl daemon-reload && systemctl enable --now pos-relay
-# En los equipos: URL del relay = https://tu-dominio.com (sin puerto si usas Caddy/nginx)
-```
-
-La URL que configuran los equipos debe ser `https://tu-dominio.com` (HTTPS obligatorio salvo en red de prueba). Endpoints del relay: `GET /health`, `POST /api/sync/pull`, `POST /api/sync/push` (autenticados con el header `x-sync-secret`).
-
----
-
-## 📁 Estructura del Proyecto
-
-```
-pos-system/
-├── prisma/
-│   ├── migrations/            # Migraciones Prisma
-│   └── schema.prisma          # Esquema de base de datos
-├── electron/
-│   ├── main.js                # Proceso principal (UDP discovery, P2P sync, updater)
-│   ├── preload.js             # Context bridge
-│   ├── updater.js             # Auto-updates (electron-updater)
-│   ├── init-db.js             # Creación/actualización de la DB en primer arranque
-│   ├── setup.html             # Wizard de configuración inicial
-│   ├── loading.html           # Pantalla de carga
-│   └── nsis/                  # Instalador NSIS
-├── public/
-│   ├── icons/                 # Iconos para PWA y app
-│   └── manifest.json          # Manifiesto de PWA
-├── scripts/
-│   ├── build-electron.js      # Build Electron
-│   └── create-icon.js         # Generador de iconos .ico/.bmp
-├── src/
-│   ├── app/
-│   │   ├── (auth)/            # Layout de páginas de autenticación
-│   │   ├── (dashboard)/       # Layout + páginas del dashboard
-│   │   │   ├── page.tsx       # Dashboard principal
-│   │   │   ├── customers/     # Clientes
-│   │   │   ├── departments/   # Departamentos
-│   │   │   ├── finance/       # Finanzas
-│   │   │   ├── importar/      # Importar datos
-│   │   │   ├── orders/        # Órdenes a proveedores
-│   │   │   ├── payment-methods/ # Métodos de pago
-│   │   │   ├── pos/           # Punto de venta
-│   │   │   ├── products/      # Productos
-│   │   │   ├── reports/       # Reportes
-│   │   │   ├── sales/         # Ventas
-│   │   │   ├── suppliers/     # Proveedores
-│   │   │   ├── sync/          # Sincronización P2P
-│   │   │   └── users/         # Usuarios
-│   │   ├── api/
-│   │   │   ├── auth/          # NextAuth + registro
-│   │   │   ├── sync/          # P: pull, push, ack, stats
-│   │   │   ├── events/        # SSE (tiempo real)
-│   │   │   └── ...            # CRUD de cada módulo
-│   │   ├── layout.tsx         # Layout raíz
-│   │   ├── login/             # Login
-│   │   ├── register/          # Registro
-│   │   ├── settings/          # Configuración
-│   │   └── setup/             # Setup inicial
-│   ├── components/
-│   │   ├── layout/            # Header + Sidebar
-│   │   ├── ui/                # Componentes shadcn/ui
-│   │   ├── RealtimeProvider.tsx
-│   │   ├── SyncStatusBadge.tsx
-│   │   ├── UpdateNotification.tsx
-│   │   └── ...
-│   └── lib/
-│       ├── auth.ts            # Configuración de NextAuth
-│       ├── prisma.ts / db.ts  # Cliente Prisma singleton (con PRAGMAs SQLite)
-│       ├── sync-engine.ts     # Log, pull/push, LWW, cursor
-│       ├── sync-utils.ts      # DeviceId estable, helpers de sync
-│       ├── relay-sync.ts      # Sync por internet via relay (config, pull/push, cursors)
-│       ├── relay-loop.ts      # Loop automático (30s) contra el relay
-│       ├── broadcast.ts       # SSE broadcaster
-│       └── utils.ts           # Utilidades
-├── relay/
-│   └── server.js              # Servidor relay independiente (buzón central, express + better-sqlite3)
-├── .github/workflows/release.yml # CI: build + auto-release Windows
-├── package.json
-└── deploy.sh                  # Script de deploy (build + tag)
-```
-
----
-
-## 📡 API Endpoints
-
-### 🔐 Autenticación
-
-| Método | Ruta | Descripción |
-|---|---|---|
-| `POST` | `/api/auth/register` | Registrar un nuevo usuario |
-| `*` | `/api/auth/[...nextauth]` | Rutas de NextAuth (login, logout, sesión) |
-
-### 👥 Usuarios
-
-| Método | Ruta | Descripción |
-|---|---|---|
-| `GET` | `/api/users` | Listar todos los usuarios |
-| `POST` | `/api/users` | Crear un nuevo usuario |
-| `GET` | `/api/users/[id]` | Obtener un usuario por ID |
-| `PUT` | `/api/users/[id]` | Actualizar un usuario |
-| `DELETE` | `/api/users/[id]` | Eliminar un usuario |
-
-### 📦 Productos
-
-| Método | Ruta | Descripción |
-|---|---|---|
-| `GET` | `/api/products` | Listar productos (filtro por departamento, búsqueda) |
-| `POST` | `/api/products` | Crear un nuevo producto |
-| `GET` | `/api/products/[id]` | Obtener un producto por ID |
-| `PUT` | `/api/products/[id]` | Actualizar un producto |
-| `DELETE` | `/api/products/[id]` | Eliminar un producto |
-| `PUT` | `/api/products/[id]/stock` | Actualizar el stock de un producto |
-
-### 🏷️ Departamentos
-
-| Método | Ruta | Descripción |
-|---|---|---|
-| `GET` | `/api/departments` | Listar todos los departamentos |
-| `POST` | `/api/departments` | Crear un nuevo departamento |
-| `GET` | `/api/departments/[id]` | Obtener un departamento por ID |
-| `PUT` | `/api/departments/[id]` | Actualizar un departamento |
-| `DELETE` | `/api/departments/[id]` | Eliminar un departamento |
-
-### 🤝 Proveedores
-
-| Método | Ruta | Descripción |
-|---|---|---|
-| `GET` | `/api/suppliers` | Listar todos los proveedores |
-| `POST` | `/api/suppliers` | Crear un nuevo proveedor |
-| `GET` | `/api/suppliers/[id]` | Obtener un proveedor por ID |
-| `PUT` | `/api/suppliers/[id]` | Actualizar un proveedor |
-| `DELETE` | `/api/suppliers/[id]` | Eliminar un proveedor |
-
-### 💳 Métodos de Pago
-
-| Método | Ruta | Descripción |
-|---|---|---|
-| `GET` | `/api/payment-methods` | Listar todos los métodos de pago |
-| `POST` | `/api/payment-methods` | Crear un nuevo método de pago |
-| `GET` | `/api/payment-methods/[id]` | Obtener un método por ID |
-| `PUT` | `/api/payment-methods/[id]` | Actualizar un método de pago |
-| `DELETE` | `/api/payment-methods/[id]` | Eliminar un método de pago |
-
-### 🛒 Ventas
-
-| Método | Ruta | Descripción |
-|---|---|---|
-| `GET` | `/api/sales` | Listar ventas (filtro por fecha) |
-| `POST` | `/api/sales` | Registrar una nueva venta |
-| `GET` | `/api/sales/[id]` | Obtener una venta por ID con sus items |
-| `DELETE` | `/api/sales/[id]` | Anular una venta |
-
-### 📋 Órdenes a Proveedores
-
-| Método | Ruta | Descripción |
-|---|---|---|
-| `GET` | `/api/orders` | Listar todas las órdenes |
-| `POST` | `/api/orders` | Crear una nueva orden |
-| `GET` | `/api/orders/[id]` | Obtener una orden por ID |
-| `PUT` | `/api/orders/[id]` | Actualizar una orden |
-| `DELETE` | `/api/orders/[id]` | Eliminar una orden |
-| `PUT` | `/api/orders/[id]/receive` | Recibir productos de una orden (parcial/total) |
-
-### 🔄 Sincronización P2P
-
-| Método | Ruta | Descripción |
-|---|---|---|
-| `POST` | `/api/sync/pull` | Obtener cambios de un peer (filtro `since`) |
-| `POST` | `/api/sync/push` | Aplicar cambios de un peer |
-| `POST` | `/api/sync/ack` | Marcar cambios locales como recibidos por un peer |
-| `GET` | `/api/sync/stats` | Estadísticas del log de sincronización |
-| `GET` | `/api/sync` | Health check + stats de la DB |
-| `GET` | `/api/events` | SSE: eventos en tiempo real (tabs del mismo equipo) |
-
-### 📊 Reportes y Estadísticas
-
-| Método | Ruta | Descripción |
-|---|---|---|
-| `GET` | `/api/reports` | Reportes de ventas (rango de fechas) |
-| `GET` | `/api/stats` | Estadísticas del dashboard (ventas hoy, productos bajos en stock, etc.) |
-
----
-
-## 🖥️ Aplicación de Escritorio (Electron)
-
-La versión de escritorio (Windows) es el principal objetivo del proyecto. Características:
-
-- **Instalador único NSIS** — Asistente de instalación con configuración del negocio y puerto
-- **Auto-update** — Se actualiza automáticamente desde los GitHub Releases (electron-updater)
-- **Proceso principal** — Arranca el servidor Next.js standalone, gestiona la base de datos, el tray y la sincronización P2P
-- **Bandeja del sistema** — Mostrar/ocultar la app, sincronizar ahora, reiniciar servidor, buscar actualizaciones, salir
-
-### Desarrollo con Electron
-
-```bash
-npm run electron:dev        # Electron + Next.js en paralelo
-```
-
-### Build de la app
-
-```bash
-npm run build               # Build Next.js standalone
-npm run electron:build      # Build Windows (NSIS + zip)
-npm run electron:build:linux
-```
-
-La base de datos SQLite se guarda en `%APPDATA%/POS System/pos.db` (Windows) o `~/.config/POS System/pos.db` (Linux).
-
----
-
-## 📦 Módulos
-
-### 🛒 Punto de Venta (POS)
-El módulo principal para registrar ventas. Incluye:
-- Búsqueda de productos por nombre o código de barras
-- Carrito de compras con estado global (Zustand)
-- Ajuste de cantidades y eliminación de items
-- Selección de método de pago
-- Registro con descuento automático de stock
-
-### 📦 Gestión de Productos
-Administración completa del catálogo:
-- Creación, edición y eliminación de productos
-- Control de precio, costo y stock mínimo
-- Asignación a departamentos y proveedores
-- Actualización de stock manual o por recepción de órdenes
-
-### 🤝 Proveedores y Órdenes
-Gestión de la cadena de suministro:
-- Registro de proveedores con datos de contacto
-- Creación de órdenes de compra con múltiples items
-- Envío de órdenes (cambio de estado a `sent`)
-- Recepción parcial o total con actualización automática de stock
-
-### 📊 Dashboard y Reportes
-Panel de control con:
-- Ventas del día, semana y mes
-- Productos con bajo stock
-- Ranking de productos más vendidos
-- Métodos de pago más utilizados
-- Gráficos interactivos (Recharts)
-
-### 👥 Usuarios y Roles
-Sistema de autenticación:
-- Login con credenciales (username + contraseña)
-- Roles: **ADMIN** (acceso completo) y **CASHIER** (solo POS y consultas)
-- Registro de nuevos usuarios (solo administradores)
-- Contraseñas encriptadas con bcrypt
-
----
-
-## 📱 PWA (Progressive Web App)
-
-Además de la app de escritorio, el proyecto es una **PWA**. Apunta un navegador a la dirección de cualquiera de tus equipos (p. ej. `http://192.168.1.50:3000`) y podrás instalarla como app nativa. Los datos se sincronizan vía el mismo protocolo P2P de los demás dispositivos.
-
-### Características PWA
-
-- 📲 **Instalable** — Agrega un acceso directo a tu pantalla de inicio
-- 🚀 **Modo standalone** — Se abre sin la interfaz del navegador
-- 🎨 **Iconos personalizados** — Iconos adaptables para todas las resoluciones
-
-### Cómo instalar
-
-**Escritorio (Chrome/Edge/Brave):**
-1. Abre la aplicación en el navegador
-2. Haz clic en el icono de instalación en la barra de direcciones
-3. Confirma la instalación
-
-**Móvil (Android - Chrome):**
-1. Abre la aplicación
-2. Presiona el menú (tres puntos)
-3. Selecciona "Instalar aplicación" o "Agregar a pantalla de inicio"
-
-**iOS (Safari):**
-1. Abre la aplicación en Safari
-2. Presiona el botón de compartir
-3. Desplázate y selecciona "Agregar a pantalla de inicio"
-
----
-
-## 🤝 Contribuciones
-
-¡Las contribuciones son bienvenidas! Si deseas contribuir:
-
-1. Haz un **fork** del repositorio
-2. Crea una rama para tu funcionalidad (`git checkout -b feature/nueva-funcionalidad`)
-3. Realiza tus cambios y haz commit (`git commit -m 'Añadir nueva funcionalidad'`)
-4. Sube los cambios (`git push origin feature/nueva-funcionalidad`)
-5. Abre un **Pull Request**
-
-Por favor, asegúrate de que el código pasa las verificaciones de lint y TypeScript antes de enviar tu PR.
-
----
-
-## 📄 Licencia
-
-Este proyecto está bajo la licencia **MIT**. Consulta el archivo [LICENSE](LICENSE) para más detalles.
+MIT. Consulta [LICENSE](LICENSE).
 
 ---
 
 <div align="center">
-  <sub>Construido con ❤️ usando <a href="https://nextjs.org">Next.js</a>, <a href="https://www.prisma.io">Prisma</a> y <a href="https://tailwindcss.com">TailwindCSS</a></sub>
-  <br/>
+  <sub>Construido con Next.js, Prisma y TailwindCSS</sub><br/>
   <sub>© 2026 POS System</sub>
 </div>
