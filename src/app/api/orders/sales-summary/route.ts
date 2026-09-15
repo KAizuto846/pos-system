@@ -35,11 +35,7 @@ export async function GET(request: Request) {
       return Response.json({ error: "Fechas inválidas" }, { status: 400 });
     }
 
-<<<<<<< HEAD
-    // Obtener ventas en el rango, agrupadas por producto del proveedor (multi-supplier via ProductLine)
-=======
     // Obtener ventas en el rango, agrupadas por producto del proveedor (solo si el proveedor es el PRINCIPAL via ProductLine)
->>>>>>> origin/master
     const saleItems = await prisma.saleItem.findMany({
       where: {
         sale: {
@@ -51,11 +47,7 @@ export async function GET(request: Request) {
         product: {
           active: true,
           productLines: {
-<<<<<<< HEAD
-            some: { supplierId: sid },
-=======
             some: { supplierId: sid, isPrimary: true },
->>>>>>> origin/master
           },
         },
       },
@@ -63,12 +55,9 @@ export async function GET(request: Request) {
         product: {
           include: {
             department: true,
-<<<<<<< HEAD
-=======
             productLines: {
               select: { supplierId: true, supplierPrice: true, isPrimary: true },
             },
->>>>>>> origin/master
           },
         },
       },
@@ -88,13 +77,6 @@ export async function GET(request: Request) {
         department: { id: number; name: string } | null;
         supplierPrice: number | null;
         totalSold: number;
-<<<<<<< HEAD
-      }
-    >();
-
-    for (const item of saleItems) {
-      const pid = item.productId;
-=======
         // Gestión de cajas: totalSold queda en número de cajas cuando el
         // producto se pide por cajas; estos campos guardan el detalle.
         soldByBox?: boolean;
@@ -119,17 +101,13 @@ export async function GET(request: Request) {
         continue;
       }
 
->>>>>>> origin/master
       const existing = grouped.get(pid);
       if (existing) {
         existing.totalSold += item.quantity;
       } else {
-<<<<<<< HEAD
-=======
         const lines = item.product.productLines || [];
         const line = lines.find(l => l.supplierId === sid && l.isPrimary)
           ?? lines.find(l => l.supplierId === sid);
->>>>>>> origin/master
         grouped.set(pid, {
           productId: pid,
           name: item.product.name,
@@ -139,18 +117,12 @@ export async function GET(request: Request) {
           stock: item.product.stock,
           minStock: item.product.minStock,
           department: item.product.department,
-<<<<<<< HEAD
-          supplierPrice: null, // Se podría obtener de ProductLine
-=======
           supplierPrice: line?.supplierPrice ?? null,
->>>>>>> origin/master
           totalSold: item.quantity,
         });
       }
     }
 
-<<<<<<< HEAD
-=======
     // Reembolsos en el rango: lo devuelto regreso al inventario y no debe
     // volver a pedirse como si se hubiera vendido.
     const refunds = await prisma.refund.findMany({
@@ -290,14 +262,11 @@ export async function GET(request: Request) {
       }
     }
 
->>>>>>> origin/master
     // Ordenar por más vendidos primero
     const result = Array.from(grouped.values()).sort(
       (a, b) => b.totalSold - a.totalSold
     );
 
-<<<<<<< HEAD
-=======
     // Gestión de cajas: si el producto se pide por cajas, las unidades vendidas
     // se convierten a cajas completas. Las que no completan una caja quedan
     // acumuladas en boxRemainder del producto y se toman en el siguiente pedido.
@@ -316,17 +285,12 @@ export async function GET(request: Request) {
       }
     }
 
->>>>>>> origin/master
     return Response.json({
       supplierId: sid,
       dateFrom: fromDate.toISOString(),
       dateTo: toDate.toISOString(),
       totalProducts: result.length,
-<<<<<<< HEAD
-      totalUnits: result.reduce((s, p) => s + p.totalSold, 0),
-=======
       totalUnits: result.reduce((s, p) => s + (p.totalSoldUnits ?? p.totalSold), 0),
->>>>>>> origin/master
       products: result,
     });
   } catch (error) {

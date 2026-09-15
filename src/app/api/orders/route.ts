@@ -1,10 +1,4 @@
 import { auth } from "@/lib/auth";
-<<<<<<< HEAD
-import { prisma } from "@/lib/db";
-import { orderSchema } from "@/lib/validations";
-
-export async function GET() {
-=======
 import { initializePrisma, prisma } from "@/lib/db";
 import { orderSchema } from "@/lib/validations";
 import { logChange } from "@/lib/sync-engine";
@@ -18,26 +12,12 @@ function positiveInt(value: string | null, fallback: number) {
 }
 
 export async function GET(request: Request) {
->>>>>>> origin/master
   try {
     const session = await auth();
     if (!session?.user) {
       return Response.json({ error: "No autorizado" }, { status: 401 });
     }
 
-<<<<<<< HEAD
-    const orders = await prisma.supplierOrder.findMany({
-      include: {
-        supplier: true,
-        items: {
-          include: { product: true },
-        },
-      },
-      orderBy: { createdAt: "desc" },
-    });
-
-    return Response.json(orders);
-=======
     const { searchParams } = new URL(request.url);
     const page = positiveInt(searchParams.get("page"), 1);
     const limit = Math.min(positiveInt(searchParams.get("limit"), 50), 100);
@@ -95,7 +75,6 @@ export async function GET(request: Request) {
         hasMore: skip + orders.length < total,
       },
     });
->>>>>>> origin/master
   } catch (error) {
     console.error("Error listing orders:", error);
     return Response.json({ error: "Error al obtener órdenes" }, { status: 500 });
@@ -121,9 +100,6 @@ export async function POST(request: Request) {
 
     const data = parsed.data;
 
-<<<<<<< HEAD
-    const order = await prisma.$transaction(async (tx: any) => {
-=======
     await initializePrisma();
     const order = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const realItems = data.items.filter((i) => typeof i.productId === "number");
@@ -144,18 +120,10 @@ export async function POST(request: Request) {
         ])
       );
 
->>>>>>> origin/master
       const newOrder = await tx.supplierOrder.create({
         data: {
           supplierId: data.supplierId,
           notes: data.notes,
-<<<<<<< HEAD
-          items: {
-            create: data.items.map((item) => ({
-              productId: item.productId,
-              quantity: item.quantity,
-            })),
-=======
           status: data.status ?? "pending",
           createdById: parseInt(session.user.id, 10),
           items: {
@@ -184,7 +152,6 @@ export async function POST(request: Request) {
                 notes: `P. venta: ${item.price ?? 0}`,
               };
             }),
->>>>>>> origin/master
           },
         },
         include: {
@@ -195,12 +162,6 @@ export async function POST(request: Request) {
         },
       });
 
-<<<<<<< HEAD
-      return newOrder;
-    });
-
-    return Response.json(order, { status: 201 });
-=======
       // Gestión de cajas: el sobrante (piezas que no completaron una caja) se
       // acumula en el producto para tomarlo en el siguiente pedido.
       const remainderUpdates: Array<{ productId: number; boxRemainder: number }> = [];
@@ -269,7 +230,6 @@ export async function POST(request: Request) {
     }
 
     return Response.json(order.newOrder, { status: 201 });
->>>>>>> origin/master
   } catch (error) {
     console.error("Error creating order:", error);
     return Response.json({ error: "Error al crear orden" }, { status: 500 });

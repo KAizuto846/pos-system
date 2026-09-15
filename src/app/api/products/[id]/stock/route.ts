@@ -1,14 +1,9 @@
 import { auth } from "@/lib/auth";
-<<<<<<< HEAD
-import { prisma } from "@/lib/db";
-import { broadcast } from "@/lib/broadcast";
-=======
 import { initializePrisma, prisma } from "@/lib/db";
 import { broadcast } from "@/lib/broadcast";
 import { logChange } from "@/lib/sync-engine";
 import { getDeviceId } from "@/lib/sync-utils";
 import { logAudit, getClientIp } from "@/lib/audit";
->>>>>>> origin/master
 
 export async function POST(
   request: Request,
@@ -37,35 +32,6 @@ export async function POST(
       );
     }
 
-<<<<<<< HEAD
-    // Atomic stock update using raw SQL
-    // This prevents race conditions between concurrent adjustments
-    let result: number;
-    if (quantity < 0) {
-      // Decreasing stock: only succeed if there's enough
-      result = await prisma.$executeRaw`
-        UPDATE products SET stock = stock + ${quantity}
-        WHERE id = ${productId} AND stock >= ${-quantity}
-      `;
-    } else {
-      // Increasing stock: always succeeds
-      result = await prisma.$executeRaw`
-        UPDATE products SET stock = stock + ${quantity}
-        WHERE id = ${productId}
-      `;
-    }
-
-    if (result === 0) {
-      // Check if product exists
-      const product = await prisma.product.findUnique({
-        where: { id: productId },
-        select: { name: true, stock: true },
-      });
-
-      if (!product) {
-        return Response.json({ error: "Producto no encontrado" }, { status: 404 });
-      }
-=======
     await initializePrisma();
     const result = await prisma.$transaction(async (tx) => {
       // El stock no puede quedar por debajo de la suma de piezas en lotes
@@ -113,7 +79,6 @@ export async function POST(
           { status: 400 }
         );
       }
->>>>>>> origin/master
 
       return Response.json(
         { error: "Stock insuficiente. El stock no puede ser negativo." },
@@ -121,15 +86,6 @@ export async function POST(
       );
     }
 
-<<<<<<< HEAD
-    const updated = await prisma.product.findUnique({
-      where: { id: productId },
-      include: { department: true, supplier: true },
-    });
-
-    broadcast("product:stock", { id: productId, stock: updated!.stock });
-    return Response.json(updated);
-=======
     if (!result.updated) {
       return Response.json({ error: "Producto no encontrado" }, { status: 404 });
     }
@@ -148,7 +104,6 @@ export async function POST(
       ip: getClientIp(request),
     });
     return Response.json(result.updated);
->>>>>>> origin/master
   } catch (error) {
     console.error("Error adjusting stock:", error);
     return Response.json({ error: "Error al ajustar stock" }, { status: 500 });
