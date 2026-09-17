@@ -10,6 +10,8 @@ const path = require('path');
 
 const args = process.argv.slice(2);
 const platform = args.includes('--win') ? 'win' : args.includes('--linux') ? 'linux' : args.includes('--all') ? 'all' : 'win';
+const publishIndex = args.indexOf('--publish');
+const publishMode = publishIndex >= 0 && args[publishIndex + 1] ? args[publishIndex + 1] : 'never';
 
 console.log('╔══════════════════════════════════════════════════════════════╗');
 console.log('║  POS System - Electron Build Script                         ║');
@@ -62,23 +64,51 @@ if (fs.existsSync(prismaSrc)) {
 if (fs.existsSync(envSrc)) {
   fs.copyFileSync(envSrc, envDest);
   console.log('✓ .env copied');
+} else if (fs.existsSync(path.join(__dirname, '..', '.env.example'))) {
+  // Create .env from .env.example with relative DB path for build time
+  const envContent = `AUTH_SECRET="pos-system-build-secret"\nDATABASE_URL="file:./prisma/dev.db"\nAUTH_URL="http://localhost:3000"\nNEXT_PUBLIC_APP_URL="http://localhost:3000"\n`;
+  fs.writeFileSync(envDest, envContent, 'utf8');
+  console.log('✓ .env created from defaults');
+}
+
+// Copy .next/static into standalone (required for CSS/JS/assets)
+const staticSrc = path.join(__dirname, '..', '.next', 'static');
+const staticDest = path.join(standaloneDir, '.next', 'static');
+if (fs.existsSync(staticSrc)) {
+  if (fs.existsSync(staticDest)) fs.rmSync(staticDest, { recursive: true, force: true });
+  fs.cpSync(staticSrc, staticDest, { recursive: true });
+  console.log('✓ .next/static copied');
+}
+
+// Copy public into standalone (required for images/icons)
+const publicSrc = path.join(__dirname, '..', 'public');
+const publicDest = path.join(standaloneDir, 'public');
+if (fs.existsSync(publicSrc)) {
+  if (fs.existsSync(publicDest)) fs.rmSync(publicDest, { recursive: true, force: true });
+  fs.cpSync(publicSrc, publicDest, { recursive: true });
+  console.log('✓ public/ copied');
+}
+
+// Copy prisma CLI into standalone (needed for runtime migrations)
+const prismaCliSrc = path.join(__dirname, '..', 'node_modules', 'prisma');
+const prismaCliDest = path.join(standaloneDir, 'node_modules', 'prisma');
+if (fs.existsSync(prismaCliSrc)) {
+  if (fs.existsSync(prismaCliDest)) fs.rmSync(prismaCliDest, { recursive: true, force: true });
+  fs.cpSync(prismaCliSrc, prismaCliDest, { recursive: true });
+  console.log('✓ node_modules/prisma copied');
 }
 
 // Step 3: Build with electron-builder
 console.log('\n📦 Paso 3: Building with electron-builder...');
 
-const builderArgs = ['electron-builder'];
 if (platform === 'win' || platform === 'all') {
-  builderArgs.push('--win', '--x64');
-}
-if (platform === 'linux' || platform === 'all') {
-  builderArgs.push('--linux');
-}
-if (platform === 'all') {
-  // Build for both platforms
+  console.log('\n📦 Building Windows NSIS installer...');
+  run('npx', ['electron-builder', 'build', '--win', '--x64', '--publish', publishMode]);
 }
 
-run('npx', builderArgs);
+if (platform === 'linux' || platform === 'all') {
+  run('npx', ['electron-builder', 'build', '--linux', '--publish', publishMode]);
+}
 
 console.log('\n╔══════════════════════════════════════════════════════════════╗');
 console.log('║  ✅ Build completed successfully!                           ║');

@@ -2,6 +2,9 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { departmentSchema } from "@/lib/validations";
 import { broadcast } from "@/lib/broadcast";
+import { logChange } from "@/lib/sync-engine";
+import { getDeviceId } from "@/lib/sync-utils";
+import { logAudit, getClientIp, diffDetails } from "@/lib/audit";
 
 export async function PUT(
   request: Request,
@@ -32,6 +35,7 @@ export async function PUT(
 
     const data = parsed.data;
     const updateData: Record<string, unknown> = {};
+    const beforeDepartment = await prisma.department.findUnique({ where: { id: departmentId } });
 
     if (data.name !== undefined) updateData.name = data.name;
     if (data.description !== undefined) updateData.description = data.description;
@@ -43,6 +47,25 @@ export async function PUT(
     });
 
     broadcast("department:change", { id: departmentId });
+    void logChange(getDeviceId(), "UPDATE", "department", departmentId, updateData);
+    void logAudit({
+      userId: parseInt(session.user.id, 10),
+      userName: session.user.name,
+      userRole: session.user.role,
+      action: "update",
+      entity: "department",
+      entityId: departmentId,
+      description: `Departamento modificado: ${department.name || '#' + departmentId}`,
+      details: {
+        cambios: diffDetails(
+          { name: beforeDepartment?.name, description: beforeDepartment?.description, active: beforeDepartment?.active },
+          { name: department.name, description: department.description, active: department.active }
+        ),
+      },
+      before: { name: beforeDepartment?.name, description: beforeDepartment?.description, active: beforeDepartment?.active },
+      after: { name: department.name, description: department.description, active: department.active },
+      ip: getClientIp(request),
+    });
     return Response.json(department);
   } catch (error) {
     console.error("Error updating department:", error);
@@ -51,7 +74,7 @@ export async function PUT(
 }
 
 export async function DELETE(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
@@ -67,11 +90,28 @@ export async function DELETE(
       return Response.json({ error: "ID inválido" }, { status: 400 });
     }
 
+    const existing = await prisma.department.findUnique({
+      where: { id: departmentId },
+    });
+
     await prisma.department.delete({
       where: { id: departmentId },
     });
 
     broadcast("department:change", { id: departmentId });
+    void logChange(getDeviceId(), "DELETE", "department", departmentId, {});
+    void logAudit({
+      userId: parseInt(session.user.id, 10),
+      userName: session.user.name,
+      userRole: session.user.role,
+      action: "delete",
+      entity: "department",
+      entityId: departmentId,
+      description: `Departamento eliminado: ${existing?.name || '#' + departmentId}`,
+      before: { name: existing?.name, description: existing?.description, active: existing?.active },
+      after: null,
+      ip: getClientIp(request),
+    });
     return Response.json({ success: true });
   } catch (error) {
     console.error("Error deleting department:", error);

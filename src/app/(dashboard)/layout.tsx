@@ -3,9 +3,10 @@
 import { useState, useEffect } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { useSession } from 'next-auth/react';
-import SessionProvider from '@/components/SessionProvider';
 import Sidebar from '@/components/layout/Sidebar';
 import Header from '@/components/layout/Header';
+import DeliveryNoticeBanner from '@/components/DeliveryNoticeBanner';
+import StockAlertBanner from '@/components/StockAlertBanner';
 import { Skeleton } from '@/components/ui/skeleton';
 
 function DashboardLayoutContent({ children }: { children: React.ReactNode }) {
@@ -20,13 +21,24 @@ function DashboardLayoutContent({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    // Route protection: CASHIER cannot access /users or /importar
-    if (
-      status === 'authenticated' &&
-      session?.user?.role === 'CASHIER' &&
-      (pathname.startsWith('/users') || pathname.startsWith('/importar'))
-    ) {
-      router.push('/');
+    // Route protection:
+    // - CASHIER no accede a /users, /importar, /taxes, /sync o /reports
+    // - HELPER (ayudante) tiene los mismos permisos que el cajero y además
+    //   NO puede acceder por nada al inventario (/products) ni a los pedidos (/orders)
+    if (status === 'authenticated') {
+      const role = session?.user?.role;
+      const isHelper = role === 'HELPER';
+      const isCashier = role === 'CASHIER' || isHelper;
+      if (
+        isCashier &&
+        (pathname.startsWith('/users') || pathname.startsWith('/importar') || pathname.startsWith('/taxes') || pathname.startsWith('/sync') || pathname.startsWith('/reports'))
+      ) {
+        router.push('/');
+        return;
+      }
+      if (isHelper && (pathname.startsWith('/products') || pathname.startsWith('/orders'))) {
+        router.push('/');
+      }
     }
   }, [status, router, session, pathname]);
 
@@ -53,6 +65,8 @@ function DashboardLayoutContent({ children }: { children: React.ReactNode }) {
           title="POS System"
           onMenuClick={() => setSidebarOpen(true)}
         />
+        <DeliveryNoticeBanner />
+        <StockAlertBanner />
         <main className="flex-1 overflow-y-auto p-4 lg:p-6">
           {children}
         </main>
@@ -66,9 +80,5 @@ export default function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
-  return (
-    <SessionProvider>
-      <DashboardLayoutContent>{children}</DashboardLayoutContent>
-    </SessionProvider>
-  );
+  return <DashboardLayoutContent>{children}</DashboardLayoutContent>;
 }

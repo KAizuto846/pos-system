@@ -27,6 +27,13 @@ export default function SetupPage() {
   // Business config
   const [businessName, setBusinessName] = useState('Mi Negocio');
   const [deviceName, setDeviceName] = useState('');
+  useEffect(() => {
+    setDeviceName(
+      typeof window !== 'undefined' && window.location.hostname && !['localhost', '127.0.0.1'].includes(window.location.hostname)
+        ? window.location.hostname
+        : 'Equipo-1'
+    );
+  }, []);
 
   // Admin config
   const [adminUsername, setAdminUsername] = useState('');
@@ -35,9 +42,8 @@ export default function SetupPage() {
   const [adminConfirmPassword, setAdminConfirmPassword] = useState('');
 
   // Network config
-  const [serverMode, setServerMode] = useState<'server' | 'client' | 'auto'>('server');
+  const [serverMode, setServerMode] = useState<'server'>('server');
   const [serverPort, setServerPort] = useState('3000');
-  const [serverIP, setServerIP] = useState('');
 
   // Check if setup is needed
   useEffect(() => {
@@ -49,10 +55,6 @@ export default function SetupPage() {
         }
       })
       .catch(() => {});
-
-    // Get device hostname
-    setDeviceName(window.navigator.userAgent.includes('Windows') ? 
-      window.location.hostname || 'PC-Caja' : 'Server');
   }, [router]);
 
   const handleBusinessSubmit = (e: React.FormEvent) => {
@@ -109,11 +111,24 @@ export default function SetupPage() {
         throw new Error(data.error || 'Error al crear usuario');
       }
 
-      // Save network config (if we had an API for it)
-      // For now, this is handled by the Electron config
+      // Persist business/device config in the database (works in web and desktop)
+      const cfgRes = await fetch('/api/setup/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          businessName,
+          deviceName: deviceName || window.location.hostname || 'Equipo-1',
+          serverPort,
+        }),
+      });
+      if (!cfgRes.ok) {
+        const data = await cfgRes.json().catch(() => null);
+        throw new Error(data?.error || 'Error al guardar la configuracion');
+      }
+
       localStorage.setItem('pos-business-name', businessName);
-      localStorage.setItem('pos-device-name', deviceName);
-      localStorage.setItem('pos-server-mode', serverMode);
+      localStorage.setItem('pos-device-name', deviceName || window.location.hostname || 'Equipo-1');
+      localStorage.setItem('pos-server-mode', 'server');
       localStorage.setItem('pos-server-port', serverPort);
 
       router.push('/login');
@@ -358,41 +373,9 @@ export default function SetupPage() {
                         className="text-emerald-600"
                       />
                       <div>
-                        <div className="text-sm font-medium text-slate-200">Servidor</div>
+                        <div className="text-sm font-medium text-slate-200">Sincronizacion P2P</div>
                         <div className="text-xs text-slate-400">
-                          Ejecuta la base de datos local. Otros dispositivos se conectan a este.
-                        </div>
-                      </div>
-                    </label>
-                    <label className="flex items-center gap-3 p-3 rounded-lg border border-slate-600 bg-slate-700/50 cursor-pointer hover:bg-slate-700 transition-colors">
-                      <input
-                        type="radio"
-                        name="mode"
-                        value="client"
-                        checked={serverMode === 'client'}
-                        onChange={() => setServerMode('client')}
-                        className="text-emerald-600"
-                      />
-                      <div>
-                        <div className="text-sm font-medium text-slate-200">Cliente</div>
-                        <div className="text-xs text-slate-400">
-                          Se conecta a otro servidor existente en la red.
-                        </div>
-                      </div>
-                    </label>
-                    <label className="flex items-center gap-3 p-3 rounded-lg border border-slate-600 bg-slate-700/50 cursor-pointer hover:bg-slate-700 transition-colors">
-                      <input
-                        type="radio"
-                        name="mode"
-                        value="auto"
-                        checked={serverMode === 'auto'}
-                        onChange={() => setServerMode('auto')}
-                        className="text-emerald-600"
-                      />
-                      <div>
-                        <div className="text-sm font-medium text-slate-200">Automatico</div>
-                        <div className="text-xs text-slate-400">
-                          Detecta automaticamente si hay un servidor en la red.
+                          Este dispositivo ejecuta su propia base de datos y se sincroniza de igual a igual con los demas equipos en la red.
                         </div>
                       </div>
                     </label>
@@ -412,30 +395,11 @@ export default function SetupPage() {
                   />
                 </div>
 
-                {serverMode === 'client' && (
-                  <div className="space-y-2">
-                    <Label htmlFor="serverIP">IP del Servidor</Label>
-                    <Input
-                      id="serverIP"
-                      type="text"
-                      placeholder="192.168.1.100"
-                      value={serverIP}
-                      onChange={(e) => setServerIP(e.target.value)}
-                    />
+                {serverMode === 'server' && (
+                  <div className="rounded-md bg-blue-600/20 border border-blue-600/50 px-4 py-3 text-sm text-blue-400">
+                    <p>Este dispositivo ejecutara su propia base de datos y se sincronizara automaticamente (P2P) con los demas equipos de la red.</p>
                   </div>
                 )}
-
-                <div className="rounded-md bg-blue-600/20 border border-blue-600/50 px-4 py-3 text-sm text-blue-400">
-                  {serverMode === 'server' && (
-                    <p>Este dispositivo ejecutara el servidor. Los demas se conectaran a el.</p>
-                  )}
-                  {serverMode === 'client' && (
-                    <p>Ingrese la IP del dispositivo que ejecuta el servidor.</p>
-                  )}
-                  {serverMode === 'auto' && (
-                    <p>El sistema detectara automaticamente los servidores disponibles en la red.</p>
-                  )}
-                </div>
               </CardContent>
               <CardFooter className="flex justify-between">
                 <Button type="button" variant="outline" onClick={() => setStep('admin')}>
@@ -472,7 +436,7 @@ export default function SetupPage() {
                 <div className="flex justify-between text-sm">
                   <span className="text-slate-400">Modo:</span>
                   <Badge variant="outline" className="text-emerald-400 border-emerald-500/50">
-                    {serverMode === 'server' ? 'Servidor' : serverMode === 'client' ? 'Cliente' : 'Automatico'}
+                    P2P (Sincronizacion entre equipos)
                   </Badge>
                 </div>
                 <div className="flex justify-between text-sm">

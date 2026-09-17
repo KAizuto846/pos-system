@@ -1,4 +1,5 @@
 import { auth } from "@/lib/auth";
+import { isHelperRole, helperForbidden } from "@/lib/roles";
 import { prisma } from "@/lib/db";
 
 export async function GET(request: Request) {
@@ -6,6 +7,9 @@ export async function GET(request: Request) {
     const session = await auth();
     if (!session?.user) {
       return Response.json({ error: "No autorizado" }, { status: 401 });
+    }
+    if (isHelperRole(session.user.role)) {
+      return helperForbidden("pedidos");
     }
 
     const { searchParams } = new URL(request.url);
@@ -36,14 +40,19 @@ export async function GET(request: Request) {
             product: {
               include: {
                 department: true,
+                productLines: {
+                  select: { supplierId: true, supplierPrice: true, isPrimary: true },
+                },
               },
             },
           },
         },
       },
+      orderBy: { createdAt: "desc" },
     });
 
-    // Agrupar por producto y sumar cantidades pendientes
+    // Gestión de cajas: los items en cajas se acumulan en su unidad base
+    // (piezas) para no romper la suma con productos por pieza.
     const pendingMap = new Map<
       number,
       {
@@ -54,20 +63,31 @@ export async function GET(request: Request) {
         price: number;
         cost: number;
         department: { id: number; name: string } | null;
+        supplierPrice: number | null;
         pendingQuantity: number;
+        soldByBox?: boolean;
+        unitsPerBox?: number | null;
+        boxRemainder?: number;
       }
     >();
 
     for (const order of orders) {
       for (const item of order.items) {
-        const pending = item.quantity - item.receivedQuantity;
-        if (pending <= 0) continue;
+        const unitPending =
+          item.isBox && item.unitsPerBox
+            ? (item.quantity - item.receivedQuantity) * item.unitsPerBox
+            : item.quantity - item.receivedQuantity;
+        if (unitPending <= 0) continue;
 
         const pid = item.productId;
+        if (!pid || !item.product) continue;
         const existing = pendingMap.get(pid);
         if (existing) {
-          existing.pendingQuantity += pending;
+          existing.pendingQuantity += unitPending;
         } else {
+          const lines = item.product.productLines || [];
+          const line = lines.find(l => l.supplierId === sid && l.isPrimary)
+            ?? lines.find(l => l.supplierId === sid);
           pendingMap.set(pid, {
             productId: pid,
             name: item.product.name,
@@ -76,7 +96,11 @@ export async function GET(request: Request) {
             price: item.product.price,
             cost: item.product.cost,
             department: item.product.department,
-            pendingQuantity: pending,
+            supplierPrice: line?.supplierPrice ?? null,
+            pendingQuantity: unitPending,
+            soldByBox: item.product.soldByBox,
+            unitsPerBox: item.product.unitsPerBox,
+            boxRemainder: item.product.boxRemainder,
           });
         }
       }
@@ -92,8 +116,8 @@ export async function GET(request: Request) {
     return Response.json({
       supplierId: sid,
       supplierName,
-      totalOrdersWithPending: orders.filter((o: any) =>
-        o.items.some((i: any) => i.quantity > i.receivedQuantity)
+      totalOrdersWithPending: orders.filter((o) =>
+        o.items.some((i) => (i.quantity - i.receivedQuantity) * (i.isBox && i.unitsPerBox ? i.unitsPerBox : 1) > 0)
       ).length,
       products,
     });

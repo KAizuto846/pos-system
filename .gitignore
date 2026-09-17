@@ -12,3 +12,17 @@ dist-electron/
 *.blockmap
 latest.yml
 builder-effective-config.yaml
+prisma/prisma/
+
+# Relay local data
+relay/relay.db
+relay/relay.db-shm
+relay/relay.db-wal
+relay/relay.log
+tsconfig.tsbuildinfo
+
+# Tailscale TLS certs (generados localmente, no subir)
+*.ts.net.crt
+*.ts.net.key
+
+propuestas-pos/

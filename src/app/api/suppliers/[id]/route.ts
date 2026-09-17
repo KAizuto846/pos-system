@@ -2,6 +2,9 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { supplierSchema } from "@/lib/validations";
 import { broadcast } from "@/lib/broadcast";
+import { logChange } from "@/lib/sync-engine";
+import { getDeviceId } from "@/lib/sync-utils";
+import { logAudit, getClientIp, diffDetails } from "@/lib/audit";
 
 export async function PUT(
   request: Request,
@@ -40,12 +43,33 @@ export async function PUT(
     if (data.address !== undefined) updateData.address = data.address;
     if (data.active !== undefined) updateData.active = data.active;
 
+    const beforeSupplier = await prisma.supplier.findUnique({ where: { id: supplierId } });
+
     const supplier = await prisma.supplier.update({
       where: { id: supplierId },
       data: updateData,
     });
 
     broadcast("supplier:change", { id: supplierId });
+    void logChange(getDeviceId(), "UPDATE", "supplier", supplierId, updateData);
+    void logAudit({
+      userId: parseInt(session.user.id, 10),
+      userName: session.user.name,
+      userRole: session.user.role,
+      action: "update",
+      entity: "supplier",
+      entityId: supplierId,
+      description: `Proveedor modificado: ${supplier.name || '#' + supplierId}`,
+      details: {
+        cambios: diffDetails(
+          { name: beforeSupplier?.name, contact: beforeSupplier?.contact, phone: beforeSupplier?.phone, email: beforeSupplier?.email, address: beforeSupplier?.address, active: beforeSupplier?.active },
+          { name: supplier.name, contact: supplier.contact, phone: supplier.phone, email: supplier.email, address: supplier.address, active: supplier.active }
+        ),
+      },
+      before: { name: beforeSupplier?.name, contact: beforeSupplier?.contact, phone: beforeSupplier?.phone, email: beforeSupplier?.email, address: beforeSupplier?.address, active: beforeSupplier?.active },
+      after: { name: supplier.name, contact: supplier.contact, phone: supplier.phone, email: supplier.email, address: supplier.address, active: supplier.active },
+      ip: getClientIp(request),
+    });
     return Response.json(supplier);
   } catch (error) {
     console.error("Error updating supplier:", error);
@@ -54,7 +78,7 @@ export async function PUT(
 }
 
 export async function DELETE(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
@@ -70,11 +94,28 @@ export async function DELETE(
       return Response.json({ error: "ID inválido" }, { status: 400 });
     }
 
+    const existing = await prisma.supplier.findUnique({
+      where: { id: supplierId },
+    });
+
     await prisma.supplier.delete({
       where: { id: supplierId },
     });
 
     broadcast("supplier:change", { id: supplierId });
+    void logChange(getDeviceId(), "DELETE", "supplier", supplierId, {});
+    void logAudit({
+      userId: parseInt(session.user.id, 10),
+      userName: session.user.name,
+      userRole: session.user.role,
+      action: "delete",
+      entity: "supplier",
+      entityId: supplierId,
+      description: `Proveedor eliminado: ${existing?.name || '#' + supplierId}`,
+      before: { name: existing?.name, contact: existing?.contact, phone: existing?.phone, email: existing?.email, active: existing?.active },
+      after: null,
+      ip: getClientIp(request),
+    });
     return Response.json({ success: true });
   } catch (error) {
     console.error("Error deleting supplier:", error);

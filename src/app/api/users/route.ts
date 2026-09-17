@@ -3,6 +3,9 @@ import { prisma } from "@/lib/db";
 import { userSchema } from "@/lib/validations";
 import { hash } from "bcrypt-ts";
 import { broadcast } from "@/lib/broadcast";
+import { logChange } from "@/lib/sync-engine";
+import { getDeviceId } from "@/lib/sync-utils";
+import { logAudit, getClientIp } from "@/lib/audit";
 
 export async function GET() {
   try {
@@ -18,6 +21,7 @@ export async function GET() {
         name: true,
         role: true,
         active: true,
+        recoveryEmail: true,
         createdAt: true,
       },
       orderBy: { createdAt: "desc" },
@@ -76,6 +80,7 @@ export async function POST(request: Request) {
         name: data.name,
         role: data.role,
         active: data.active,
+        ...(data.recoveryEmail ? { recoveryEmail: data.recoveryEmail } : {}),
       },
       select: {
         id: true,
@@ -83,11 +88,30 @@ export async function POST(request: Request) {
         name: true,
         role: true,
         active: true,
+        recoveryEmail: true,
         createdAt: true,
       },
     });
 
     broadcast("user:change", { id: user.id });
+    void logChange(getDeviceId(), "CREATE", "user", user.id, {
+      id: user.id,
+      username: user.username,
+      name: user.name,
+      role: user.role,
+      active: user.active,
+    });
+    void logAudit({
+      userId: parseInt(session.user.id, 10),
+      userName: session.user.name,
+      userRole: session.user.role,
+      action: "create",
+      entity: "user",
+      entityId: user.id,
+      description: `Usuario creado: ${user.name || user.username} (${user.role})`,
+      after: { username: user.username, name: user.name, role: user.role, active: user.active, recoveryEmail: user.recoveryEmail },
+      ip: getClientIp(request),
+    });
     return Response.json(user, { status: 201 });
   } catch (error) {
     console.error("Error creating user:", error);

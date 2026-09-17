@@ -2,6 +2,9 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { paymentMethodSchema } from "@/lib/validations";
 import { broadcast } from "@/lib/broadcast";
+import { logChange } from "@/lib/sync-engine";
+import { getDeviceId } from "@/lib/sync-utils";
+import { logAudit, getClientIp } from "@/lib/audit";
 
 export async function GET() {
   try {
@@ -49,6 +52,23 @@ export async function POST(request: Request) {
     });
 
     broadcast("payment:change", { id: paymentMethod.id });
+    void logChange(getDeviceId(), "CREATE", "paymentmethod", paymentMethod.id, {
+      id: paymentMethod.id,
+      name: paymentMethod.name,
+      affectsCash: paymentMethod.affectsCash,
+      active: paymentMethod.active,
+    });
+    void logAudit({
+      userId: parseInt(session.user.id, 10),
+      userName: session.user.name,
+      userRole: session.user.role,
+      action: "create",
+      entity: "payment-method",
+      entityId: paymentMethod.id,
+      description: `Método de pago creado: ${paymentMethod.name}`,
+      after: { name: paymentMethod.name, affectsCash: paymentMethod.affectsCash, active: paymentMethod.active },
+      ip: getClientIp(request),
+    });
     return Response.json(paymentMethod, { status: 201 });
   } catch (error) {
     console.error("Error creating payment method:", error);

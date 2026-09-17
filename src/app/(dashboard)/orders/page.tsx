@@ -4,8 +4,10 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Plus, Eye, CheckCircle, Package, Search,
   Calendar, Clock, Calculator, Trash2, Columns, PlusCircle,
-  Download, Image as ImageIcon, FileText, AlertCircle, History,
+  Download, Image as ImageIcon, FileText, AlertCircle, History, AlertTriangle, X,
 } from 'lucide-react';
+import toast from 'react-hot-toast';
+import { useSession } from 'next-auth/react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -43,6 +45,7 @@ import {
   SelectItem,
 } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { Checkbox } from '@/components/ui/checkbox';
 
 // ─── Types ───
 interface Supplier {
@@ -51,6 +54,9 @@ interface Supplier {
 
 interface Product {
   id: number; name: string; barcode: string; stock: number; active: boolean;
+  price?: number; cost?: number;
+  productLines?: Array<{ supplierId: number; supplierPrice: number | null; isPrimary: boolean }>;
+  soldByBox?: boolean; unitsPerBox?: number | null; boxRemainder?: number;
 }
 
 interface SoldProduct {
@@ -58,20 +64,70 @@ interface SoldProduct {
   price: number; cost: number; stock: number; minStock: number;
   department: { id: number; name: string } | null;
   supplierPrice: number | null; totalSold: number;
+  source?: 'ventas' | 'pendiente';
+  // Producto sin inventario (fantasma): se rellena como si existiera
+  ghost?: boolean;
+  // Gestión de cajas: el producto se pide por cajas
+  soldByBox?: boolean; unitsPerBox?: number | null; boxRemainder?: number; totalSoldUnits?: number;
+  supplierId?: number | null;
+  productLines?: Array<{ supplierId: number; supplierPrice: number | null; isPrimary: boolean }>;
+}
+
+interface ProductSearchResult {
+  id: number; name: string; barcode: string;
+  price: number; cost: number; stock: number; minStock: number;
+  department: { id: number; name: string } | null;
+  productLines?: Array<{ supplierId: number; supplierPrice: number | null; isPrimary: boolean }>;
+  soldByBox?: boolean; unitsPerBox?: number | null; boxRemainder?: number;
+  supplierId?: number | null;
+  supplierPrice?: number | null;
 }
 
 interface OrderItem {
-  id: number; productId: number; quantity: number;
-  product: Product; receivedQuantity: number; notes: string;
+  id: number; productId: number | null; quantity: number;
+  product: Product | null; receivedQuantity: number; notes: string;
+  costPrice?: number | null; extra?: boolean;
+  productName?: string; productBarcode?: string;
+  // Gestión de cajas: cantidad en cajas
+  isBox?: boolean; unitsPerBox?: number | null;
+}
+
+interface ReceiveExtra {
+  key: string;
+  productId: number | null;
+  name: string;
+  quantity: string;
+  costPrice: string;
+  price: string;
+  expiresAt: string;
 }
 
 interface Order {
   id: number; supplierId: number; status: string; notes: string;
   createdAt: string; supplier: Supplier; items: OrderItem[];
+  createdBy?: { id: number; name: string } | null;
+  receivedBy?: { id: number; name: string } | null;
+}
+
+interface Pagination {
+  page: number; limit: number; total: number;
+  totalPages: number; hasMore: boolean;
 }
 
 interface ExtraColumn {
   id: string; name: string; key: string;
+}
+
+const receiveDraftKey = (orderId: number) => `pos.receiveDraft.${orderId}`;
+
+interface SupplierPrompt {
+  productId: number;
+  name: string;
+  cost: number;
+  supplierPrice: number | null;
+  supplierId: number | null;
+  productLines?: Array<{ supplierId: number; supplierPrice: number | null; isPrimary: boolean }>;
+  onAdd: () => void;
 }
 
 const EXTRA_COLUMN_OPTIONS: { label: string; key: string }[] = [
@@ -83,6 +139,21 @@ const EXTRA_COLUMN_OPTIONS: { label: string; key: string }[] = [
   { label: 'Departamento', key: 'department' },
   { label: 'Texto personalizado', key: 'custom_text' },
 ];
+
+// Columnas disponibles para la exportación PNG/CSV del pedido
+const EXPORT_COLUMN_OPTIONS: { key: string; label: string; required?: boolean }[] = [
+  { key: 'index', label: '#' },
+  { key: 'barcode', label: 'Código', required: true },
+  { key: 'name', label: 'Nombre', required: true },
+  { key: 'quantity', label: 'Cantidad', required: true },
+  { key: 'received', label: 'Recibido' },
+  { key: 'pending', label: 'Pendiente' },
+  { key: 'price', label: 'Precio Venta' },
+  { key: 'supplierPrice', label: 'P. Proveedor' },
+  { key: 'profit', label: 'Ganancia' },
+];
+
+const DEFAULT_EXPORT_COLUMNS = ['index', 'barcode', 'name', 'quantity', 'received', 'pending'];
 
 // ─── Helpers ───
 function formatDate(dateStr: string) {
@@ -98,27 +169,76 @@ function formatCurrency(n: number) {
 function getStatusBadge(status: string) {
   const v: Record<string, 'default' | 'secondary' | 'outline' | 'destructive'> = {
     pending: 'secondary', sent: 'outline', received: 'default', cancelled: 'destructive',
+    on_hold: 'secondary', ready: 'default',
   };
   const l: Record<string, string> = {
     pending: 'Pendiente', sent: 'Enviado', received: 'Recibido', cancelled: 'Cancelado',
+    on_hold: 'En espera', ready: 'Listo',
   };
+  if (status === 'on_hold') {
+    return <Badge variant="secondary" className="uppercase text-xs border-amber-600/60 text-amber-400">En espera</Badge>;
+  }
   return <Badge variant={v[status] || 'secondary'} className="uppercase text-xs">{l[status] || status}</Badge>;
 }
 
 function fmtSold(p: SoldProduct, key: string): string {
   if (key === 'department') return p.department?.name || '—';
-  const v = (p as any)[key];
+  const v = p[key as keyof SoldProduct];
   if (v === null || v === undefined) return '—';
   return typeof v === 'number' ? v.toFixed(2) : String(v);
 }
 
+// Nombre para mostrar: los productos gestionados por cajas aparecen como "Caja de ..."
+function boxName(p: { name: string; soldByBox?: boolean }): string {
+  return p.soldByBox ? `Caja de ${p.name}` : p.name;
+}
+
+// Nombre de un item de pedido (puede estar en cajas)
+function orderItemName(item: OrderItem): string {
+  const base = item.product?.name || item.productName || `#${item.productId ?? '?'}`;
+  return item.isBox ? `Caja de ${base}` : base;
+}
+
+// Convierte un pendiente de pedidos previos a un producto del formulario. Si el
+// producto se maneja por cajas, la cantidad sugerida va en cajas y las piezas
+// que no completan caja se acumulan en el sobrante (boxRemainder).
+function pendingToSold(p: SoldProduct & { pendingQuantity: number }): SoldProduct {
+  if (p.soldByBox && p.unitsPerBox && p.unitsPerBox > 0) {
+    const available = p.pendingQuantity + (p.boxRemainder ?? 0);
+    return {
+      ...p,
+      totalSold: Math.floor(available / p.unitsPerBox),
+      totalSoldUnits: p.pendingQuantity,
+      boxRemainder: available % p.unitsPerBox,
+      source: 'pendiente' as const,
+    };
+  }
+  return { ...p, totalSold: p.pendingQuantity, source: 'pendiente' as const };
+}
+
+// Convierte la cantidad (en cajas si aplica) a unidades reales para los cálculos
+function unitsOf(p: { soldByBox?: boolean; unitsPerBox?: number | null }, qty: number): number {
+  return p.soldByBox && p.unitsPerBox ? qty * p.unitsPerBox : qty;
+}
+
 function todayStr() { return new Date().toISOString().slice(0, 10); }
 function weekAgoStr() { const d = new Date(); d.setDate(d.getDate() - 7); return d.toISOString().slice(0, 10); }
+function nowTimeStr() { const d = new Date(); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; }
 
 // ─── Component ───
 export default function OrdersPage() {
+  const { data: session } = useSession();
+  const isAdmin = session?.user?.role === 'ADMIN';
+  // Datos simbólicos (ganancia/pérdida estimada) solo visibles para admin;
+  // el botón permite ocultarlos al cajero.
+  const [showProfitInfo, setShowProfitInfo] = useState(false);
+
   // ── Data ──
   const [orders, setOrders] = useState<Order[]>([]);
+  const [orderPage, setOrderPage] = useState(1);
+  const [orderPagination, setOrderPagination] = useState<Pagination>({
+    page: 1, limit: 25, total: 0, totalPages: 0, hasMore: false,
+  });
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [loading, setLoading] = useState(true);
   const exportRef = useRef<HTMLDivElement>(null);
@@ -132,15 +252,36 @@ export default function OrdersPage() {
   const [exportOpen, setExportOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [receiveQuantities, setReceiveQuantities] = useState<Record<number, number>>({});
+  const [receiveFinalStocks, setReceiveFinalStocks] = useState<Record<number, string>>({});
   const [receiveLoading, setReceiveLoading] = useState(false);
+  const [receiveBatches, setReceiveBatches] = useState<Record<number, string>>({});
+  const [receiveCosts, setReceiveCosts] = useState<Record<number, string>>({});
+  const [receivePrices, setReceivePrices] = useState<Record<number, string>>({});
+  const [receiveBarcodes, setReceiveBarcodes] = useState<Record<number, string>>({});
+  const [receiveExtras, setReceiveExtras] = useState<ReceiveExtra[]>([]);
+  const [extraSearch, setExtraSearch] = useState('');
+  const [extraResults, setExtraResults] = useState<ProductSearchResult[]>([]);
+  const [extraSearching, setExtraSearching] = useState(false);
+  const [extraGhostName, setExtraGhostName] = useState('');
+  const [extraGhostQty, setExtraGhostQty] = useState('1');
+  const [extraGhostCost, setExtraGhostCost] = useState('0');
+  const [extraGhostPrice, setExtraGhostPrice] = useState('0');
+  const [paymentMethods, setPaymentMethods] = useState<Array<{ id: number; name: string; affectsCash: boolean }>>([]);
+  const [receivePaymentMethodId, setReceivePaymentMethodId] = useState('');
+  const [receiveNoteTotal, setReceiveNoteTotal] = useState('');
+  const [draftRestored, setDraftRestored] = useState(false);
 
   // ── Create form ──
   const [formSupplierId, setFormSupplierId] = useState('');
   const [formNotes, setFormNotes] = useState('');
-  const [dateFrom, setDateFrom] = useState(weekAgoStr());
-  const [dateTo, setDateTo] = useState(todayStr());
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  useEffect(() => {
+    setDateFrom(weekAgoStr());
+    setDateTo(todayStr());
+  }, []);
   const [timeFrom, setTimeFrom] = useState('06:00');
-  const [timeTo, setTimeTo] = useState('22:00');
+  const [timeTo, setTimeTo] = useState(() => nowTimeStr());
   const [soldProducts, setSoldProducts] = useState<SoldProduct[]>([]);
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [hiddenRows, setHiddenRows] = useState<Set<number>>(new Set());
@@ -148,6 +289,7 @@ export default function OrdersPage() {
   const [formLoading, setFormLoading] = useState(false);
   const [calculating, setCalculating] = useState(false);
   const [salesInfo, setSalesInfo] = useState<{ totalProducts: number; totalUnits: number } | null>(null);
+  const [supplierPrompt, setSupplierPrompt] = useState<SupplierPrompt | null>(null);
   const [extraColumns, setExtraColumns] = useState<ExtraColumn[]>([]);
   const [showAddColumn, setShowAddColumn] = useState(false);
   const [newColumnKey, setNewColumnKey] = useState('price');
@@ -155,6 +297,7 @@ export default function OrdersPage() {
   const [manualColumns, setManualColumns] = useState<Record<string, Record<string, string>>>({});
   const [pendingItems, setPendingItems] = useState<SoldProduct[] | null>(null);
   const [loadingPending, setLoadingPending] = useState(false);
+  const [exportCols, setExportCols] = useState<Set<string>>(new Set(DEFAULT_EXPORT_COLUMNS));
 
   // ── Manual product search state ──
   const [showManualAdd, setShowManualAdd] = useState(false);
@@ -162,13 +305,37 @@ export default function OrdersPage() {
   const [manualResults, setManualResults] = useState<SoldProduct[]>([]);
   const [manualSearching, setManualSearching] = useState(false);
 
+  // ── Producto sin inventario (fantasma) ──
+  const [ghostName, setGhostName] = useState('');
+  const [ghostBarcode, setGhostBarcode] = useState('');
+  const [ghostPrice, setGhostPrice] = useState('0');
+  const [ghostCost, setGhostCost] = useState('0');
+  const [ghostQty, setGhostQty] = useState('1');
+  // Sugerencias al dar de alta: al escribir nombre o código se buscan productos
+  // existentes para linkearlos en vez de crear un duplicado.
+  const [ghostMatches, setGhostMatches] = useState<ProductSearchResult[]>([]);
+  const [ghostSearching, setGhostSearching] = useState(false);
+
   // ── Fetchers ──
-  const fetchOrders = useCallback(() => {
+  const fetchOrders = useCallback(async (pageNum = 1, signal?: AbortSignal) => {
+    await Promise.resolve();
+    if (signal?.aborted) return;
     setLoading(true);
-    fetch('/api/orders')
-      .then(r => r.json())
-      .then(d => { if (Array.isArray(d)) setOrders(d); setLoading(false); })
-      .catch(() => setLoading(false));
+    try {
+      const params = new URLSearchParams({ page: String(pageNum), limit: '25' });
+      const res = await fetch(`/api/orders?${params}`, { signal });
+      if (!res.ok) throw new Error('Error al cargar pedidos');
+      const data: { orders: Order[]; pagination: Pagination } = await res.json();
+      setOrders(data.orders);
+      setOrderPagination(data.pagination);
+      setOrderPage(data.pagination.page);
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === 'AbortError')) {
+        setOrders([]);
+      }
+    } finally {
+      if (!signal?.aborted) setLoading(false);
+    }
   }, []);
 
   const fetchSuppliers = useCallback(() => {
@@ -178,14 +345,54 @@ export default function OrdersPage() {
       .catch(() => {});
   }, []);
 
-  useEffect(() => { fetchOrders(); fetchSuppliers(); }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    const initialLoad = setTimeout(() => {
+      fetchOrders(1, controller.signal);
+      fetchSuppliers();
+      fetch('/api/payment-methods')
+        .then(r => r.json())
+        .then(d => { if (Array.isArray(d)) setPaymentMethods(d); })
+        .catch(() => {});
+    }, 0);
+    return () => {
+      clearTimeout(initialLoad);
+      controller.abort();
+    };
+  }, [fetchOrders, fetchSuppliers]);
 
   const resetForm = () => {
     setFormSupplierId(''); setFormNotes(''); setDateFrom(weekAgoStr());
-    setDateTo(todayStr()); setTimeFrom('06:00'); setTimeTo('22:00');
+    setDateTo(todayStr()); setTimeFrom('06:00'); setTimeTo(nowTimeStr());
     setSoldProducts([]); setQuantities({}); setHiddenRows(new Set());
     setSalesInfo(null); setFormError(''); setExtraColumns([]); setPendingItems(null);
     setManualColumns({}); setCustomColumnName('');
+    setGhostName(''); setGhostBarcode(''); setGhostPrice('0'); setGhostCost('0'); setGhostQty('1');
+    setGhostMatches([]);
+    setLastRangeNote(null);
+  };
+
+  // ── Recordar último rango por proveedor ──
+  // Al elegir un proveedor, busca el rango de fechas/horas usado en su último
+  // pedido y prellenar el "desde" del nuevo pedido con el "hasta" del anterior.
+  const [lastRangeNote, setLastRangeNote] = useState<string | null>(null);
+  const loadLastRange = async (supplierId: string) => {
+    setLastRangeNote(null);
+    if (!supplierId) return;
+    try {
+      const res = await fetch(`/api/orders/last-range?supplierId=${encodeURIComponent(supplierId)}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const r = data?.range;
+      if (r?.dateTo && r?.timeTo) {
+        setDateFrom(r.dateTo);
+        setTimeFrom(r.timeTo);
+        setDateTo(todayStr());
+        setTimeTo(nowTimeStr());
+        const f = `${r.dateTo} ${r.timeTo}`;
+        setLastRangeNote(`El último pedido a este proveedor terminó el ${f}. El nuevo pedido empieza desde ahí.`);
+      }
+    } catch { /* Sin conexión: se mantienen las fechas actuales */ }
   };
 
   // ── Calculate sales ──
@@ -197,10 +404,34 @@ export default function OrdersPage() {
       const res = await fetch(`/api/orders/sales-summary?${params}`);
       const data = await res.json();
       if (!res.ok) { setFormError(data.error || 'Error'); return; }
-      setSoldProducts(data.products || []);
-      setSalesInfo({ totalProducts: data.totalProducts, totalUnits: data.totalUnits });
+      const sales = (data.products || []) as SoldProduct[];
       const init: Record<string, number> = {};
-      (data.products || []).forEach((p: SoldProduct) => { init[String(p.productId)] = p.totalSold; });
+      sales.forEach((p: SoldProduct) => { init[String(p.productId)] = p.totalSold; });
+
+      // Pendientes de pedidos pasados: para productos donde este proveedor es SECUNDARIO
+      // (o que no estén en las ventas del principal), se sugiere solo lo que falta por recibir
+      let merged = sales;
+      try {
+        const pendRes = await fetch(`/api/orders/pending-items?supplierId=${formSupplierId}`);
+        const pendData = await pendRes.json();
+        if (pendRes.ok && Array.isArray(pendData.products)) {
+          const pendProducts = pendData.products as Array<SoldProduct & { pendingQuantity: number }>;
+          const existingIds = new Set(sales.map(p => p.productId));
+          const newProds = pendProducts.filter(p => !existingIds.has(p.productId));
+          if (newProds.length > 0) {
+            const converted = newProds.map(pendingToSold);
+            merged = [...sales, ...converted];
+            converted.forEach(p => { init[String(p.productId)] = p.totalSold; });
+          }
+          setPendingItems(pendProducts);
+        }
+      } catch {}
+
+      setSoldProducts(merged);
+      setSalesInfo({
+        totalProducts: merged.length,
+        totalUnits: merged.reduce((s, p) => s + unitsOf(p, init[String(p.productId)] || 0), 0),
+      });
       setQuantities(init);
     } catch { setFormError('Error de conexión'); }
     finally { setCalculating(false); }
@@ -214,15 +445,17 @@ export default function OrdersPage() {
       const res = await fetch(`/api/orders/pending-items?supplierId=${formSupplierId}`);
       const data = await res.json();
       if (res.ok && data.products?.length > 0) {
-        setPendingItems(data.products);
+        const pendingProducts = data.products as Array<SoldProduct & { pendingQuantity: number }>;
+        setPendingItems(pendingProducts);
         // Add pending items to sold products if they're not already there
         const existingIds = new Set(soldProducts.map(p => p.productId));
-        const newProds = data.products.filter((p: any) => !existingIds.has(p.productId));
+        const newProds = pendingProducts.filter((p) => !existingIds.has(p.productId));
         if (newProds.length > 0) {
-          const merged = [...soldProducts, ...newProds];
+          const converted = newProds.map(pendingToSold);
+          const merged = [...soldProducts, ...converted];
           setSoldProducts(merged);
           const qty = { ...quantities };
-          newProds.forEach((p: any) => { qty[String(p.productId)] = p.pendingQuantity; });
+          converted.forEach((p) => { qty[String(p.productId)] = p.totalSold; });
           setQuantities(qty);
         }
       }
@@ -231,31 +464,60 @@ export default function OrdersPage() {
   };
 
   // ── Manual product search ──
-  const searchProducts = async (q: string) => {
-    if (!q || q.length < 2) { setManualResults([]); return; }
-    setManualSearching(true);
-    try {
-      const res = await fetch(`/api/products?q=${encodeURIComponent(q)}&limit=20`);
-      const data = await res.json();
-      if (data.products) {
-        setManualResults(data.products.map((p: any) => ({
-          productId: p.id,
-          name: p.name,
-          barcode: p.barcode,
-          price: p.price,
-          cost: p.cost,
-          stock: p.stock,
-          minStock: p.minStock,
-          department: p.department || null,
-          supplierPrice: null,
-          totalSold: 0,
-        })));
-      }
-    } catch {}
-    setManualSearching(false);
-  };
+  useEffect(() => {
+    const query = manualSearch.trim();
+    if (!showManualAdd || query.length < 2) {
+      return;
+    }
 
-  const addManualProduct = (product: SoldProduct) => {
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      setManualSearching(true);
+      try {
+        const res = await fetch(`/api/products?q=${encodeURIComponent(query)}&limit=20`, {
+          signal: controller.signal,
+        });
+        if (!res.ok) throw new Error('Error al buscar productos');
+        const data = await res.json();
+        const supplierPid = formSupplierId ? parseInt(formSupplierId) : null;
+        setManualResults((data.products || []).map((p: ProductSearchResult) => {
+          const lines = p.productLines || [];
+          const line = lines.find(l => l.supplierId === supplierPid && l.isPrimary)
+            ?? lines.find(l => l.supplierId === supplierPid);
+          return {
+            productId: p.id,
+            name: p.name,
+            barcode: p.barcode,
+            price: p.price,
+            cost: p.cost,
+            stock: p.stock,
+            minStock: p.minStock,
+            department: p.department || null,
+            supplierPrice: line?.supplierPrice ?? null,
+            totalSold: 0,
+            soldByBox: p.soldByBox,
+            unitsPerBox: p.unitsPerBox,
+            boxRemainder: p.boxRemainder,
+            supplierId: p.supplierId ?? null,
+            productLines: p.productLines,
+          };
+        }));
+      } catch (error) {
+        if (!(error instanceof DOMException && error.name === 'AbortError')) {
+          setManualResults([]);
+        }
+      } finally {
+        if (!controller.signal.aborted) setManualSearching(false);
+      }
+    }, 300);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [manualSearch, showManualAdd, formSupplierId]);
+
+  const addProductToOrder = (product: SoldProduct) => {
     // Check if already in the list
     if (soldProducts.some(p => p.productId === product.productId)) {
       // Just increase quantity
@@ -263,14 +525,34 @@ export default function OrdersPage() {
         ...prev,
         [String(product.productId)]: (prev[String(product.productId)] || 0) + 1,
       }));
+    } else {
+      // Add to sold products list
+      setSoldProducts(prev => [...prev, product]);
+      setQuantities(prev => ({ ...prev, [String(product.productId)]: 1 }));
+    }
+  };
+
+  const isLinkedToSupplier = (p: SoldProduct | ProductSearchResult, supplierId: number) =>
+    p.productLines?.some(l => l.supplierId === supplierId) ?? p.supplierId === supplierId;
+
+  const addManualProduct = (product: SoldProduct) => {
+    const sid = formSupplierId ? parseInt(formSupplierId) : null;
+    if (sid && product.productId > 0 && !isLinkedToSupplier(product, sid)) {
+      setSupplierPrompt({
+        productId: product.productId,
+        name: product.name,
+        cost: product.cost,
+        supplierPrice: product.supplierPrice ?? null,
+        supplierId: product.supplierId ?? null,
+        productLines: product.productLines,
+        onAdd: () => addProductToOrder(product),
+      });
       setShowManualAdd(false);
       setManualSearch('');
       setManualResults([]);
       return;
     }
-    // Add to sold products list
-    setSoldProducts(prev => [...prev, product]);
-    setQuantities(prev => ({ ...prev, [String(product.productId)]: 1 }));
+    addProductToOrder(product);
     setShowManualAdd(false);
     setManualSearch('');
     setManualResults([]);
@@ -307,59 +589,405 @@ export default function OrdersPage() {
   };
 
   // ── Create order ──
-  const handleCreate = async (e: React.FormEvent) => {
+  const handleCreate = async (e: React.FormEvent, status?: string) => {
     e.preventDefault();
     setFormError('');
     const items = Object.entries(quantities)
       .filter(([pid, qty]) => qty > 0 && !hiddenRows.has(parseInt(pid)))
-      .map(([productId, quantity]) => ({ productId: parseInt(productId), quantity }));
+      .map(([pid, quantity]) => {
+        const productId = parseInt(pid);
+        if (productId < 0) {
+          // Producto fantasma: se envía con sus datos rellenados
+          const ghost = soldProducts.find((p) => p.productId === productId && p.ghost);
+          if (!ghost) return null;
+          return {
+            name: ghost.name,
+            barcode: ghost.barcode,
+            price: ghost.price,
+            cost: ghost.cost,
+            quantity,
+          };
+        }
+        const prod = soldProducts.find((p) => p.productId === productId);
+        // Gestión de cajas: el sobrante (piezas que no completan una caja) se
+        // acumula para el siguiente pedido.
+        if (prod?.soldByBox && prod.unitsPerBox) {
+          const availableUnits = (prod.totalSoldUnits ?? 0) + (prod.boxRemainder ?? 0);
+          const newRemainder = Math.max(0, availableUnits - quantity * prod.unitsPerBox);
+          return {
+            productId,
+            quantity,
+            isBox: true,
+            unitsPerBox: prod.unitsPerBox,
+            newRemainder,
+          };
+        }
+        return { productId, quantity };
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null);
     if (items.length === 0) { setFormError('No hay productos con cantidad > 0'); return; }
     setFormLoading(true);
     const res = await fetch('/api/orders', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ supplierId: parseInt(formSupplierId), notes: formNotes, items }),
+      body: JSON.stringify({
+        supplierId: parseInt(formSupplierId),
+        notes: formNotes,
+        status,
+        items,
+        range: { dateFrom, timeFrom, dateTo, timeTo },
+      }),
     });
     const data = await res.json();
     setFormLoading(false);
     if (!res.ok) { setFormError(data.error || 'Error al crear'); return; }
-    setCreateOpen(false); resetForm(); fetchOrders();
+    toast.success(status === 'on_hold' ? 'Pedido guardado en espera' : 'Pedido creado');
+    setCreateOpen(false); resetForm(); fetchOrders(1);
+  };
+
+  const handleGhostKeyDown = (e: React.KeyboardEvent) => {
+    // Evita que Enter envíe el formulario del pedido y pierda lo capturado;
+    // en su lugar agrega el producto fantasma al pedido.
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (ghostName.trim()) addGhostProduct();
+    }
+  };
+
+  // Búsqueda de productos existentes mientras se rellena el alta: ayuda a
+  // reutilizar un producto por nombre o código en lugar de duplicarlo.
+  useEffect(() => {
+    const name = ghostName.trim();
+    const barcode = ghostBarcode.trim();
+    const query = barcode.length >= 3 ? barcode : name;
+    if (query.length < 2) {
+      setGhostMatches([]);
+      return;
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      setGhostSearching(true);
+      try {
+        const res = await fetch(`/api/products?q=${encodeURIComponent(query)}&limit=5`, {
+          signal: controller.signal,
+        });
+        const data = await res.json();
+        setGhostMatches(res.ok ? data.products || [] : []);
+      } catch (error) {
+        if (!(error instanceof DOMException && error.name === 'AbortError')) {
+          setGhostMatches([]);
+        }
+      } finally {
+        if (!controller.signal.aborted) setGhostSearching(false);
+      }
+    }, 300);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [ghostName, ghostBarcode]);
+
+  // Usa un producto existente como alta del pedido (en vez de crear uno nuevo)
+  const pickExistingProductForGhost = (p: ProductSearchResult) => {
+    const sid = formSupplierId ? parseInt(formSupplierId) : null;
+    const product: SoldProduct = {
+      productId: p.id,
+      name: p.name,
+      barcode: p.barcode,
+      price: p.price,
+      cost: p.cost,
+      stock: p.stock,
+      minStock: p.minStock,
+      department: p.department || null,
+      supplierPrice: p.supplierPrice ?? null,
+      totalSold: 0,
+      soldByBox: p.soldByBox,
+      unitsPerBox: p.unitsPerBox,
+      boxRemainder: p.boxRemainder,
+      supplierId: p.supplierId ?? null,
+      productLines: p.productLines,
+    };
+    setGhostName('');
+    setGhostBarcode('');
+    setGhostPrice('0');
+    setGhostCost('0');
+    setGhostQty('1');
+    setGhostMatches([]);
+    if (sid && !isLinkedToSupplier(product, sid)) {
+      setSupplierPrompt({
+        productId: product.productId,
+        name: product.name,
+        cost: product.cost,
+        supplierPrice: product.supplierPrice ?? null,
+        supplierId: product.supplierId ?? null,
+        productLines: product.productLines,
+        onAdd: () => addProductToOrder(product),
+      });
+      return;
+    }
+    addProductToOrder(product);
+  };
+
+  const addGhostProduct = () => {
+    const name = ghostName.trim();
+    if (!name) { setFormError('Indica el nombre del producto'); return; }
+    const qty = Math.max(1, parseInt(ghostQty) || 1);
+    const id = -Math.floor(Math.random() * 1_000_000) - 1;
+    setSoldProducts(prev => [...prev, {
+      productId: id,
+      name,
+      barcode: ghostBarcode.trim(),
+      price: parseFloat(ghostPrice) || 0,
+      cost: parseFloat(ghostCost) || 0,
+      stock: 0,
+      minStock: 0,
+      department: null,
+      supplierPrice: parseFloat(ghostCost) || 0,
+      totalSold: 0,
+      ghost: true,
+    }]);
+    setQuantities(prev => ({ ...prev, [String(id)]: qty }));
+    setGhostName(''); setGhostBarcode(''); setGhostPrice('0'); setGhostCost('0'); setGhostQty('1');
   };
 
   // ── Partial receive ──
+  const resetReceiveState = (order: Order) => {
+    const init: Record<number, number> = {};
+    const initCost: Record<number, string> = {};
+    const initPrice: Record<number, string> = {};
+    const initBatch: Record<number, string> = {};
+    order.items.forEach(i => {
+      init[i.id] = i.receivedQuantity;
+      const line = i.product?.productLines?.find(l => l.supplierId === order.supplierId && l.isPrimary)
+        ?? i.product?.productLines?.find(l => l.supplierId === order.supplierId);
+      initCost[i.id] = String(i.costPrice ?? line?.supplierPrice ?? i.product?.cost ?? 0);
+      // Producto fantasma: recuperar el precio de venta guardado en las notas
+      const priceMatch = (i.notes || '').match(/P\. venta:\s*([\d.]+)/);
+      initPrice[i.id] = priceMatch ? priceMatch[1] : String(i.product?.price ?? 0);
+      initBatch[i.id] = '';
+    });
+    setReceiveQuantities(init);
+    setReceiveFinalStocks({});
+    setReceiveCosts(initCost);
+    setReceivePrices(initPrice);
+    setReceiveBatches(initBatch);
+    setReceiveBarcodes({});
+    setReceiveExtras([]);
+    setExtraSearch('');
+    setExtraResults([]);
+    setExtraGhostName(''); setExtraGhostQty('1'); setExtraGhostCost('0'); setExtraGhostPrice('0');
+    setReceivePaymentMethodId('');
+    setReceiveNoteTotal('');
+  };
+
   const openReceiveDialog = (order: Order) => {
     setSelectedOrder(order);
-    const init: Record<number, number> = {};
-    order.items.forEach(i => { init[i.id] = i.receivedQuantity; });
-    setReceiveQuantities(init);
+    resetReceiveState(order);
+    setDraftRestored(false);
+    try {
+      const raw = localStorage.getItem(receiveDraftKey(order.id));
+      if (raw) {
+        const d = JSON.parse(raw) as {
+          quantities?: Record<number, number>;
+          finalStocks?: Record<number, string>;
+          batches?: Record<number, string>;
+          costs?: Record<number, string>;
+          prices?: Record<number, string>;
+          barcodes?: Record<number, string>;
+          extras?: ReceiveExtra[];
+        };
+        if (d.quantities) setReceiveQuantities(d.quantities);
+        if (d.finalStocks) setReceiveFinalStocks(d.finalStocks);
+        if (d.batches) setReceiveBatches(d.batches);
+        if (d.costs) setReceiveCosts(d.costs);
+        if (d.prices) setReceivePrices(d.prices);
+        if (d.barcodes) setReceiveBarcodes(d.barcodes);
+        if (Array.isArray(d.extras)) setReceiveExtras(d.extras);
+        setDraftRestored(true);
+      }
+    } catch {
+      // Avance corrupto: se ignora y se empieza de cero
+    }
     setReceiveOpen(true);
+  };
+
+  const discardReceiveDraft = () => {
+    if (!selectedOrder) return;
+    localStorage.removeItem(receiveDraftKey(selectedOrder.id));
+    resetReceiveState(selectedOrder);
+    setDraftRestored(false);
+    toast('Avance descartado');
+  };
+
+  // Autoguardar el avance de la recepción: si el cajero tiene que salir a
+  // atender una venta, al volver puede continuar donde se quedó.
+  useEffect(() => {
+    if (!receiveOpen || !selectedOrder) return;
+    const draft = {
+      quantities: receiveQuantities,
+      finalStocks: receiveFinalStocks,
+      batches: receiveBatches,
+      costs: receiveCosts,
+      prices: receivePrices,
+      barcodes: receiveBarcodes,
+      extras: receiveExtras,
+    };
+    try {
+      localStorage.setItem(receiveDraftKey(selectedOrder.id), JSON.stringify(draft));
+    } catch {
+      // Almacenamiento lleno o bloqueado: se ignora
+    }
+  }, [receiveOpen, selectedOrder, receiveQuantities, receiveFinalStocks, receiveBatches, receiveCosts, receivePrices, receiveBarcodes, receiveExtras]);
+
+  const extraTotalCost = receiveExtras.reduce((s, e) => {
+    const qty = parseInt(e.quantity) || 0;
+    const cost = parseFloat(e.costPrice) || 0;
+    return s + qty * cost;
+  }, 0);
+
+  const handleExtraSearch = (q: string) => {
+    setExtraSearch(q);
+    if (!q.trim()) { setExtraResults([]); return; }
+    setExtraSearching(true);
+    fetch(`/api/products?q=${encodeURIComponent(q)}&limit=6`)
+      .then(r => r.json())
+      .then(d => setExtraResults(d.products || []))
+      .catch(() => setExtraResults([]))
+      .finally(() => setExtraSearching(false));
+  };
+
+  const addExtraProduct = (p: ProductSearchResult) => {
+    setReceiveExtras(prev => [
+      ...prev,
+      {
+        key: `extra-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        productId: p.id,
+        name: p.name,
+        quantity: '1',
+        costPrice: String(p.cost ?? 0),
+        price: String(p.price ?? 0),
+        expiresAt: '',
+      },
+    ]);
+    setExtraSearch('');
+    setExtraResults([]);
+  };
+
+  const addExtraGhost = () => {
+    if (!extraGhostName.trim()) return;
+    setReceiveExtras(prev => [
+      ...prev,
+      {
+        key: `extra-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        productId: null,
+        name: extraGhostName.trim(),
+        quantity: extraGhostQty || '1',
+        costPrice: extraGhostCost || '0',
+        price: extraGhostPrice || '0',
+        expiresAt: '',
+      },
+    ]);
+    setExtraGhostName(''); setExtraGhostQty('1'); setExtraGhostCost('0'); setExtraGhostPrice('0');
+  };
+
+  const updateExtra = (key: string, field: keyof ReceiveExtra, value: string) => {
+    setReceiveExtras(prev => prev.map(e => e.key === key ? { ...e, [field]: value } : e));
+  };
+
+  const removeExtra = (key: string) => {
+    setReceiveExtras(prev => prev.filter(e => e.key !== key));
   };
 
   const handleReceive = async () => {
     if (!selectedOrder) return;
     setReceiveLoading(true);
     try {
-      const res = await fetch(`/api/orders/${selectedOrder.id}`, {
-        method: 'PUT',
+      const res = await fetch(`/api/orders/${selectedOrder.id}/receive`, {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          items: selectedOrder.items.map(i => ({
-            id: i.id,
-            productId: i.productId,
-            quantity: i.quantity,
-            receivedQuantity: receiveQuantities[i.id] || 0,
-            notes: i.notes,
+          items: selectedOrder.items.map(i => {
+            const isBox = i.isBox === true;
+            const unit = i.unitsPerBox ?? 0;
+            const received = receiveQuantities[i.id] ?? i.receivedQuantity;
+            const receivedPieces = received * (isBox && unit > 0 ? unit : 1);
+            const alreadyReceivedPieces = i.receivedQuantity * (isBox && unit > 0 ? unit : 1);
+            const deltaPieces = Math.max(0, receivedPieces - alreadyReceivedPieces);
+            const finalStockStr = (receiveFinalStocks[i.id] ?? '').trim();
+            const parsedFinal = parseInt(finalStockStr, 10);
+            const finalStock = finalStockStr !== '' && Number.isInteger(parsedFinal) ? parsedFinal : undefined;
+            return {
+              orderItemId: i.id,
+              receivedQuantity: received,
+              expiresAt: (receiveBatches[i.id] || '').trim() || null,
+              costPrice: receiveCosts[i.id] !== undefined ? parseFloat(receiveCosts[i.id]) : null,
+              price: receivePrices[i.id] !== undefined ? parseFloat(receivePrices[i.id]) : null,
+              // Corrección de código de barras: solo si el usuario lo cambió
+              barcode: (receiveBarcodes[i.id] ?? '').trim() !== '' && (receiveBarcodes[i.id] ?? '').trim() !== (i.product?.barcode || i.productBarcode || '')
+                ? receiveBarcodes[i.id].trim()
+                : undefined,
+              finalStock,
+            };
+          }),
+          extras: receiveExtras.map(e => ({
+            productId: e.productId,
+            name: e.productId === null ? e.name : undefined,
+            quantity: parseInt(e.quantity) || 0,
+            costPrice: e.costPrice ? parseFloat(e.costPrice) : null,
+            price: e.price ? parseFloat(e.price) : null,
+            expiresAt: e.expiresAt.trim() || null,
           })),
+          paymentMethodId: receivePaymentMethodId && receivePaymentMethodId !== '__none__' ? parseInt(receivePaymentMethodId) : null,
+          totalNote: receiveNoteTotal ? parseFloat(receiveNoteTotal) : null,
         }),
       });
-      if (res.ok) {
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast.error(data.error || 'Error al recibir pedido');
+      } else {
+        toast.success('Recepción guardada');
+        localStorage.removeItem(receiveDraftKey(selectedOrder.id));
         setReceiveOpen(false);
         setSelectedOrder(null);
-        fetchOrders();
+        fetchOrders(orderPage);
       }
-    } catch {}
+    } catch {
+      toast.error('Error al recibir pedido');
+    }
     setReceiveLoading(false);
   };
+
+  // Marca un pedido "en espera" como listo
+  const setOrderReady = async (order: Order) => {
+    if (!window.confirm(`¿Marcar el pedido #${order.id} como listo?`)) return;
+    try {
+      const res = await fetch(`/api/orders/${order.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'ready' }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast.error(data.error || 'Error al marcar como listo');
+        return;
+      }
+      toast.success(`Pedido #${order.id} marcado como listo`);
+      if (selectedOrder?.id === order.id) {
+        setSelectedOrder(prev => prev ? { ...prev, status: 'ready' } : prev);
+      }
+      fetchOrders(orderPage);
+    } catch {
+      toast.error('Error al marcar como listo');
+    }
+  };
+
+  // ── Edit mode: añadir/quitar items ──
+  const [editItemSearch, setEditItemSearch] = useState('');
+  const [editItemResults, setEditItemResults] = useState<ProductSearchResult[]>([]);
+  const [editGhostName, setEditGhostName] = useState('');
+  const [editGhostQty, setEditGhostQty] = useState('1');
+  const [editGhostPrice, setEditGhostPrice] = useState('0');
+  const [removedItemIds, setRemovedItemIds] = useState<number[]>([]);
 
   // ── Edit items ──
   const updateOrderItem = (itemId: number, field: string, value: string | number) => {
@@ -372,27 +1000,214 @@ export default function OrdersPage() {
     });
   };
 
+  const removeEditedItem = (itemId: number) => {
+    if (!selectedOrder) return;
+    setRemovedItemIds(prev => [...prev, itemId]);
+    setSelectedOrder({
+      ...selectedOrder,
+      items: selectedOrder.items.filter(i => i.id !== itemId),
+    });
+  };
+
+  const addEditedItem = (p: ProductSearchResult) => {
+    if (!selectedOrder) return;
+    const sid = selectedOrder.supplierId;
+    if (sid && !isLinkedToSupplier(p, sid)) {
+      setSupplierPrompt({
+        productId: p.id,
+        name: p.name,
+        cost: p.cost,
+        supplierPrice: p.supplierPrice ?? null,
+        supplierId: p.supplierId ?? null,
+        productLines: p.productLines,
+        onAdd: () => addEditedItemDirect(p),
+      });
+      setEditItemSearch('');
+      setEditItemResults([]);
+      return;
+    }
+    addEditedItemDirect(p);
+  };
+
+  const addEditedItemDirect = (p: ProductSearchResult) => {
+    if (!selectedOrder) return;
+    const existing = selectedOrder.items.find(i => i.productId === p.id && i.id > 0);
+    if (existing) {
+      setSelectedOrder({
+        ...selectedOrder,
+        items: selectedOrder.items.map(i =>
+          i.id === existing.id ? { ...i, quantity: i.quantity + 1 } : i
+        ),
+      });
+    } else {
+      const orderLine = (p.productLines || []).find(l => l.supplierId === selectedOrder.supplierId);
+      setSelectedOrder({
+        ...selectedOrder,
+        items: [...selectedOrder.items, {
+          id: -Date.now(),
+          productId: p.id,
+          quantity: 1,
+          product: { id: p.id, name: p.name, barcode: p.barcode, price: p.price, cost: p.cost, stock: 0, active: true, soldByBox: p.soldByBox, unitsPerBox: p.unitsPerBox },
+          costPrice: orderLine?.supplierPrice ?? p.cost,
+          receivedQuantity: 0,
+          notes: '',
+          isBox: p.soldByBox ? true : undefined,
+          unitsPerBox: p.unitsPerBox,
+        }],
+      });
+    }
+    setEditItemSearch('');
+    setEditItemResults([]);
+  };
+
+  // Aplica el proveedor elegido (predeterminado o secundario) al producto y lo agrega al pedido
+  const applySupplierMode = async (mode: 'primary' | 'secondary') => {
+    if (!supplierPrompt) return;
+    const sid = formSupplierId ? parseInt(formSupplierId) : (selectedOrder?.supplierId ?? null);
+    if (!sid) { setSupplierPrompt(null); return; }
+    const supplierName = suppliers.find(s => s.id === sid)?.name || 'proveedor';
+    try {
+      const existing = (supplierPrompt.productLines || []).map(l => ({
+        supplierId: l.supplierId,
+        supplierPrice: l.supplierPrice,
+        isPrimary: l.isPrimary,
+      }));
+      const price = supplierPrompt.supplierPrice ?? supplierPrompt.cost;
+      let lines: Array<{ supplierId: number; supplierPrice: number | null; isPrimary: boolean }>;
+      if (mode === 'primary') {
+        lines = existing.map(l => ({ ...l, isPrimary: false }));
+        if (!lines.some(l => l.supplierId === sid)) {
+          lines.push({ supplierId: sid, supplierPrice: price, isPrimary: true });
+        } else {
+          lines = lines.map(l => l.supplierId === sid ? { ...l, isPrimary: true } : l);
+        }
+      } else {
+        lines = existing.map(l => ({ ...l, isPrimary: l.isPrimary }));
+        if (lines.length === 0 && supplierPrompt.supplierId && supplierPrompt.supplierId !== sid) {
+          lines.push({ supplierId: supplierPrompt.supplierId, supplierPrice: null, isPrimary: true });
+        }
+        if (lines.length === 0) {
+          lines.push({ supplierId: sid, supplierPrice: price, isPrimary: true });
+        } else {
+          if (!lines.some(l => l.isPrimary)) lines[0].isPrimary = true;
+          if (!lines.some(l => l.supplierId === sid)) {
+            lines.push({ supplierId: sid, supplierPrice: price, isPrimary: false });
+          }
+        }
+      }
+      const res = await fetch(`/api/products/${supplierPrompt.productId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ productLines: lines }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error || 'Error al actualizar el proveedor');
+        return;
+      }
+      toast.success(mode === 'primary'
+        ? `${supplierName} ahora es el proveedor predeterminado de "${supplierPrompt.name}"`
+        : `${supplierName} agregado como proveedor secundario de "${supplierPrompt.name}"`);
+      supplierPrompt.onAdd();
+    } catch {
+      toast.error('Error al actualizar el proveedor');
+    } finally {
+      setSupplierPrompt(null);
+    }
+  };
+
+  const addEditedGhost = () => {
+    if (!selectedOrder || !editGhostName.trim()) return;
+    setSelectedOrder({
+      ...selectedOrder,
+      items: [...selectedOrder.items, {
+        id: -Date.now() - 1,
+        productId: null,
+        productName: editGhostName.trim(),
+        productBarcode: '',
+        quantity: Math.max(1, parseInt(editGhostQty) || 1),
+        product: null,
+        receivedQuantity: 0,
+        notes: `P. venta: ${parseFloat(editGhostPrice) || 0}`,
+      }],
+    });
+    setEditGhostName('');
+    setEditGhostQty('1');
+    setEditGhostPrice('0');
+  };
+
+  // Búsqueda de productos en modo edición
+  useEffect(() => {
+    if (!editMode || editItemSearch.trim().length < 2) {
+      setEditItemResults([]);
+      return;
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/products?q=${encodeURIComponent(editItemSearch.trim())}&limit=6`, {
+          signal: controller.signal,
+        });
+        const data = await res.json();
+        setEditItemResults(res.ok ? data.products || [] : []);
+      } catch {
+        setEditItemResults([]);
+      }
+    }, 300);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [editItemSearch, editMode]);
+
   const saveEditedItems = async () => {
     if (!selectedOrder) return;
     setFormLoading(true);
     try {
-      await fetch(`/api/orders/${selectedOrder.id}`, {
+      const res = await fetch(`/api/orders/${selectedOrder.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          items: selectedOrder.items.map(i => ({
-            id: i.id, productId: i.productId, quantity: i.quantity,
-            receivedQuantity: i.receivedQuantity, notes: i.notes,
-          })),
+          items: selectedOrder.items.map(i => {
+            const base = {
+              id: i.id > 0 ? i.id : undefined,
+              productId: i.productId ?? undefined,
+              name: i.productId === null ? (i.productName || '') : undefined,
+              barcode: i.productId === null ? (i.productBarcode || '') : undefined,
+              quantity: i.quantity,
+              receivedQuantity: i.receivedQuantity,
+              notes: i.notes,
+              cost: i.productId === null ? (i.costPrice ?? undefined) : undefined,
+              isBox: i.isBox,
+              unitsPerBox: i.unitsPerBox,
+            };
+            if (base.id === undefined) {
+              const { id, ...rest } = base;
+              return rest;
+            }
+            return base;
+          }),
+          removedItemIds,
         }),
       });
-      setEditMode(false); fetchOrders();
-    } catch {}
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || 'Error al guardar');
+        return;
+      }
+      toast.success('Cambios guardados');
+      setEditMode(false);
+      setRemovedItemIds([]);
+      setEditItemResults([]);
+      fetchOrders(orderPage);
+    } catch {
+      toast.error('Error al guardar');
+    }
     setFormLoading(false);
   };
 
-  // ── Export (PNG or PDF) ──
-  const handleExport = async (format: 'png' | 'pdf') => {
+  // ── Export (PNG or CSV) ──
+  const handleExport = async (format: 'png' | 'csv') => {
     if (!selectedOrder) return;
     setExporting(true);
     try {
@@ -401,18 +1216,56 @@ export default function OrdersPage() {
         year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
       });
 
+      // Columnas seleccionadas para el export (mínimo: código, nombre, cantidad)
+      const cols = EXPORT_COLUMN_OPTIONS.filter(c => exportCols.has(c.key));
+      const headerCells = cols.map(c => {
+        const align = c.key === 'index' || c.key === 'quantity' || c.key === 'received' || c.key === 'pending'
+          ? ' class="center"'
+          : (c.key === 'price' || c.key === 'supplierPrice' || c.key === 'profit' ? ' class="right"' : '');
+        return `<th${align}>${c.label}</th>`;
+      }).join('');
+
       // Build a standalone HTML document for export
+      let totalProfit = 0;
+      const hasProfitCol = cols.some(c => c.key === 'profit');
       const rowsHtml = items.map((item, idx) => {
         const pending = Math.max(0, item.quantity - item.receivedQuantity);
-        return `<tr>
-          <td style="padding:6px 8px;border-bottom:1px solid #334155;text-align:center;font-family:monospace;font-size:12px;color:#94a3b8">${idx + 1}</td>
-          <td style="padding:6px 8px;border-bottom:1px solid #334155;font-family:monospace;font-size:12px;color:#94a3b8">${item.product?.barcode || '—'}</td>
-          <td style="padding:6px 8px;border-bottom:1px solid #334155;font-size:14px;color:#e2e8f0">${item.product?.name || `#${item.productId}`}</td>
-          <td style="padding:6px 8px;border-bottom:1px solid #334155;text-align:center;font-size:14px;color:#e2e8f0">${item.quantity}</td>
-          <td style="padding:6px 8px;border-bottom:1px solid #334155;text-align:center;font-size:14px;color:#94a3b8">${item.receivedQuantity}</td>
-          <td style="padding:6px 8px;border-bottom:1px solid #334155;text-align:center;font-size:14px;color:${pending > 0 ? '#fbbf24' : '#34d399'}">${pending > 0 ? pending : '✓'}</td>
-        </tr>`;
+        const line = item.product?.productLines?.find(l => l.supplierId === supplier?.id && l.isPrimary)
+          ?? item.product?.productLines?.find(l => l.supplierId === supplier?.id);
+        const unitCost = item.costPrice ?? line?.supplierPrice ?? item.product?.cost ?? 0;
+        const unitProfit = (item.product?.price ?? 0) - unitCost;
+        const lineProfit = unitProfit * item.quantity;
+        totalProfit += lineProfit;
+
+        const styles: Record<string, string> = {
+          padding: '6px 8px',
+          borderBottom: '1px solid #334155',
+          fontSize: '14px',
+          color: '#e2e8f0',
+        };
+        const cell = (extra: Record<string, string>) =>
+          `<td style="${Object.entries({ ...styles, ...extra }).map(([k, v]) => `${k}:${v}`).join(';')}">${extra.content}</td>`;
+
+        return `<tr>` + cols.map(c => {
+          switch (c.key) {
+            case 'index': return cell({ textAlign: 'center', fontFamily: 'monospace', fontSize: '12px', color: '#94a3b8', content: String(idx + 1) });
+            case 'barcode': return cell({ fontFamily: 'monospace', fontSize: '12px', color: '#94a3b8', content: item.product?.barcode || item.productBarcode || '—' });
+            case 'name': return cell({ content: orderItemName(item) });
+            case 'quantity': return cell({ textAlign: 'center', content: String(item.quantity) + (item.isBox && item.unitsPerBox ? ' cja' : '') });
+            case 'received': return cell({ textAlign: 'center', fontSize: '14px', color: '#94a3b8', content: String(item.receivedQuantity) });
+            case 'pending': return cell({ textAlign: 'center', fontSize: '14px', color: pending > 0 ? '#fbbf24' : '#34d399', content: pending > 0 ? String(pending) : '✓' });
+            case 'price': return cell({ textAlign: 'right', fontFamily: 'monospace', fontSize: '12px', color: '#94a3b8', content: (item.product?.price ?? 0) > 0 ? '$' + (item.product?.price ?? 0).toFixed(2) : '—' });
+            case 'supplierPrice': return cell({ textAlign: 'right', fontFamily: 'monospace', fontSize: '12px', color: '#94a3b8', content: unitCost > 0 ? '$' + unitCost.toFixed(2) : '—' });
+            case 'profit': return cell({ textAlign: 'right', fontFamily: 'monospace', fontSize: '12px', color: lineProfit >= 0 ? '#34d399' : '#f87171', content: (lineProfit >= 0 ? '+' : '') + '$' + lineProfit.toFixed(2) });
+            default: return '';
+          }
+        }).join('') + '</tr>';
       }).join('');
+
+      const profitFooter = hasProfitCol ? `<tfoot><tr>
+        <td colspan="${cols.length - 1}" style="padding:8px;text-align:right;font-size:14px;color:#e2e8f0;border-top:2px solid #334155">Ganancia neta estimada:</td>
+        <td style="padding:8px;text-align:right;font-size:15px;font-weight:600;font-family:monospace;color:${totalProfit >= 0 ? '#34d399' : '#f87171'};border-top:2px solid #334155">${totalProfit >= 0 ? '+' : ''}$${totalProfit.toFixed(2)}</td>
+      </tr></tfoot>` : '';
 
       const htmlContent = `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Pedido #${id}</title>
@@ -427,6 +1280,7 @@ export default function OrdersPage() {
   table { width:100%; border-collapse:collapse; }
   th { padding:8px; background:#1e293b; font-size:12px; text-align:left; color:#94a3b8; border-bottom:2px solid #334155; }
   th.center { text-align:center; }
+  th.right { text-align:right; }
   .footer { text-align:center; font-size:10px; color:#64748b; margin-top:16px; }
   @media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }
 </style></head><body>
@@ -437,9 +1291,10 @@ export default function OrdersPage() {
   ${notes ? `<div class="notes">Notas: ${notes}</div>` : ''}
   <table>
     <thead><tr>
-      <th class="center">#</th><th>Código</th><th>Nombre</th><th class="center">Cantidad</th><th class="center">Recibido</th><th class="center">Pendiente</th>
+      ${headerCells}
     </tr></thead>
     <tbody>${rowsHtml}</tbody>
+    ${profitFooter}
   </table>
   <div class="footer">Generado por POS System — ${new Date().toLocaleString('es-MX')}</div>
 </div>
@@ -465,31 +1320,43 @@ export default function OrdersPage() {
         link.href = canvas.toDataURL('image/png');
         link.click();
       } else {
-        // PDF: open in new window, use built-in print -> Save as PDF
-        const printWin = window.open('', '_blank');
-        if (!printWin) {
-          // Fallback: use html2canvas + jsPDF if popup blocked
-          const { jsPDF } = await import('jspdf');
-          const container = document.createElement('div');
-          container.style.cssText = 'position:fixed;left:-9999px;top:0;width:800px;background:#0f172a;padding:20px;z-index:-1';
-          container.innerHTML = htmlContent;
-          document.body.appendChild(container);
-          const html2canvas = (await import('html2canvas')).default;
-          await new Promise(r => setTimeout(r, 100));
-          const canvas = await html2canvas(container, { backgroundColor: '#0f172a', scale: 2 });
-          document.body.removeChild(container);
-          const imgData = canvas.toDataURL('image/png');
-          const pdf = new jsPDF('p', 'mm', 'a4');
-          const pdfW = pdf.internal.pageSize.getWidth();
-          const pdfH = (canvas.height * pdfW) / canvas.width;
-          pdf.addImage(imgData, 'PNG', 0, 0, pdfW, pdfH);
-          pdf.save(`pedido_${id}.pdf`);
-        } else {
-          printWin.document.write(htmlContent);
-          printWin.document.close();
-          // Wait for content to render then print
-          setTimeout(() => { printWin.focus(); printWin.print(); }, 250);
-        }
+        // CSV: archivo separado por comas. Con BOM para que Excel muestre
+        // correctamente caracteres especiales (ñ, tildes).
+        const escapeCsv = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`;
+        const rows: string[][] = [];
+        rows.push(cols.map(c => c.label));
+
+        items.forEach((item, idx) => {
+          const pending = Math.max(0, item.quantity - item.receivedQuantity);
+          const line = item.product?.productLines?.find(l => l.supplierId === supplier?.id && l.isPrimary)
+            ?? item.product?.productLines?.find(l => l.supplierId === supplier?.id);
+          const unitCost = item.costPrice ?? line?.supplierPrice ?? item.product?.cost ?? 0;
+          const unitProfit = (item.product?.price ?? 0) - unitCost;
+
+          rows.push(cols.map(c => {
+            switch (c.key) {
+              case 'index': return String(idx + 1);
+              case 'barcode': return item.product?.barcode || item.productBarcode || '—';
+              case 'name': return orderItemName(item);
+              case 'quantity': return item.isBox && item.unitsPerBox ? `${item.quantity} cajas` : String(item.quantity);
+              case 'received': return String(item.receivedQuantity);
+              case 'pending': return pending > 0 ? String(pending) : '0';
+              case 'price': return (item.product?.price ?? 0) > 0 ? (item.product?.price ?? 0).toFixed(2) : '';
+              case 'supplierPrice': return unitCost > 0 ? unitCost.toFixed(2) : '';
+              case 'profit': return unitProfit.toFixed(2);
+              default: return '';
+            }
+          }));
+        });
+
+        const csv = '\uFEFF' + rows.map(r => r.map(escapeCsv).join(',')).join('\r\n');
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `pedido_${id}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
       }
     } catch (err) {
       console.error('Export error:', err);
@@ -503,21 +1370,44 @@ export default function OrdersPage() {
     .filter(([pid, q]) => q > 0 && !hiddenRows.has(parseInt(pid))).length;
   const totalUnits = Object.entries(quantities)
     .filter(([pid]) => !hiddenRows.has(parseInt(pid)))
-    .reduce((s, [, q]) => s + q, 0);
+    .reduce((s, [pid, q]) => {
+      const prod = soldProducts.find((p) => p.productId === parseInt(pid));
+      return s + unitsOf(prod || {}, q);
+    }, 0);
+
+  // Pérdida estimada: costo de las piezas extra (por encima de las ventas reales).
+  // Si esas piezas no se venden, esa cantidad se pierde de la ganancia actual.
+  // Es información simbólica: no modifica finanzas ni inventario.
+  const unitCostOf = (p: SoldProduct) => p.supplierPrice ?? p.cost;
+  const lossBreakdown = visibleProducts
+    .map((p) => {
+      const qty = quantities[String(p.productId)] || 0;
+      const extras = Math.max(0, qty - (p.totalSold || 0));
+      const unitCost = unitCostOf(p);
+      return { productId: p.productId, name: p.name, qty: extras, unitCost, total: extras * unitCost };
+    })
+    .filter((p) => p.qty > 0);
+  const estimatedLoss = lossBreakdown.reduce((sum, p) => sum + p.total, 0);
+
+  // Ganancia neta proyectada del pedido y resultado tras restar las pérdidas
+  const projectedProfit = visibleProducts
+    .filter((p) => (quantities[String(p.productId)] || 0) > 0)
+    .reduce((s, p) => s + unitsOf(p, quantities[String(p.productId)] || 0) * (p.price - unitCostOf(p)), 0);
+  const netAfterLoss = projectedProfit - estimatedLoss;
 
   return (
     <div className="space-y-6">
       {/* ── Header ── */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-slate-100">Pedidos a Proveedores</h2>
-          <p className="text-sm text-slate-400 mt-1">
+          <h2 className="text-2xl font-bold text-fg">Pedidos a Proveedores</h2>
+          <p className="text-sm text-fg-muted mt-1">
             Genera pedidos basados en ventas reales + recepción parcial + exportación
           </p>
         </div>
         <Dialog open={createOpen} onOpenChange={o => { setCreateOpen(o); if (!o) resetForm(); }}>
           <DialogTrigger asChild>
-            <Button><Plus className="mr-2 h-4 w-4" />Nuevo Pedido</Button>
+            <Button onClick={() => setTimeTo(nowTimeStr())}><Plus className="mr-2 h-4 w-4" />Nuevo Pedido</Button>
           </DialogTrigger>
           <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
@@ -529,13 +1419,57 @@ export default function OrdersPage() {
             <form onSubmit={handleCreate}>
               <div className="space-y-5 py-4">
                 {formError && (
-                  <div className="rounded-md bg-red-600/20 border border-red-600/50 px-4 py-3 text-sm text-red-400">{formError}</div>
+                  <div className="rounded-lg border border-red-500/25 bg-red-500/10 px-4 py-3 text-sm text-red-400">{formError}</div>
+                )}
+
+                {/* Pérdida estimada de piezas extra (solo admin, simbólico) */}
+                {isAdmin && (
+                  <div className="flex flex-col items-end gap-2">
+                    <Button type="button" variant="outline" size="sm" className="text-xs" onClick={() => setShowProfitInfo(v => !v)}>
+                      {showProfitInfo ? 'Ocultar datos de ganancia' : 'Ver ganancia estimada'}
+                    </Button>
+                    {showProfitInfo && orderedCount > 0 && (
+                      <div className="rounded-lg border border-red-600/50 bg-red-900/30 px-4 py-2 text-right">
+                        <p className="text-[10px] uppercase tracking-wide text-fg-muted">
+                          Pérdida estimada si no se venden las piezas extra
+                        </p>
+                        <p className="text-xl font-bold text-red-400">{formatCurrency(estimatedLoss)}</p>
+                        {lossBreakdown.length > 0 && (
+                          <div className="mt-1 space-y-0.5 border-t border-red-800/60 pt-1">
+                            {lossBreakdown.map((p) => (
+                              <div key={p.productId} className="flex items-center justify-between gap-3 text-[11px] text-fg-muted">
+                                <span className="max-w-[220px] truncate">{p.name} x{p.qty}</span>
+                                <span className="font-mono text-fg-muted">
+                                  {formatCurrency(p.unitCost)} c/u = {formatCurrency(p.total)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        <p className="mt-1 text-[10px] text-fg-subtle">
+                          Total invertido en piezas que no han salido por venta (precio proveedor). Información simbólica.
+                        </p>
+                        <div className="mt-2 space-y-1 border-t border-red-800/60 pt-2">
+                          <div className="flex items-center justify-between gap-3 text-[11px] text-fg-muted">
+                            <span>Ganancia Neta (proyectada)</span>
+                            <span className="font-mono text-brand">{formatCurrency(projectedProfit)}</span>
+                          </div>
+                          <div className="flex items-center justify-between gap-3 text-xs font-semibold">
+                            <span className="text-fg">Ganancia Neta − Pérdidas Totales</span>
+                            <span className={`font-mono ${netAfterLoss >= 0 ? 'text-brand' : 'text-red-400'}`}>
+                              {formatCurrency(netAfterLoss)}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 )}
 
                 {/* Proveedor */}
                 <div className="space-y-2">
                   <Label>Proveedor *</Label>
-                  <Select value={formSupplierId} onValueChange={v => { setFormSupplierId(v); setPendingItems(null); }}>
+                  <Select value={formSupplierId} onValueChange={v => { setFormSupplierId(v); setPendingItems(null); loadLastRange(v); }}>
                     <SelectTrigger><SelectValue placeholder="Seleccionar proveedor" /></SelectTrigger>
                     <SelectContent>
                       {suppliers.length === 0 && <SelectItem value="all" disabled>No hay proveedores</SelectItem>}
@@ -547,26 +1481,33 @@ export default function OrdersPage() {
                 {/* Fechas y horas */}
                 <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
                   <div className="space-y-2">
-                    <Label className="flex items-center gap-1"><Calendar className="h-3.5 w-3.5 text-slate-400" />Desde fecha</Label>
+                    <Label className="flex items-center gap-1"><Calendar className="h-3.5 w-3.5 text-fg-muted" />Desde fecha</Label>
                     <Input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
                   </div>
                   <div className="space-y-2">
-                    <Label className="flex items-center gap-1"><Calendar className="h-3.5 w-3.5 text-slate-400" />Hasta fecha</Label>
+                    <Label className="flex items-center gap-1"><Calendar className="h-3.5 w-3.5 text-fg-muted" />Hasta fecha</Label>
                     <Input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} />
                   </div>
                   <div className="space-y-2">
-                    <Label className="flex items-center gap-1"><Clock className="h-3.5 w-3.5 text-slate-400" />Desde hora</Label>
+                    <Label className="flex items-center gap-1"><Clock className="h-3.5 w-3.5 text-fg-muted" />Desde hora</Label>
                     <Input type="time" value={timeFrom} onChange={e => setTimeFrom(e.target.value)} />
                   </div>
                   <div className="space-y-2">
-                    <Label className="flex items-center gap-1"><Clock className="h-3.5 w-3.5 text-slate-400" />Hasta hora</Label>
+                    <Label className="flex items-center gap-1"><Clock className="h-3.5 w-3.5 text-fg-muted" />Hasta hora</Label>
                     <Input type="time" value={timeTo} onChange={e => setTimeTo(e.target.value)} />
                   </div>
                 </div>
 
+                {lastRangeNote && (
+                  <div className="rounded-md border border-brand-strong/50 bg-brand/20 px-3 py-2 text-xs text-brand flex items-center gap-2">
+                    <History className="h-3.5 w-3.5 shrink-0" />
+                    {lastRangeNote}
+                  </div>
+                )}
+
                 {/* Botones: Calcular + Pendientes + Notas */}
                 <div className="flex items-end gap-2 flex-wrap">
-                  <Button type="button" className="bg-emerald-700 hover:bg-emerald-600" onClick={calculateSales} disabled={calculating || !formSupplierId}>
+                  <Button type="button" className="bg-brand-strong hover:bg-brand-strong" onClick={calculateSales} disabled={calculating || !formSupplierId}>
                     <Calculator className="mr-2 h-4 w-4" />{calculating ? 'Calculando...' : 'Calcular Ventas'}
                   </Button>
                   {formSupplierId && (
@@ -585,10 +1526,10 @@ export default function OrdersPage() {
 
                 {/* Resultados */}
                 {salesInfo && (
-                  <div className="flex items-center justify-between text-sm bg-slate-700/30 rounded-md px-4 py-2">
+                  <div className="flex items-center justify-between text-sm bg-line/30 rounded-md px-4 py-2">
                     <div className="flex items-center gap-4">
-                      <span className="text-slate-300"><Package className="h-3.5 w-3.5 inline mr-1 text-emerald-400" />{salesInfo.totalProducts} productos vendidos</span>
-                      <span className="text-slate-300">{salesInfo.totalUnits} unidades</span>
+                      <span className="text-fg-muted"><Package className="h-3.5 w-3.5 inline mr-1 text-brand" />{salesInfo.totalProducts} productos vendidos</span>
+                      <span className="text-fg-muted">{salesInfo.totalUnits} unidades</span>
                       {pendingItems && <Badge variant="outline" className="text-amber-400 border-amber-600">{pendingItems.length} pendientes</Badge>}
                     </div>
                   </div>
@@ -598,9 +1539,9 @@ export default function OrdersPage() {
                 {soldProducts.length > 0 && (
                   <>
                     <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium text-slate-200">
+                      <div className="text-sm font-medium text-fg">
                         Productos {visibleProducts.length !== soldProducts.length && <Badge variant="secondary" className="ml-1">{visibleProducts.length} mostrados</Badge>}
-                      </span>
+                      </div>
                       <div className="flex items-center gap-2">
                         <Button type="button" variant="ghost" size="sm" className="text-xs" onClick={() => setHiddenRows(new Set())}>Mostrar todo</Button>
                         <Button type="button" variant="outline" size="sm" className="text-xs" onClick={() => { const u: Record<string, number> = {}; soldProducts.forEach(p => { u[String(p.productId)] = p.totalSold; }); setQuantities(u); }}>Restaurar ventas</Button>
@@ -609,8 +1550,8 @@ export default function OrdersPage() {
                     </div>
 
                     {showAddColumn && (
-                      <div className="flex items-center gap-2 p-2 bg-slate-700/30 rounded-md flex-wrap">
-                        <span className="text-xs text-slate-400">Añadir columna:</span>
+                      <div className="flex items-center gap-2 p-2 bg-line/30 rounded-md flex-wrap">
+                        <span className="text-xs text-fg-muted">Añadir columna:</span>
                         <Select value={newColumnKey} onValueChange={v => { setNewColumnKey(v); setCustomColumnName(''); }}>
                           <SelectTrigger className="w-48 h-8 text-xs"><SelectValue /></SelectTrigger>
                           <SelectContent>
@@ -631,10 +1572,10 @@ export default function OrdersPage() {
                       </div>
                     )}
 
-                    <div className="overflow-x-auto border border-slate-700 rounded-md">
+                    <div className="overflow-x-auto border border-line rounded-md">
                       <Table>
                         <TableHeader>
-                          <TableRow className="bg-slate-800/80">
+                          <TableRow className="bg-surface-2/80">
                             <TableHead className="w-8"></TableHead>
                             <TableHead className="w-10 text-center">#</TableHead>
                             <TableHead>Código</TableHead>
@@ -654,22 +1595,55 @@ export default function OrdersPage() {
                           {soldProducts.map((product, idx) => {
                             const hidden = hiddenRows.has(product.productId);
                             return (
-                              <TableRow key={product.productId} className={`${hidden ? 'hidden' : ''} hover:bg-slate-700/40 ${(quantities[String(product.productId)] || 0) > 0 ? 'bg-emerald-900/10' : ''}`}>
+                              <TableRow key={product.productId} className={`${hidden ? 'hidden' : ''} hover:bg-line/40 ${(quantities[String(product.productId)] || 0) > 0 ? 'bg-brand/10' : ''}`}>
                                 <TableCell>
                                   <button type="button" onClick={() => toggleRow(product.productId)} className="text-red-400 hover:text-red-300 opacity-60 hover:opacity-100" title="Eliminar fila">
                                     <Trash2 className="h-3.5 w-3.5" />
                                   </button>
                                 </TableCell>
-                                <TableCell className="text-center text-xs text-slate-500 font-mono">{idx + 1}</TableCell>
-                                <TableCell className="font-mono text-xs text-slate-400">{product.barcode || '—'}</TableCell>
-                                <TableCell className="text-sm text-slate-200">{product.name}</TableCell>
+                                <TableCell className="text-center text-xs text-fg-subtle font-mono">{idx + 1}</TableCell>
+                                <TableCell className="font-mono text-xs text-fg-muted">{product.barcode || '—'}</TableCell>
+                                <TableCell className="text-sm text-fg">
+                                  {boxName(product)}
+                                  {product.soldByBox && product.unitsPerBox && (
+                                    <Badge variant="outline" className="ml-2 text-brand border-brand-strong text-[10px]">x{product.unitsPerBox} por caja</Badge>
+                                  )}
+                                  {product.ghost && (
+                                    <Badge variant="outline" className="ml-2 text-sky-400 border-sky-700 text-[10px]">sin inventario</Badge>
+                                  )}
+                                  {product.source === 'pendiente' && (
+                                    <Badge variant="outline" className="ml-2 text-amber-400 border-amber-600 text-[10px]">pendiente</Badge>
+                                  )}
+                                  {product.soldByBox && product.unitsPerBox && (
+                                    <div className="text-[11px] text-fg-subtle mt-0.5">
+                                      {(() => {
+                                        const qty = quantities[String(product.productId)] || 0;
+                                        const base = (product.totalSoldUnits ?? 0) + (product.boxRemainder ?? 0);
+                                        const projected = Math.max(0, base - qty * product.unitsPerBox);
+                                        return (
+                                          <>
+                                            Vendidas: {product.totalSoldUnits ?? 0} + sobrante {product.boxRemainder ?? 0}{' '}
+                                            · Sobrante para el próximo pedido: <span className="text-amber-400/90">{projected} piezas</span>
+                                          </>
+                                        );
+                                      })()}
+                                    </div>
+                                  )}
+                                </TableCell>
                                 <TableCell className="text-center">
-                                  <Input type="number" min="0" value={quantities[String(product.productId)] || 0}
-                                    onChange={e => { const v = parseInt(e.target.value) || 0; setQuantities(prev => ({ ...prev, [String(product.productId)]: Math.max(0, v) })); }}
-                                    className="w-20 h-8 text-center text-sm" />
+                                  <div className="flex items-center justify-center gap-1">
+                                    <Input type="number" min="0" value={quantities[String(product.productId)] || 0}
+                                      onChange={e => { const v = parseInt(e.target.value) || 0; setQuantities(prev => ({ ...prev, [String(product.productId)]: Math.max(0, v) })); }}
+                                      className="w-20 h-8 text-center text-sm" />
+                                    {product.soldByBox && product.unitsPerBox && (
+                                      <span className="text-[10px] text-fg-subtle whitespace-nowrap">
+                                        caja{quantities[String(product.productId)] !== 1 ? 's' : ''}
+                                      </span>
+                                    )}
+                                  </div>
                                 </TableCell>
                                 {extraColumns.map(col => (
-                                  <TableCell key={col.id} className="text-right text-sm text-slate-300">
+                                  <TableCell key={col.id} className="text-right text-sm text-fg-muted">
                                     {col.key === 'custom_text' ? (
                                       <Input
                                         type="text"
@@ -704,13 +1678,13 @@ export default function OrdersPage() {
                       </div>
                     )}
 
-                    <div className="text-sm text-slate-400">{orderedCount} productos con pedido · {totalUnits} unidades</div>
+                    <div className="text-sm text-fg-muted">{orderedCount} productos con pedido · {totalUnits} unidades</div>
                   </>
                 )}
 
                 {!formSupplierId && (
-                  <div className="text-center py-8 text-slate-500 text-sm">
-                    Selecciona un proveedor, ajusta el rango de fechas y horas, y presiona "Calcular Ventas"
+                  <div className="text-center py-8 text-fg-subtle text-sm">
+                    Selecciona un proveedor, ajusta el rango de fechas y horas, y presiona &quot;Calcular Ventas&quot;
                   </div>
                 )}
               </div>
@@ -726,48 +1700,119 @@ export default function OrdersPage() {
                   </DialogHeader>
                   <div className="space-y-4 py-2">
                     <div className="relative">
-                      <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                      <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-muted" />
                       <Input
                         placeholder="Buscar producto..."
                         value={manualSearch}
-                        onChange={e => { setManualSearch(e.target.value); searchProducts(e.target.value); }}
+                        onChange={e => {
+                          const value = e.target.value;
+                          setManualSearch(value);
+                          if (value.trim().length < 2) {
+                            setManualResults([]);
+                            setManualSearching(false);
+                          }
+                        }}
                         className="pl-10"
                         autoFocus
                       />
                     </div>
-                    <div className="max-h-60 overflow-y-auto space-y-1">
+<div className="max-h-60 overflow-y-auto space-y-1">
                       {manualSearching ? (
-                        <div className="text-center py-4 text-sm text-slate-400">Buscando...</div>
+                        <div className="text-center py-4 text-sm text-fg-muted">Buscando...</div>
                       ) : manualResults.length === 0 && manualSearch.length >= 2 ? (
-                        <div className="text-center py-4 text-sm text-slate-500">Sin resultados</div>
+                        <div className="text-center py-4 text-sm text-fg-subtle">Sin resultados</div>
                       ) : manualResults.length === 0 ? (
-                        <div className="text-center py-4 text-sm text-slate-500">Escribe al menos 2 caracteres</div>
+                        <div className="text-center py-4 text-sm text-fg-subtle">Escribe al menos 2 caracteres</div>
                       ) : (
                         manualResults.map(p => (
                           <button
                             key={p.productId}
                             type="button"
                             onClick={() => addManualProduct(p)}
-                            className="w-full text-left px-3 py-2 rounded-md hover:bg-slate-700/60 transition-colors flex items-center justify-between"
+                            className="w-full text-left px-3 py-2 rounded-md hover:bg-line/60 transition-colors flex items-center justify-between"
                           >
-                            <div>
-                              <div className="text-sm text-slate-200">{p.name}</div>
-                              <div className="text-xs text-slate-500 font-mono">{p.barcode || '—'} · Stock: {p.stock} · ${p.price.toFixed(2)}</div>
-                            </div>
-                            <PlusCircle className="h-4 w-4 text-emerald-400 flex-shrink-0" />
+                            <span className="flex-1 min-w-0">
+                              <span className="block text-sm text-fg">
+                                {boxName(p)}
+                                {p.soldByBox && p.unitsPerBox && (
+                                  <span className="ml-2 text-[10px] text-brand">x{p.unitsPerBox} por caja</span>
+                                )}
+                              </span>
+                              <span className="block text-xs text-fg-subtle font-mono">{p.barcode || '—'} · Stock: {p.stock} · ${p.price.toFixed(2)}</span>
+                            </span>
+                            <PlusCircle className="h-4 w-4 text-brand flex-shrink-0" />
                           </button>
                         ))
                       )}
                     </div>
                   </div>
-                  <DialogFooter>
-                    <DialogClose asChild><Button type="button" variant="secondary">Cancelar</Button></DialogClose>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
 
-              <DialogFooter className="border-t border-slate-700 pt-4">
+                  {/* Producto sin inventario (fantasma) */}
+                  <div className="rounded-md border border-dashed border-sky-700/60 bg-sky-950/20 p-3 space-y-2">
+                    <div>
+                      <span className="text-sm font-medium text-sky-300 flex items-center gap-2">
+                        <PlusCircle className="h-4 w-4" /> Producto sin inventario
+                      </span>
+                      <p className="text-[11px] text-sky-300/70 mt-0.5">
+                        Rellénalo como si lo tuvieras: se guarda en el pedido y al confirmar su recepción se crea solo en el inventario.
+                        Busca por nombre o código antes de darlo de alta para no duplicar productos.
+                      </p>
+                    </div>
+                    {ghostMatches.length > 0 && (
+                      <div className="rounded-md border border-sky-800/60 bg-surface divide-y divide-line/60 max-h-40 overflow-y-auto">
+                        <p className="px-2 pt-1.5 pb-1 text-[10px] uppercase tracking-wide text-fg-subtle">Productos existentes (nombre o código):</p>
+                        {ghostMatches.map(p => (
+                          <button
+                            key={p.id}
+                            type="button"
+                            onClick={() => pickExistingProductForGhost(p)}
+                            className="w-full flex items-center justify-between gap-2 px-2 py-1.5 text-left text-xs text-fg hover:bg-surface-2 transition-colors"
+                          >
+                            <span className="truncate">{p.soldByBox ? `Caja de ${p.name}` : p.name}</span>
+                            <span className="font-mono text-fg-subtle shrink-0">{p.barcode || '—'} · Stock: {p.stock}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {ghostSearching && <p className="text-[11px] text-fg-subtle">Buscando productos...</p>}
+                    <div className="grid grid-cols-12 gap-2">
+                      <div className="col-span-5">
+                        <Input placeholder="Nombre *" value={ghostName} onChange={e => setGhostName(e.target.value)} onKeyDown={handleGhostKeyDown} />
+                      </div>
+                      <div className="col-span-4">
+                        <Input placeholder="Código (opcional)" value={ghostBarcode} onChange={e => setGhostBarcode(e.target.value)} onKeyDown={handleGhostKeyDown} />
+                      </div>
+                      <div className="col-span-3">
+                        <Input type="number" min="1" placeholder="Cantidad" value={ghostQty} onChange={e => setGhostQty(e.target.value)} onKeyDown={handleGhostKeyDown} />
+                      </div>
+                      <div className="col-span-6">
+                        <Input type="number" step="0.01" min="0" placeholder="P. Proveedor (costo)" value={ghostCost} onChange={e => setGhostCost(e.target.value)} onKeyDown={handleGhostKeyDown} />
+                      </div>
+                      <div className="col-span-6">
+                        <Input type="number" step="0.01" min="0" placeholder="Precio de venta" value={ghostPrice} onChange={e => setGhostPrice(e.target.value)} onKeyDown={handleGhostKeyDown} />
+                      </div>
+                    </div>
+<Button type="button" size="sm" variant="outline" className="text-sky-300 border-sky-700/60 hover:bg-sky-500/10" onClick={addGhostProduct} disabled={!ghostName.trim()}>
+                      <PlusCircle className="h-3.5 w-3.5 mr-1" />Agregar al pedido
+                    </Button>
+                  </div>
+              <DialogFooter>
                 <DialogClose asChild><Button type="button" variant="secondary">Cancelar</Button></DialogClose>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+              <DialogFooter className="border-t border-line pt-4">
+                <DialogClose asChild><Button type="button" variant="secondary">Cancelar</Button></DialogClose>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="border-amber-600/50 text-amber-400 hover:bg-amber-500/10"
+                  disabled={formLoading || orderedCount === 0}
+                  onClick={(e) => handleCreate(e, 'on_hold')}
+                >
+                  {formLoading ? 'Guardando...' : '⏸ Guardar en espera'}
+                </Button>
                 <Button type="submit" disabled={formLoading || orderedCount === 0}>
                   {formLoading ? 'Creando...' : `Crear Pedido (${orderedCount} prods.)`}
                 </Button>
@@ -775,52 +1820,103 @@ export default function OrdersPage() {
             </form>
           </DialogContent>
         </Dialog>
+
+        {/* Aviso de proveedor no asignado al producto */}
+        <Dialog open={!!supplierPrompt} onOpenChange={o => { if (!o) setSupplierPrompt(null); }}>
+          <DialogContent className="max-w-md border-line bg-surface-2 text-fg">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-amber-400">
+                <AlertTriangle className="h-5 w-5" />
+                El producto no pertenece a este proveedor
+              </DialogTitle>
+              <DialogDescription className="text-fg-muted">
+                <span className="text-fg font-medium">{`"${supplierPrompt?.name}"`}</span> no está asignado
+                al proveedor <span className="text-fg font-medium">
+                  {formSupplierId ? suppliers.find(s => s.id === parseInt(formSupplierId))?.name : selectedOrder?.supplier?.name || 'proveedor'}
+                </span>.
+                Elige cómo deseas agregarlo al pedido.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-2 py-2">
+              <Button className="w-full justify-start" onClick={() => applySupplierMode('primary')}>
+                <CheckCircle className="mr-2 h-4 w-4" />
+                Poner como proveedor predeterminado
+              </Button>
+              <Button variant="outline" className="w-full justify-start border-line-strong text-fg-muted" onClick={() => applySupplierMode('secondary')}>
+                <Plus className="mr-2 h-4 w-4" />
+                Agregar como proveedor secundario
+              </Button>
+              <Button variant="outline" className="w-full justify-start border-line-strong text-fg-muted" onClick={() => { supplierPrompt?.onAdd(); setSupplierPrompt(null); }}>
+                <Package className="mr-2 h-4 w-4" />
+                Solo esta vez (no cambiar proveedores)
+              </Button>
+            </div>
+            <DialogFooter>
+              <DialogClose asChild><Button variant="ghost">Cancelar</Button></DialogClose>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
 
       {/* ── Orders List ── */}
-      <Card className="border-slate-700 bg-slate-800">
+      <Card className="border-line bg-surface-2">
         <CardContent className="p-0">
           <Table>
             <TableHeader>
               <TableRow>
                 <TableHead>ID</TableHead>
                 <TableHead>Proveedor</TableHead>
+                <TableHead>Cajero</TableHead>
                 <TableHead>Estado</TableHead>
                 <TableHead>Productos</TableHead>
                 <TableHead>Unidades</TableHead>
                 <TableHead>Recibidas</TableHead>
+                <TableHead>Aprox.</TableHead>
                 <TableHead>Fecha</TableHead>
                 <TableHead className="text-right">Acciones</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {loading ? Array.from({ length: 5 }).map((_, i) => (
-                <TableRow key={i}>{Array.from({ length: 8 }).map((_, j) => <TableCell key={j}><Skeleton className="h-4 w-full bg-slate-700" /></TableCell>)}</TableRow>
+                <TableRow key={i}>{Array.from({ length: 10 }).map((_, j) => <TableCell key={j}><Skeleton className="h-4 w-full bg-line" /></TableCell>)}</TableRow>
               )) : orders.length === 0 ? (
-                <TableRow><TableCell colSpan={8} className="text-center text-slate-400 py-8">No hay pedidos creados</TableCell></TableRow>
+                <TableRow><TableCell colSpan={10} className="text-center text-fg-muted py-8">No hay pedidos creados</TableCell></TableRow>
               ) : orders.map(order => {
                 const totalQty = order.items.reduce((s, i) => s + i.quantity, 0);
                 const totalRecv = order.items.reduce((s, i) => s + i.receivedQuantity, 0);
+                const approxTotal = order.items.reduce((s, i) => s + i.quantity * (i.costPrice ?? i.product?.cost ?? 0), 0);
                 return (
                   <TableRow key={order.id}>
-                    <TableCell className="font-mono text-xs text-slate-400">#{order.id}</TableCell>
-                    <TableCell className="font-medium text-slate-100">{order.supplier?.name || '—'}</TableCell>
+                    <TableCell className="font-mono text-xs text-fg-muted">#{order.id}</TableCell>
+                    <TableCell className="font-medium text-fg">{order.supplier?.name || '—'}</TableCell>
+                    <TableCell>
+                      <div className="space-y-0.5 text-xs">
+                        <div className="text-fg-muted">Levantó: <span className="text-fg-muted">{order.createdBy?.name || '—'}</span></div>
+                        <div className="text-fg-muted">Recibió: <span className="text-fg-muted">{order.receivedBy?.name || '—'}</span></div>
+                      </div>
+                    </TableCell>
                     <TableCell>{getStatusBadge(order.status)}</TableCell>
-                    <TableCell className="text-slate-300">{order.items.length}</TableCell>
-                    <TableCell className="text-slate-300">{totalQty}</TableCell>
+                    <TableCell className="text-fg-muted">{order.items.length}</TableCell>
+                    <TableCell className="text-fg-muted">{totalQty}</TableCell>
                     <TableCell>
                       {order.status === 'received' ? (
                         <Badge variant={totalRecv >= totalQty ? 'default' : 'secondary'} className={totalRecv < totalQty ? 'bg-amber-900/40 text-amber-400' : ''}>
                           {totalRecv}/{totalQty}
                         </Badge>
-                      ) : <span className="text-slate-500">—</span>}
+                      ) : <span className="text-fg-subtle">—</span>}
                     </TableCell>
-                    <TableCell className="text-sm text-slate-300">{formatDate(order.createdAt)}</TableCell>
+                    <TableCell className={order.status === 'on_hold' ? 'text-amber-400 font-medium' : 'text-fg-subtle'}>
+                      {approxTotal > 0 ? formatCurrency(approxTotal) : '—'}
+                    </TableCell>
+                    <TableCell className="text-sm text-fg-muted">{formatDate(order.createdAt)}</TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
-                        <Button variant="ghost" size="icon" onClick={() => { setSelectedOrder(order); setDetailOpen(true); setEditMode(false); }} title="Ver detalle"><Eye className="h-4 w-4 text-slate-400" /></Button>
-                        {order.status !== 'received' && (
-                          <Button variant="ghost" size="icon" onClick={() => openReceiveDialog(order)} title="Recibir productos"><CheckCircle className="h-4 w-4 text-emerald-400" /></Button>
+                        <Button variant="ghost" size="icon" onClick={() => { setSelectedOrder(order); setDetailOpen(true); setEditMode(false); }} title="Ver detalle"><Eye className="h-4 w-4 text-fg-muted" /></Button>
+                        {order.status === 'on_hold' && (
+                          <Button variant="ghost" size="icon" onClick={() => setOrderReady(order)} title="Marcar como listo"><Clock className="h-4 w-4 text-amber-400" /></Button>
+                        )}
+                        {order.status !== 'received' && order.status !== 'cancelled' && (
+                          <Button variant="ghost" size="icon" onClick={() => openReceiveDialog(order)} title="Recibir productos"><CheckCircle className="h-4 w-4 text-brand" /></Button>
                         )}
                       </div>
                     </TableCell>
@@ -832,43 +1928,125 @@ export default function OrdersPage() {
         </CardContent>
       </Card>
 
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-xs text-fg-subtle">
+          {orderPagination.total > 0
+            ? `Página ${orderPagination.page} de ${orderPagination.totalPages} · ${orderPagination.total} pedidos`
+            : '0 pedidos'}
+        </p>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={loading || orderPage <= 1}
+            onClick={() => fetchOrders(orderPage - 1)}
+          >
+            Anterior
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={loading || !orderPagination.hasMore}
+            onClick={() => fetchOrders(orderPage + 1)}
+          >
+            Siguiente
+          </Button>
+        </div>
+      </div>
+
       {/* ── Receive Dialog ── */}
       <Dialog open={receiveOpen} onOpenChange={o => { setReceiveOpen(o); if (!o) setSelectedOrder(null); }}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <CheckCircle className="h-5 w-5 text-emerald-400" />
+              <CheckCircle className="h-5 w-5 text-brand" />
               Recibir Pedido #{selectedOrder?.id}
             </DialogTitle>
             <DialogDescription>
-              Ingresa las cantidades recibidas para cada producto. Las que no se reciban quedarán como pendientes.
+              Ingresa cantidades recibidas, caducidad (opcional), y ajusta precios si es necesario. El stock final se calcula automáticamente (stock actual + piezas recibidas) y puedes corregirlo libremente. Tu avance se guarda automáticamente por si tienes que atender otra cosa.
             </DialogDescription>
           </DialogHeader>
+          {draftRestored && selectedOrder && (
+            <div className="flex items-center justify-between gap-3 rounded-md border border-sky-800/60 bg-sky-950/20 px-3 py-2">
+              <span className="text-xs text-sky-300">
+                Se restauró tu avance guardado. Puedes continuar donde te quedaste o descartarlo.
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={discardReceiveDraft}
+                className="h-7 border-sky-700/50 text-xs text-sky-400 hover:bg-sky-500/10"
+              >
+                Descartar
+              </Button>
+            </div>
+          )}
           {selectedOrder && (
             <div className="space-y-4 py-2">
-              <div className="text-sm text-slate-400 mb-2">
-                Proveedor: <span className="text-slate-200 font-medium">{selectedOrder.supplier?.name}</span>
+              <div className="text-sm text-fg-muted mb-2">
+                Proveedor: <span className="text-fg font-medium">{selectedOrder.supplier?.name}</span>
               </div>
-              <div className="overflow-x-auto border border-slate-700 rounded-md">
+              <div className="overflow-x-auto border border-line rounded-md">
                 <Table>
                   <TableHeader>
-                    <TableRow className="bg-slate-800/80">
-                      <TableHead>Código</TableHead>
-                      <TableHead>Nombre</TableHead>
+                    <TableRow className="bg-surface-2/80">
+                      <TableHead>Producto</TableHead>
+                      <TableHead className="w-36">Código de barras</TableHead>
                       <TableHead className="text-center">Pedido</TableHead>
-                      <TableHead className="text-center w-28">Recibido</TableHead>
-                      <TableHead className="text-center">Pendiente</TableHead>
+                      <TableHead className="text-center w-20">Recibido</TableHead>
+                      <TableHead className="text-center w-28">Stock final</TableHead>
+                      <TableHead className="text-center w-24">Caduca (MM/AAAA)</TableHead>
+                      <TableHead className="text-center w-28">P. Proveedor</TableHead>
+                      <TableHead className="text-center w-24">P. Venta</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {selectedOrder.items.map(item => {
+                    {selectedOrder.items.filter(i => !i.extra).map(item => {
                       const received = receiveQuantities[item.id] ?? item.receivedQuantity;
                       const pending = Math.max(0, item.quantity - received);
+                      const isBox = item.isBox === true;
+                      const unit = item.unitsPerBox ?? 0;
+                      const itemName = (isBox ? 'Caja de ' : '') + (item.product?.name || item.productName || `#${item.productId ?? '?'}`);
+                      const receivedPieces = received * (isBox && unit > 0 ? unit : 1);
+                      const alreadyReceivedPieces = item.receivedQuantity * (isBox && unit > 0 ? unit : 1);
+                      const deltaPieces = Math.max(0, receivedPieces - alreadyReceivedPieces);
+                      const currentStock = item.product?.stock ?? 0;
+                      const defaultFinalStock = currentStock + deltaPieces;
+                      const finalStockVal = receiveFinalStocks[item.id] !== undefined
+                        ? receiveFinalStocks[item.id]
+                        : String(defaultFinalStock);
                       return (
                         <TableRow key={item.id}>
-                          <TableCell className="font-mono text-xs text-slate-400">{item.product?.barcode || '—'}</TableCell>
-                          <TableCell className="text-sm font-medium text-slate-200">{item.product?.name || `#${item.productId}`}</TableCell>
-                          <TableCell className="text-center text-slate-300">{item.quantity}</TableCell>
+                          <TableCell>
+                            <div className="text-sm font-medium text-fg">
+                              {itemName}
+                              {isBox && unit > 0 && (
+                                <span className="ml-2 rounded border border-brand-strong/60 px-1.5 py-0.5 text-[10px] text-brand">x{unit} por caja</span>
+                              )}
+                            </div>
+                            <div className="font-mono text-xs text-fg-subtle">
+                              {item.product?.barcode || item.productBarcode || '—'}
+                              {!item.product && <span className="ml-2 rounded bg-sky-950/60 px-1.5 py-0.5 text-[10px] text-sky-400 border border-sky-700/50">se creará al recibir</span>}
+                              <span className="ml-2 text-fg-muted">Stock actual: {currentStock}</span>
+                              {isBox && unit > 0 && <span className="ml-2 text-fg-subtle">= {receivedPieces} piezas</span>}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              type="text"
+                              value={receiveBarcodes[item.id] ?? (item.product?.barcode || item.productBarcode || '')}
+                              onChange={e => setReceiveBarcodes(prev => ({ ...prev, [item.id]: e.target.value }))}
+                              placeholder="Código..."
+                              className="w-32 h-8 text-center mx-auto font-mono text-xs"
+                            />
+                            {(receiveBarcodes[item.id] ?? '') !== '' &&
+                             (receiveBarcodes[item.id] ?? '') !== (item.product?.barcode || item.productBarcode || '') && (
+                              <div className="text-[10px] text-sky-400 mt-0.5">se actualizará</div>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-center text-fg-muted">
+                            {item.quantity}{isBox && unit > 0 && <div className="text-[10px] text-fg-subtle">{item.quantity * unit} pzas</div>}
+                          </TableCell>
                           <TableCell className="text-center">
                             <Input
                               type="number" min="0" max={item.quantity}
@@ -876,9 +2054,41 @@ export default function OrdersPage() {
                               onChange={e => setReceiveQuantities(prev => ({ ...prev, [item.id]: Math.min(item.quantity, Math.max(0, parseInt(e.target.value) || 0)) }))}
                               className="w-20 h-8 text-center mx-auto"
                             />
+                            {pending > 0 && <div className="text-[10px] text-amber-400 mt-0.5">{pending} cajas faltan</div>}
                           </TableCell>
                           <TableCell className="text-center">
-                            {pending > 0 ? <Badge variant="secondary" className="bg-amber-900/40 text-amber-400">{pending}</Badge> : <span className="text-emerald-400">✓</span>}
+                            <Input
+                              type="number" step="1" min="0"
+                              value={finalStockVal}
+                              onChange={e => setReceiveFinalStocks(prev => ({ ...prev, [item.id]: e.target.value }))}
+                              className="w-24 h-8 text-center mx-auto text-xs"
+                            />
+                            <div className="text-[10px] text-fg-subtle mt-0.5">piezas finales</div>
+                          </TableCell>
+                          <TableCell className="text-center">
+                            <Input
+                              type="text"
+                              value={receiveBatches[item.id] ?? ''}
+                              onChange={e => setReceiveBatches(prev => ({ ...prev, [item.id]: e.target.value }))}
+                              placeholder="MM/AAAA"
+                              className="w-24 h-8 text-center mx-auto text-xs"
+                            />
+                          </TableCell>
+                          <TableCell className="text-center">
+                            <Input
+                              type="number" step="0.01" min="0"
+                              value={receiveCosts[item.id] ?? ''}
+                              onChange={e => setReceiveCosts(prev => ({ ...prev, [item.id]: e.target.value }))}
+                              className="w-24 h-8 text-center mx-auto text-xs"
+                            />
+                          </TableCell>
+                          <TableCell className="text-center">
+                            <Input
+                              type="number" step="1" min="0"
+                              value={receivePrices[item.id] ?? ''}
+                              onChange={e => setReceivePrices(prev => ({ ...prev, [item.id]: e.target.value }))}
+                              className="w-24 h-8 text-center mx-auto text-xs"
+                            />
                           </TableCell>
                         </TableRow>
                       );
@@ -886,16 +2096,150 @@ export default function OrdersPage() {
                   </TableBody>
                 </Table>
               </div>
-              
+
+              {/* Extras (piezas que llegaron sin pedirse) */}
+              <div className="rounded-md border border-red-800/60 bg-red-950/20 p-3 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="text-sm font-medium text-red-300 flex items-center gap-2">
+                      <AlertTriangle className="h-4 w-4" /> Piezas extras (no pedidas)
+                    </span>
+                    <p className="text-[11px] text-red-300/70 mt-0.5">
+                      Estas piezas restan de la ganancia neta. Al confirmar se descuentan en finanzas.
+                    </p>
+                  </div>
+                  {receiveExtras.length > 0 && (
+                    <div className="text-right">
+                      <div className="text-[11px] text-fg-muted">Costo total: {formatCurrency(extraTotalCost)}</div>
+                    </div>
+                  )}
+                </div>
+
+                {receiveExtras.map(extra => (
+                  <div key={extra.key} className="grid grid-cols-12 gap-2 items-end rounded-md border border-red-800 bg-red-950/40 p-2">
+                    <div className="col-span-3">
+                      <Label className="text-[10px] text-red-300/80">Producto</Label>
+                      <div className="text-sm text-red-100 font-medium truncate flex items-center gap-1.5">
+                        <span className="truncate">{extra.name}</span>
+                        {extra.productId === null && (
+                          <span className="shrink-0 rounded bg-sky-950/60 px-1.5 py-0.5 text-[10px] text-sky-400 border border-sky-700/50">sin inventario</span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="col-span-2">
+                      <Label className="text-[10px] text-red-300/80">Cantidad</Label>
+                      <Input type="number" min="1" value={extra.quantity} onChange={e => updateExtra(extra.key, 'quantity', e.target.value)} className="h-8 text-xs" />
+                    </div>
+                    <div className="col-span-2">
+                      <Label className="text-[10px] text-red-300/80">Caduca (MM/AAAA)</Label>
+                      <Input type="text" value={extra.expiresAt} onChange={e => updateExtra(extra.key, 'expiresAt', e.target.value)} placeholder="opcional" className="h-8 text-xs" />
+                    </div>
+                    <div className="col-span-2">
+                      <Label className="text-[10px] text-red-300/80">P. Proveedor</Label>
+                      <Input type="number" step="0.01" min="0" value={extra.costPrice} onChange={e => updateExtra(extra.key, 'costPrice', e.target.value)} className="h-8 text-xs" />
+                    </div>
+                    <div className="col-span-2">
+                      <Label className="text-[10px] text-red-300/80">P. Venta</Label>
+                      <Input type="number" step="1" min="0" value={extra.price} onChange={e => updateExtra(extra.key, 'price', e.target.value)} className="h-8 text-xs" />
+                    </div>
+                    <div className="col-span-1 flex justify-end">
+                      <button type="button" onClick={() => removeExtra(extra.key)} className="text-red-400 hover:text-red-300 transition-colors" title="Quitar extra">
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-fg-subtle" />
+                    <Input
+                      placeholder="Buscar producto extra por nombre o código..."
+                      value={extraSearch}
+                      onChange={e => handleExtraSearch(e.target.value)}
+                      className="pl-9 h-8 text-xs"
+                    />
+                    {extraResults.length > 0 && (
+                      <div className="absolute z-10 mt-1 w-full rounded-md border border-line bg-surface shadow-lg">
+                        {extraResults.map(p => (
+                          <button
+                            key={p.id}
+                            type="button"
+                            onClick={() => addExtraProduct(p)}
+                            className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left text-xs text-fg hover:bg-surface-2 transition-colors"
+                          >
+                            <span className="truncate">{p.name}</span>
+                            <span className="font-mono text-fg-subtle shrink-0">{p.barcode || '—'}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  {extraSearching && <span className="text-xs text-fg-subtle py-2">Buscando...</span>}
+                </div>
+
+                <div className="rounded-md border border-sky-800/60 bg-sky-950/20 p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium text-fg-muted">Agregar extra sin inventario</span>
+                  </div>
+                  <div className="grid grid-cols-12 gap-2">
+                    <div className="col-span-6">
+                      <Input placeholder="Nombre del producto..." value={extraGhostName} onChange={e => setExtraGhostName(e.target.value)} className="h-8 text-xs" />
+                    </div>
+                    <div className="col-span-2">
+                      <Input placeholder="Cantidad" type="number" min="1" value={extraGhostQty} onChange={e => setExtraGhostQty(e.target.value)} className="h-8 text-xs" />
+                    </div>
+                    <div className="col-span-2">
+                      <Input placeholder="Costo" type="number" step="0.01" min="0" value={extraGhostCost} onChange={e => setExtraGhostCost(e.target.value)} className="h-8 text-xs" />
+                    </div>
+                    <div className="col-span-2">
+                      <Input placeholder="P. venta" type="number" step="0.01" min="0" value={extraGhostPrice} onChange={e => setExtraGhostPrice(e.target.value)} className="h-8 text-xs" />
+                    </div>
+                  </div>
+                  <Button type="button" size="sm" variant="outline" className="h-8 text-xs border-sky-700/50 text-sky-400 hover:bg-sky-500/10" onClick={addExtraGhost} disabled={!extraGhostName.trim()}>
+                    <PlusCircle className="h-3 w-3 mr-1" />Agregar extra
+                  </Button>
+                </div>
+              </div>
+
+              {/* Total de la nota + método de pago */}
+              <div className="rounded-md border border-line bg-surface-2/40 p-3 space-y-3">
+                <span className="text-sm font-medium text-fg-muted">Total de la nota pagada</span>
+                <p className="text-[11px] text-fg-subtle">
+                  Si indicas el total pagado de la nota, ese monto descuenta el costo de las piezas en finanzas;
+                  los extras restan de la ganancia neta. Opcional.
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label className="text-[10px] text-fg-subtle">Total nota (USD)</Label>
+                    <Input type="number" step="0.01" min="0" value={receiveNoteTotal} onChange={e => setReceiveNoteTotal(e.target.value)} placeholder="0.00" className="h-8 text-xs text-right" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-[10px] text-fg-subtle">Método de pago</Label>
+                    <Select value={receivePaymentMethodId} onValueChange={setReceivePaymentMethodId}>
+                      <SelectTrigger className="h-8 text-xs">
+                        <SelectValue placeholder="Seleccionar..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none__">Sin método</SelectItem>
+                        {paymentMethods.map(pm => (
+                          <SelectItem key={pm.id} value={String(pm.id)}>{pm.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </div>
+
               {/* Totals */}
               {(() => {
-                const totalPedido = selectedOrder.items.reduce((s, i) => s + i.quantity, 0);
-                const totalRecibido = selectedOrder.items.reduce((s, i) => s + (receiveQuantities[i.id] ?? i.receivedQuantity), 0);
+                const totalPedido = selectedOrder.items.filter(i => !i.extra).reduce((s, i) => s + i.quantity, 0);
+                const totalRecibido = selectedOrder.items.filter(i => !i.extra).reduce((s, i) => s + (receiveQuantities[i.id] ?? i.receivedQuantity), 0);
                 const totalPendiente = totalPedido - totalRecibido;
                 return (
                   <div className="flex justify-between text-sm px-1">
-                    <span className="text-slate-400">Total pedido: <span className="text-slate-200 font-medium">{totalPedido}</span></span>
-                    <span className="text-emerald-400">Recibido: <span className="font-medium">{totalRecibido}</span></span>
+                    <span className="text-fg-muted">Total pedido: <span className="text-fg font-medium">{totalPedido}</span></span>
+                    <span className="text-brand">Recibido: <span className="font-medium">{totalRecibido}</span></span>
                     {totalPendiente > 0 && <span className="text-amber-400">Pendiente: <span className="font-medium">{totalPendiente}</span></span>}
                   </div>
                 );
@@ -904,7 +2248,7 @@ export default function OrdersPage() {
           )}
           <DialogFooter>
             <DialogClose asChild><Button variant="secondary">Cancelar</Button></DialogClose>
-            <Button onClick={handleReceive} disabled={receiveLoading} className="bg-emerald-700 hover:bg-emerald-600">
+            <Button onClick={handleReceive} disabled={receiveLoading} className="bg-brand-strong hover:bg-brand-strong">
               {receiveLoading ? 'Guardando...' : '✅ Confirmar Recepción'}
             </Button>
           </DialogFooter>
@@ -912,7 +2256,7 @@ export default function OrdersPage() {
       </Dialog>
 
       {/* ── Order Detail Dialog (with Export) ── */}
-      <Dialog open={detailOpen} onOpenChange={o => { setDetailOpen(o); if (!o) { setSelectedOrder(null); setEditMode(false); setExportOpen(false); } }}>
+      <Dialog open={detailOpen} onOpenChange={o => { setDetailOpen(o); if (!o) { setSelectedOrder(null); setEditMode(false); setExportOpen(false); setRemovedItemIds([]); setEditItemResults([]); } }}>
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -922,83 +2266,143 @@ export default function OrdersPage() {
             <DialogDescription>
               {selectedOrder && formatDate(selectedOrder.createdAt)}
             </DialogDescription>
+            {selectedOrder && (
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md bg-surface-2/50 px-3 py-2 text-xs text-fg-muted">
+                <span>Proveedor: <span className="text-fg font-medium">{selectedOrder.supplier?.name || '—'}</span></span>
+                <span>Levantó: <span className="text-fg">{selectedOrder.createdBy?.name || '—'}</span></span>
+                <span>Recibió: <span className="text-fg">{selectedOrder.receivedBy?.name || '—'}</span></span>
+              </div>
+            )}
           </DialogHeader>
           {selectedOrder && (
             <>
-              {/* Export buttons */}
-              <div className="flex gap-2 justify-end">
-                <Button variant="outline" size="sm" onClick={() => handleExport('png')} disabled={exporting} className="text-xs">
-                  <ImageIcon className="h-3.5 w-3.5 mr-1" />{exporting ? '...' : 'PNG'}
-                </Button>
-                <Button variant="outline" size="sm" onClick={() => handleExport('pdf')} disabled={exporting} className="text-xs">
-                  <FileText className="h-3.5 w-3.5 mr-1" />{exporting ? '...' : 'PDF'}
-                </Button>
+              {/* Export buttons + column selector */}
+              <div className="flex flex-col gap-2">
+                <div className="flex gap-2 justify-end">
+                  {selectedOrder.status === 'on_hold' && (
+                    <Button variant="outline" size="sm" onClick={() => setOrderReady(selectedOrder)} className="text-xs border-brand-strong/50 text-brand hover:bg-brand/10">
+                      <Clock className="h-3.5 w-3.5 mr-1" />Marcar como listo
+                    </Button>
+                  )}
+                  <Button variant="outline" size="sm" onClick={() => handleExport('png')} disabled={exporting} className="text-xs">
+                    <ImageIcon className="h-3.5 w-3.5 mr-1" />{exporting ? '...' : 'PNG'}
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => handleExport('csv')} disabled={exporting} className="text-xs">
+                    <FileText className="h-3.5 w-3.5 mr-1" />{exporting ? '...' : 'CSV'}
+                  </Button>
+                </div>
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2 justify-end rounded-md border border-line bg-surface-2/60 px-3 py-2">
+                  <span className="text-xs text-fg-muted">Columnas del export:</span>
+                  {EXPORT_COLUMN_OPTIONS.map(opt => (
+                    <label key={opt.key} className="flex items-center gap-1.5 text-xs text-fg-muted cursor-pointer select-none">
+                      <Checkbox
+                        checked={exportCols.has(opt.key)}
+                        disabled={opt.required}
+                        onCheckedChange={() => {
+                          setExportCols(prev => {
+                            const next = new Set(prev);
+                            if (next.has(opt.key)) next.delete(opt.key);
+                            else next.add(opt.key);
+                            return next;
+                          });
+                        }}
+                        className="h-3.5 w-3.5 border-line-strong data-[state=checked]:bg-brand-strong data-[state=checked]:border-brand-strong"
+                      />
+                      {opt.label}
+                    </label>
+                  ))}
+                </div>
               </div>
+
+              {selectedOrder.status === 'on_hold' && (
+                <div className="rounded-md border border-amber-700/60 bg-amber-950/20 px-4 py-3 text-sm flex items-center justify-between flex-wrap gap-2">
+                  <span className="flex items-center gap-2 text-amber-300">
+                    <Clock className="h-4 w-4" /> Pedido en espera
+                  </span>
+                  <span className="text-amber-200/90">
+                    Total aprox. (precio proveedor):{' '}
+                    <span className="font-bold text-amber-200">
+                      {formatCurrency(selectedOrder.items.reduce((s, i) => s + i.quantity * (i.costPrice ?? i.product?.cost ?? 0), 0))}
+                    </span>
+                  </span>
+                </div>
+              )}
 
               {/* Exportable content */}
               <div ref={exportRef} className="p-4 rounded-lg" style={{ background: '#1e293b' }}>
                 {/* Header info */}
-                <div className="text-center mb-4 pb-3 border-b border-slate-600">
-                  <h3 className="text-lg font-bold text-slate-100">Pedido #{selectedOrder.id}</h3>
-                  <p className="text-xs text-slate-400">{formatDate(selectedOrder.createdAt)}</p>
-                  <p className="text-sm text-slate-300 mt-1">Proveedor: <span className="font-medium">{selectedOrder.supplier?.name}</span></p>
-                  {selectedOrder.notes && <p className="text-xs text-slate-400 mt-1">Notas: {selectedOrder.notes}</p>}
+                <div className="text-center mb-4 pb-3 border-b border-line-strong">
+                  <h3 className="text-lg font-bold text-fg">Pedido #{selectedOrder.id}</h3>
+                  <p className="text-xs text-fg-muted">{formatDate(selectedOrder.createdAt)}</p>
+                  <p className="text-sm text-fg-muted mt-1">Proveedor: <span className="font-medium">{selectedOrder.supplier?.name}</span></p>
+                  {selectedOrder.notes && <p className="text-xs text-fg-muted mt-1">Notas: {selectedOrder.notes}</p>}
                 </div>
 
                 {/* Export table */}
                 <Table>
                   <TableHeader>
-                    <TableRow className="bg-slate-700/50">
-                      <TableHead className="text-slate-300">#</TableHead>
-                      <TableHead className="text-slate-300">Código</TableHead>
-                      <TableHead className="text-slate-300">Nombre</TableHead>
-                      <TableHead className="text-center text-slate-300">Cantidad</TableHead>
-                      <TableHead className="text-center text-slate-300">Recibido</TableHead>
-                      <TableHead className="text-center text-slate-300">Pendiente</TableHead>
+                    <TableRow className="bg-line/50">
+                      <TableHead className="text-fg-muted">#</TableHead>
+                      <TableHead className="text-fg-muted">Código</TableHead>
+                      <TableHead className="text-fg-muted">Nombre</TableHead>
+                      <TableHead className="text-center text-fg-muted">Cantidad</TableHead>
+                      <TableHead className="text-center text-fg-muted">Recibido</TableHead>
+                      <TableHead className="text-center text-fg-muted">Pendiente</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {selectedOrder.items.map((item, idx) => {
                       const pending = Math.max(0, item.quantity - item.receivedQuantity);
+                      const isExtra = item.extra === true;
                       return (
-                        <TableRow key={item.id}>
-                          <TableCell className="text-xs text-slate-400 font-mono">{idx + 1}</TableCell>
-                          <TableCell className="text-xs text-slate-400 font-mono">{item.product?.barcode || '—'}</TableCell>
-                          <TableCell className="text-sm text-slate-200">{item.product?.name || `#${item.productId}`}</TableCell>
-                          <TableCell className="text-center text-slate-200">{item.quantity}</TableCell>
-                          <TableCell className="text-center text-slate-300">{item.receivedQuantity}</TableCell>
-                          <TableCell className="text-center">{pending > 0 ? <span className="text-amber-400">{pending}</span> : <span className="text-emerald-400">✓</span>}</TableCell>
+                        <TableRow key={item.id} className={isExtra ? 'bg-red-950/40' : pending > 0 ? 'bg-amber-950/20' : ''}>
+                          <TableCell className="text-xs text-fg-muted font-mono">
+                            {isExtra ? <AlertTriangle className="h-3.5 w-3.5 text-red-400 inline mr-1" /> : `${idx + 1}.`}
+                          </TableCell>
+                          <TableCell className="text-xs text-fg-muted font-mono">{item.product?.barcode || item.productBarcode || '—'}</TableCell>
+                          <TableCell className={`text-sm ${isExtra ? 'text-red-300' : 'text-fg'}`}>
+                            {orderItemName(item)}
+                            {item.isBox && item.unitsPerBox && (
+                              <span className="ml-2 text-[10px] text-brand">x{item.unitsPerBox} por caja</span>
+                            )}
+                            {isExtra && <span className="ml-2 text-[10px] font-bold text-red-400 uppercase">Extra</span>}
+                            {!item.product && !isExtra && <span className="ml-2 text-[10px] font-bold text-sky-400 uppercase">Sin inventario</span>}
+                          </TableCell>
+                          <TableCell className="text-center text-fg">{item.quantity}</TableCell>
+                          <TableCell className="text-center text-fg-muted">{item.receivedQuantity}</TableCell>
+                          <TableCell className="text-center">{pending > 0 ? <span className="text-amber-400">{pending}</span> : <span className="text-brand">✓</span>}</TableCell>
                         </TableRow>
                       );
                     })}
                   </TableBody>
                 </Table>
 
-                <div className="mt-3 text-xs text-slate-500 text-center">
+                <div className="mt-3 text-xs text-fg-subtle text-center">
                   Generado por POS System — {new Date().toLocaleString('es-MX')}
                 </div>
               </div>
 
               {/* Edit mode */}
               <div className="flex items-center justify-between mt-4">
-                <h4 className="text-sm font-medium text-slate-300">Productos ({selectedOrder.items.length})</h4>
-                {selectedOrder.status !== 'received' && (
+                <h4 className="text-sm font-medium text-fg-muted">Productos ({selectedOrder.items.length})</h4>
+                {selectedOrder.status !== 'received' && selectedOrder.status !== 'cancelled' && (
                   <Button type="button" variant={editMode ? 'default' : 'outline'} size="sm" onClick={() => setEditMode(!editMode)}>
-                    {editMode ? 'Cancelar edición' : 'Editar cantidades'}
+                    {editMode ? 'Cancelar edición' : 'Editar pedido'}
                   </Button>
                 )}
               </div>
 
-              <div className="overflow-x-auto border border-slate-700 rounded-md">
+              <div className="overflow-x-auto border border-line rounded-md">
                 <Table>
                   <TableHeader>
-                    <TableRow className="bg-slate-800/80">
+                    <TableRow className="bg-surface-2/80">
                       <TableHead>Código</TableHead>
                       <TableHead>Nombre</TableHead>
                       <TableHead className="text-center">Solicitado</TableHead>
                       <TableHead className="text-center">Recibido</TableHead>
                       <TableHead className="text-center">Pendiente</TableHead>
                       <TableHead>Notas</TableHead>
+                      {editMode && <TableHead className="w-10"></TableHead>}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -1006,26 +2410,109 @@ export default function OrdersPage() {
                       const pending = Math.max(0, item.quantity - item.receivedQuantity);
                       return (
                         <TableRow key={item.id}>
-                          <TableCell className="font-mono text-xs text-slate-400">{item.product?.barcode || '—'}</TableCell>
-                          <TableCell className="text-sm font-medium text-slate-200">{item.product?.name || `#${item.productId}`}</TableCell>
+                          <TableCell className="font-mono text-xs text-fg-muted">{item.product?.barcode || item.productBarcode || '—'}</TableCell>
+                          <TableCell className="text-sm font-medium text-fg">
+                            {orderItemName(item)}
+                            {item.isBox && item.unitsPerBox && (
+                              <span className="ml-2 rounded border border-brand-strong/60 px-1.5 py-0.5 text-[10px] text-brand">x{item.unitsPerBox} por caja</span>
+                            )}
+                            {!item.product && <span className="ml-2 rounded bg-sky-950/60 px-1.5 py-0.5 text-[10px] text-sky-400 border border-sky-700/50">sin inventario</span>}
+                          </TableCell>
                           <TableCell className="text-center">
                             {editMode ? (
                               <Input type="number" min="0" value={item.quantity} onChange={e => updateOrderItem(item.id, 'quantity', e.target.value)} className="w-20 h-8 text-center mx-auto" />
-                            ) : <span className="text-slate-200">{item.quantity}</span>}
+                            ) : (
+                              <span className="text-fg">
+                                {item.quantity}
+                                {item.isBox && item.unitsPerBox ? ' cajas' : ''}
+                              </span>
+                            )}
                           </TableCell>
-                          <TableCell className="text-center text-slate-300">{item.receivedQuantity}</TableCell>
-                          <TableCell className="text-center">{pending > 0 ? <span className="text-amber-400">{pending}</span> : <span className="text-emerald-400">✓</span>}</TableCell>
+                          <TableCell className="text-center text-fg-muted">{item.receivedQuantity}</TableCell>
+                          <TableCell className="text-center">{pending > 0 ? <span className="text-amber-400">{pending}</span> : <span className="text-brand">✓</span>}</TableCell>
                           <TableCell>
-                            {editMode ? (
+                            {editMode && item.receivedQuantity > 0 ? (
+                              <span className="text-xs text-fg-subtle">{item.notes || '—'}</span>
+                            ) : editMode ? (
                               <Input value={item.notes} onChange={e => updateOrderItem(item.id, 'notes', e.target.value)} className="h-8 text-sm" placeholder="Notas..." />
-                            ) : <span className="text-xs text-slate-400">{item.notes || '—'}</span>}
+                            ) : <span className="text-xs text-fg-muted">{item.notes || '—'}</span>}
                           </TableCell>
+                          {editMode && (
+                            <TableCell className="text-center">
+                              <button
+                                type="button"
+                                onClick={() => removeEditedItem(item.id)}
+                                disabled={item.receivedQuantity > 0}
+                                className="text-red-400 hover:text-red-300 disabled:opacity-30 transition-colors"
+                                title={item.receivedQuantity > 0 ? 'No se puede quitar: ya tiene piezas recibidas' : 'Quitar del pedido'}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </TableCell>
+                          )}
                         </TableRow>
                       );
                     })}
                   </TableBody>
                 </Table>
               </div>
+
+              {/* Agregar items en modo edición */}
+              {editMode && (
+                <div className="rounded-md border border-line bg-surface-2/40 p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium text-fg-muted">Agregar producto</span>
+                    {selectedOrder.supplierId > 0 && (
+                      <span className="text-[10px] text-fg-subtle">El costo se toma del proveedor del pedido</span>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    <div className="relative flex-1">
+                      <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-fg-subtle" />
+                      <Input
+                        placeholder="Buscar por nombre o código..."
+                        value={editItemSearch}
+                        onChange={e => { setEditItemSearch(e.target.value); }}
+                        className="pl-9 h-8 text-xs"
+                      />
+                      {editItemResults.length > 0 && (
+                        <div className="absolute z-10 mt-1 w-full rounded-md border border-line bg-surface shadow-lg max-h-48 overflow-y-auto">
+                          {editItemResults.map(p => (
+                            <button
+                              key={p.id}
+                              type="button"
+                              onClick={() => addEditedItem(p)}
+                              className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left text-xs text-fg hover:bg-surface-2 transition-colors"
+                            >
+                              <span className="truncate">
+                                {p.soldByBox ? `Caja de ${p.name}` : p.name}
+                                {p.soldByBox && p.unitsPerBox && (
+                                  <span className="ml-1 text-brand">x{p.unitsPerBox} por caja</span>
+                                )}
+                              </span>
+                              <span className="font-mono text-fg-subtle shrink-0">{p.barcode || '—'}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <Button type="button" size="sm" variant="outline" className="h-8 text-xs" onClick={addEditedGhost} disabled={!editGhostName.trim()}>
+                      <PlusCircle className="h-3 w-3 mr-1" />Agregar fantasma
+                    </Button>
+                  </div>
+                  <div className="grid grid-cols-12 gap-2">
+                    <div className="col-span-6">
+                      <Input placeholder="Nombre (sin inventario)..." value={editGhostName} onChange={e => setEditGhostName(e.target.value)} className="h-8 text-xs" />
+                    </div>
+                    <div className="col-span-3">
+                      <Input placeholder="Cantidad" type="number" min="1" value={editGhostQty} onChange={e => setEditGhostQty(e.target.value)} className="h-8 text-xs" />
+                    </div>
+                    <div className="col-span-3">
+                      <Input placeholder="P. venta" type="number" step="0.01" min="0" value={editGhostPrice} onChange={e => setEditGhostPrice(e.target.value)} className="h-8 text-xs" />
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {editMode && (
                 <Button className="w-full" onClick={saveEditedItems} disabled={formLoading}>

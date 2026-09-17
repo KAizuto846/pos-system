@@ -18,23 +18,23 @@ export const showToast = {
 
 const darkToastOptions = {
   style: {
-    background: "hsl(222.2 84% 4.9%)",
-    color: "hsl(210 40% 98%)",
-    border: "1px solid hsl(217.2 32.6% 17.5%)",
-    borderRadius: "0.5rem",
-    fontSize: "0.875rem",
-    boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.5)",
+    background: "#191a1b",
+    color: "#f7f8f8",
+    border: "1px solid #26282d",
+    borderRadius: "0.625rem",
+    fontSize: "13px",
+    boxShadow: "0 12px 32px -12px rgba(0, 0, 0, 0.85)",
   },
   success: {
     iconTheme: {
-      primary: "#10b981", // emerald-500
-      secondary: "#f8fafc",
+      primary: "#10b981",
+      secondary: "#f7f8f8",
     },
   },
   error: {
     iconTheme: {
-      primary: "#ef4444", // red-500
-      secondary: "#f8fafc",
+      primary: "#ef4444",
+      secondary: "#f7f8f8",
     },
   },
 };
@@ -71,9 +71,9 @@ const Toast = React.forwardRef<HTMLDivElement, ToastProps>(
       <div
         ref={ref}
         className={cn(
-          "pointer-events-auto flex items-center gap-3 rounded-lg border border-slate-700 bg-slate-900 px-4 py-3 text-sm text-slate-100 shadow-lg",
-          type === "success" && "border-emerald-600/50",
-          type === "error" && "border-red-600/50",
+          "pointer-events-auto flex items-center gap-3 rounded-lg border border-line bg-[#191a1b] px-4 py-3 text-[13px] text-fg shadow-[0_12px_32px_-12px_rgba(0,0,0,0.85)]",
+          type === "success" && "border-brand/30",
+          type === "error" && "border-red-500/30",
           className
         )}
         {...props}

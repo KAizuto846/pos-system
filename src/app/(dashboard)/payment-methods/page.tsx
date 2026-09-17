@@ -163,8 +163,8 @@ export default function PaymentMethodsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-slate-100">Payment Methods</h2>
-          <p className="text-sm text-slate-400 mt-1">Manage payment methods</p>
+          <h2 className="text-2xl font-bold text-fg">Payment Methods</h2>
+          <p className="text-sm text-fg-muted mt-1">Manage payment methods</p>
         </div>
         <Dialog open={createOpen} onOpenChange={(o) => { setCreateOpen(o); if (!o) resetForm(); }}>
           <DialogTrigger asChild>
@@ -181,7 +181,7 @@ export default function PaymentMethodsPage() {
             <form onSubmit={handleCreate}>
               <div className="space-y-4 py-4">
                 {formError && (
-                  <div className="rounded-md bg-red-600/20 border border-red-600/50 px-4 py-3 text-sm text-red-400">
+                  <div className="rounded-lg border border-red-500/25 bg-red-500/10 px-4 py-3 text-sm text-red-400">
                     {formError}
                   </div>
                 )}
@@ -212,7 +212,7 @@ export default function PaymentMethodsPage() {
         </Dialog>
       </div>
 
-      <Card className="border-slate-700 bg-slate-800">
+      <Card className="border-line bg-surface-2">
         <CardContent className="p-0">
           <Table>
             <TableHeader>
@@ -229,21 +229,21 @@ export default function PaymentMethodsPage() {
                   <TableRow key={i}>
                     {Array.from({ length: 4 }).map((_, j) => (
                       <TableCell key={j}>
-                        <Skeleton className="h-4 w-full bg-slate-700" />
+                        <Skeleton className="h-4 w-full bg-line" />
                       </TableCell>
                     ))}
                   </TableRow>
                 ))
               ) : paymentMethods.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={4} className="text-center text-slate-400 py-8">
+                  <TableCell colSpan={4} className="text-center text-fg-muted py-8">
                     No payment methods found
                   </TableCell>
                 </TableRow>
               ) : (
                 paymentMethods.map((method) => (
                   <TableRow key={method.id}>
-                    <TableCell className="font-medium text-slate-100">{method.name}</TableCell>
+                    <TableCell className="font-medium text-fg">{method.name}</TableCell>
                     <TableCell>
                       <Badge variant={method.affectsCash ? 'default' : 'secondary'}>
                         {method.affectsCash ? 'Yes' : 'No'}
@@ -257,7 +257,7 @@ export default function PaymentMethodsPage() {
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
                         <Button variant="ghost" size="icon" onClick={() => openEdit(method)}>
-                          <Pencil className="h-4 w-4 text-slate-400" />
+                          <Pencil className="h-4 w-4 text-fg-muted" />
                         </Button>
                         <Button variant="ghost" size="icon" onClick={() => openDelete(method)}>
                           <Trash2 className="h-4 w-4 text-red-400" />
@@ -282,7 +282,7 @@ export default function PaymentMethodsPage() {
           <form onSubmit={handleEdit}>
             <div className="space-y-4 py-4">
               {formError && (
-                <div className="rounded-md bg-red-600/20 border border-red-600/50 px-4 py-3 text-sm text-red-400">
+                <div className="rounded-lg border border-red-500/25 bg-red-500/10 px-4 py-3 text-sm text-red-400">
                   {formError}
                 </div>
               )}

@@ -1,12 +1,11 @@
 import type { Metadata, Viewport } from "next";
-import { Inter } from "next/font/google";
 import "./globals.css";
 import { ToasterProvider } from "@/components/ui/toast";
 import SessionProvider from "@/components/SessionProvider";
 import QueryProvider from "@/components/QueryProvider";
 import { RealtimeProvider } from "@/components/RealtimeProvider";
-
-const inter = Inter({ subsets: ["latin"] });
+import { UpdateNotification } from "@/components/UpdateNotification";
+import { ThemeApplier } from "@/components/ThemeApplier";
 
 export const metadata: Metadata = {
   title: "POS System - Punto de Venta",
@@ -29,15 +28,17 @@ export default function RootLayout({
       <head>
         <link rel="apple-touch-icon" href="/icons/icon-192.png" />
       </head>
-      <body className={inter.className}>
+      <body>
         <SessionProvider>
           <QueryProvider>
             <RealtimeProvider>
+              <UpdateNotification />
               {children}
               <ToasterProvider />
             </RealtimeProvider>
           </QueryProvider>
         </SessionProvider>
+        <ThemeApplier />
       </body>
     </html>
   );

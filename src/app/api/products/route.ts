@@ -1,7 +1,13 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { productSchema } from "@/lib/validations";
+import { detectPiecesFromName, ensurePieceForBox } from "@/lib/pieces";
 import { broadcast } from "@/lib/broadcast";
+import { logChange } from "@/lib/sync-engine";
+import { getDeviceId } from "@/lib/sync-utils";
+import { logAudit, getClientIp } from "@/lib/audit";
+import { isHelperRole, helperForbidden } from "@/lib/roles";
+import type { Prisma } from "@prisma/client";
 
 export async function GET(request: Request) {
   try {
@@ -9,22 +15,44 @@ export async function GET(request: Request) {
     if (!session?.user) {
       return Response.json({ error: "No autorizado" }, { status: 401 });
     }
+    // El ayudante solo puede consultar productos para el POS (vender);
+    // el inventario completo le está vedado.
+    const isPosView = new URL(request.url).searchParams.get("view") === "pos";
+    if (isHelperRole(session.user.role) && !isPosView) {
+      return helperForbidden("inventario");
+    }
 
     const { searchParams } = new URL(request.url);
     const q = searchParams.get("q");
+    const field = searchParams.get("field");
     const page = Math.max(1, parseInt(searchParams.get("page") || "1"));
     const limit = Math.min(200, Math.max(1, parseInt(searchParams.get("limit") || "50")));
     const skip = (page - 1) * limit;
     const departmentId = searchParams.get("departmentId");
     const supplierId = searchParams.get("supplierId");
+    const priceMin = searchParams.get("priceMin");
+    const priceMax = searchParams.get("priceMax");
+    const costMin = searchParams.get("costMin");
+    const costMax = searchParams.get("costMax");
+    const stockMin = searchParams.get("stockMin");
+    const stockMax = searchParams.get("stockMax");
+    const minStockMin = searchParams.get("minStockMin");
+    const minStockMax = searchParams.get("minStockMax");
+    const active = searchParams.get("active");
 
-    const where: Record<string, unknown> = {};
+    const where: Prisma.ProductWhereInput = {};
 
     if (q) {
-      where.OR = [
-        { name: { contains: q } },
-        { barcode: { contains: q } },
-      ];
+      if (field === "name") {
+        where.OR = [{ name: { contains: q } }];
+      } else if (field === "barcode") {
+        where.OR = [{ barcode: { contains: q } }];
+      } else {
+        where.OR = [
+          { barcode: { contains: q } },
+          { name: { contains: q } },
+        ];
+      }
     }
 
     if (departmentId) {
@@ -32,19 +60,105 @@ export async function GET(request: Request) {
     }
 
     if (supplierId) {
-      where.productLines = {
-        some: { supplierId: parseInt(supplierId) },
-      };
+      if (supplierId === "none") {
+        // Productos sin proveedor: ni supplierId directo ni línea de proveedor.
+        const existingAnd = Array.isArray(where.AND)
+          ? where.AND
+          : where.AND
+            ? [where.AND]
+            : [];
+        where.AND = [
+          ...existingAnd,
+          { supplierId: null },
+          { productLines: { none: {} } },
+        ];
+      } else {
+        const sid = parseInt(supplierId);
+        where.OR = [
+          ...(where.OR || []),
+          { supplierId: sid },
+          { productLines: { some: { supplierId: sid } } },
+        ];
+      }
     }
 
+    if (priceMin || priceMax) {
+      where.price = {};
+      if (priceMin) where.price.gte = parseFloat(priceMin);
+      if (priceMax) where.price.lte = parseFloat(priceMax);
+    }
+
+    if (costMin || costMax) {
+      where.cost = {};
+      if (costMin) where.cost.gte = parseFloat(costMin);
+      if (costMax) where.cost.lte = parseFloat(costMax);
+    }
+
+    if (stockMin || stockMax) {
+      where.stock = {};
+      if (stockMin) where.stock.gte = parseInt(stockMin);
+      if (stockMax) where.stock.lte = parseInt(stockMax);
+    }
+
+    if (minStockMin || minStockMax) {
+      where.minStock = {};
+      if (minStockMin) where.minStock.gte = parseInt(minStockMin);
+      if (minStockMax) where.minStock.lte = parseInt(minStockMax);
+    }
+
+    if (active === "true") where.active = true;
+    if (active === "false") where.active = false;
+
+    const productQuery = isPosView
+      ? prisma.product.findMany({
+          where,
+          select: {
+            id: true,
+            name: true,
+            barcode: true,
+            price: true,
+            cost: true,
+            stock: true,
+            minStock: true,
+            active: true,
+            departmentId: true,
+            supplierId: true,
+            loyaltyDiscount: true,
+            soldByBox: true,
+            unitsPerBox: true,
+            boxRemainder: true,
+          },
+          orderBy: { name: "asc" as const },
+          skip,
+          take: limit,
+        })
+      : prisma.product.findMany({
+          where,
+          include: {
+            department: true,
+            supplier: true,
+            productLines: { include: { supplier: true } },
+            batches: true,
+            pieceChildren: {
+              select: {
+                id: true,
+                name: true,
+                barcode: true,
+                price: true,
+                cost: true,
+                stock: true,
+                active: true,
+              },
+              take: 1,
+            },
+          },
+          orderBy: { name: "asc" as const },
+          skip,
+          take: limit,
+        });
+
     const [products, total] = await Promise.all([
-      prisma.product.findMany({
-        where,
-        include: { department: true, supplier: true, productLines: { include: { supplier: true } } },
-        orderBy: { name: "asc" },
-        skip,
-        take: limit,
-      }),
+      productQuery,
       prisma.product.count({ where }),
     ]);
 
@@ -70,6 +184,9 @@ export async function POST(request: Request) {
     if (!session?.user) {
       return Response.json({ error: "No autorizado" }, { status: 401 });
     }
+    if (isHelperRole(session.user.role)) {
+      return helperForbidden("inventario");
+    }
 
     const body = await request.json();
     const parsed = productSchema.safeParse(body);
@@ -83,6 +200,13 @@ export async function POST(request: Request) {
 
     const data = parsed.data;
 
+    const detected = detectPiecesFromName(data.name);
+    const piecesPerUnit = data.piecesPerUnit ?? detected?.pieces ?? null;
+    const piecesTracked = data.piecesTracked ?? Boolean(detected);
+
+    const soldByBox = data.soldByBox ?? false;
+    const unitsPerBox = soldByBox ? data.unitsPerBox ?? null : null;
+
     // Support both old supplierId and new productLines
     const productLinesData = body.productLines;
     let supplierIdValue: number | null = data.supplierId ?? null;
@@ -93,33 +217,133 @@ export async function POST(request: Request) {
       supplierIdValue = primary.supplierId;
     }
 
-    const product = await prisma.product.create({
-      data: {
-        name: data.name,
-        barcode: data.barcode,
-        price: data.price,
-        cost: data.cost,
-        stock: data.stock,
-        minStock: data.minStock,
-        active: data.active,
-        departmentId: data.departmentId ?? null,
-        supplierId: supplierIdValue,
-        ...(productLinesData && Array.isArray(productLinesData) && productLinesData.length > 0
-          ? {
-              productLines: {
-                create: productLinesData.map((pl: { supplierId: number; supplierPrice?: number | null; isPrimary?: boolean }) => ({
-                  supplierId: pl.supplierId,
-                  supplierPrice: pl.supplierPrice ?? null,
-                  isPrimary: pl.isPrimary ?? false,
-                })),
-              },
-            }
-          : {}),
-      },
-      include: { department: true, supplier: true, productLines: { include: { supplier: true } } },
+    const createdPieces: Array<{ id: number; name: string; barcode: string }> = [];
+
+    const product = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const created = await tx.product.create({
+        data: {
+          name: data.name,
+          barcode: data.barcode,
+          price: data.price,
+          cost: data.cost,
+          stock: data.stock,
+          minStock: data.minStock,
+          active: data.active,
+          departmentId: data.departmentId ?? null,
+          supplierId: supplierIdValue,
+          piecesPerUnit,
+          piecesTracked,
+          soldByBox,
+          unitsPerBox,
+          ...(productLinesData && Array.isArray(productLinesData) && productLinesData.length > 0
+            ? {
+                productLines: {
+                  create: productLinesData.map((pl: { supplierId: number; supplierPrice?: number | null; isPrimary?: boolean }) => ({
+                    supplierId: pl.supplierId,
+                    supplierPrice: pl.supplierPrice ?? null,
+                    isPrimary: pl.isPrimary ?? false,
+                  })),
+                },
+              }
+            : {}),
+        },
+        include: {
+          department: true,
+          supplier: true,
+          productLines: { include: { supplier: true } },
+        },
+      });
+
+      // Un producto cuyo nombre termina en CT/(N) es una caja: se crea
+      // automáticamente su producto pieza ("Pieza de ...", código S+), que
+      // nace con piecesPerUnit = N y enlazada a su caja para siempre.
+      if (created.piecesTracked && (created.piecesPerUnit ?? detected?.pieces)) {
+        const pieces = created.piecesPerUnit ?? detected?.pieces ?? 0;
+        if (pieces > 0) {
+          const piece = await ensurePieceForBox(tx, {
+            id: created.id,
+            name: created.name,
+            barcode: created.barcode,
+            price: created.price,
+            cost: created.cost,
+            departmentId: created.departmentId,
+            supplierId: created.supplierId,
+            productLines: productLinesData && Array.isArray(productLinesData) ? productLinesData : [],
+          }, pieces);
+          if (piece) {
+            createdPieces.push({ id: piece.id, name: piece.name, barcode: piece.barcode });
+          }
+        }
+      }
+
+      return created;
     });
 
     broadcast("product:create", { id: product.id });
+    void logChange(getDeviceId(), "CREATE", "product", product.id, {
+      id: product.id,
+      name: product.name,
+      barcode: product.barcode,
+      price: product.price,
+      cost: product.cost,
+      stock: product.stock,
+      minStock: product.minStock,
+      active: product.active,
+      departmentId: product.departmentId,
+      supplierId: product.supplierId,
+      piecesPerUnit: product.piecesPerUnit,
+      piecesTracked: product.piecesTracked,
+      soldByBox: product.soldByBox,
+      unitsPerBox: product.unitsPerBox,
+      boxRemainder: product.boxRemainder,
+    });
+    void logAudit({
+      userId: parseInt(session.user.id, 10),
+      userName: session.user.name,
+      userRole: session.user.role,
+      action: "create",
+      entity: "product",
+      entityId: product.id,
+      description: `Producto creado: ${product.name}`,
+      after: {
+        name: product.name,
+        barcode: product.barcode,
+        price: product.price,
+        cost: product.cost,
+        stock: product.stock,
+        minStock: product.minStock,
+        active: product.active,
+        departmentId: product.departmentId,
+        supplierId: product.supplierId,
+        piecesPerUnit: product.piecesPerUnit,
+        piecesTracked: product.piecesTracked,
+        soldByBox: product.soldByBox,
+        unitsPerBox: product.unitsPerBox,
+      },
+      ip: getClientIp(request),
+    });
+
+    for (const piece of createdPieces) {
+      broadcast("product:create", { id: piece.id });
+      void logChange(getDeviceId(), "CREATE", "product", piece.id, {
+        id: piece.id,
+        name: piece.name,
+        barcode: piece.barcode,
+        pieceOfProductId: product.id,
+      });
+      void logAudit({
+        userId: parseInt(session.user.id, 10),
+        userName: session.user.name,
+        userRole: session.user.role,
+        action: "create",
+        entity: "product",
+        entityId: piece.id,
+        description: `Producto pieza creado automáticamente para la caja: ${product.name}`,
+        after: { name: piece.name, barcode: piece.barcode, pieceOfProductId: product.id },
+        ip: getClientIp(request),
+      });
+    }
+
     return Response.json(product, { status: 201 });
   } catch (error) {
     console.error("Error creating product:", error);
