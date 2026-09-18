@@ -55,20 +55,30 @@ const prismaDest = path.join(standaloneDir, 'prisma');
 const envSrc = path.join(__dirname, '..', '.env');
 const envDest = path.join(standaloneDir, '.env');
 
+// Copiar prisma EXCLUYENDO bases de datos locales (*.db, *.db-wal, *.db-shm).
+// Nunca empaquetar una BD: si viajara un dev.db con datos de prueba, y algo
+// la leyera, pareceria que los datos del usuario "se borraron".
 if (fs.existsSync(prismaSrc)) {
   if (fs.existsSync(prismaDest)) fs.rmSync(prismaDest, { recursive: true, force: true });
-  fs.cpSync(prismaSrc, prismaDest, { recursive: true });
-  console.log('✓ Prisma schema copied');
+  fs.cpSync(prismaSrc, prismaDest, {
+    recursive: true,
+    filter: (src) => !/\.(db|db-wal|db-shm)$/.test(src),
+  });
+  console.log('✓ Prisma schema copied (sin bases de datos)');
 }
 
-if (fs.existsSync(envSrc)) {
-  fs.copyFileSync(envSrc, envDest);
-  console.log('✓ .env copied');
-} else if (fs.existsSync(path.join(__dirname, '..', '.env.example'))) {
-  // Create .env from .env.example with relative DB path for build time
-  const envContent = `AUTH_SECRET="pos-system-build-secret"\nDATABASE_URL="file:./prisma/dev.db"\nAUTH_URL="http://localhost:3000"\nNEXT_PUBLIC_APP_URL="http://localhost:3000"\n`;
+// Escribir un .env limpio: NUNCA copiar el .env local de desarrollo (tiene
+// secretos de dev y rutas de BD locales). En Electron, main.js siempre fuerza
+// DATABASE_URL al pos.db del usuario en %APPDATA%.
+{
+  const envContent = [
+    'AUTH_SECRET="pos-system-build-secret"',
+    'DATABASE_URL="file:./prisma/dev.db"',
+    'NEXT_PUBLIC_APP_URL="http://localhost:3000"',
+    '',
+  ].join('\n');
   fs.writeFileSync(envDest, envContent, 'utf8');
-  console.log('✓ .env created from defaults');
+  console.log('✓ .env limpio generado (sin secretos de desarrollo)');
 }
 
 // Copy .next/static into standalone (required for CSS/JS/assets)

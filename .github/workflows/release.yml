@@ -82,6 +82,41 @@ jobs:
             }
           }
 
+      - name: Validate version is newer than latest release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          $appVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $tagName = '${{ github.event.inputs.version || github.ref_name }}'
+          Write-Host "App version: $appVersion | Tag: $tagName"
+
+          if ($tagName.TrimStart('v') -ne $appVersion) {
+            throw "El tag '$tagName' no coincide con la version del package.json ($appVersion)."
+          }
+
+          # Evita releases que el auto-updater nunca detectaria: una version
+          # igual o menor a la ultima publicada (allowDowngrade es false).
+          $latest = gh api "repos/${{ github.repository }}/releases/latest" --jq '.tag_name' 2>$null
+          if ($LASTEXITCODE -eq 0 -and $latest) {
+            $compare = gh api "repos/${{ github.repository }}/compare/v$appVersion...$latest" --jq '(.behind_by -eq 0) and (.ahead_by -ge 0)' 2>$null
+            # comparacion explicita semver:
+            function Test-Newer([string]$a, [string]$b) {
+              $pa = $a.TrimStart('v').Split('.') | ForEach-Object { [int]($_ -replace '\D','0') }
+              $pb = $b.TrimStart('v').Split('.') | ForEach-Object { [int]($_ -replace '\D','0') }
+              for ($i = 0; $i -lt 3; $i++) {
+                if ($pa[$i] -gt $pb[$i]) { return $true }
+                if ($pa[$i] -lt $pb[$i]) { return $false }
+              }
+              return $false
+            }
+            if (-not (Test-Newer $appVersion $latest)) {
+              throw "La version $appVersion NO es mayor que la ultima release publicada ($latest). El auto-updater nunca la detectaria: sube el numero de version en package.json."
+            }
+          } else {
+            Write-Host 'No hay releases previas: version inicial.'
+          }
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
